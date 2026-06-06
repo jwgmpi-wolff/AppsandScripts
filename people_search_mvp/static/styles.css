@@ -1,25 +1,35 @@
 
-.root {--hero-overlay-top:0.35;--hero-overlay-bottom:0.15}
-body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100vh;color:#fff;background:#111}
+:root {
+	--hero-overlay-top:0.35;
+	--hero-overlay-bottom:0.15;
+	--bg: #2b2f32; /* mid-dark page background */
+	--panel: rgba(20,22,24,0.7);
+	--panel-strong: rgba(18,20,22,0.85);
+	--text: #e6eef6;
+	--muted: #9aa6b2;
+	--accent: #4aa3ff;
+}
+
+body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100vh;color:var(--text);background:var(--bg)}
 
 .hero{background-image:url('/static/wolf_background.png');background-size:cover;background-position:center;background-repeat:no-repeat;height:40vh;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;position:relative;margin-bottom:18px}
 .hero::before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,var(--hero-overlay-top)), rgba(0,0,0,var(--hero-overlay-bottom)));z-index:0}
-.hero h1{position:relative;z-index:1;font-size:2.2rem;margin:0;padding:20px;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,0.6)}
+.hero h1{position:relative;z-index:1;font-size:2.2rem;margin:0;padding:20px;color:var(--text);text-shadow:0 2px 6px rgba(0,0,0,0.45)}
 
 .container{max-width:900px;margin:0 auto;position:relative;z-index:1}
 
-.panel{background:rgba(0,0,0,0.55);padding:16px;border-radius:8px;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.45);color:#fff}
+.panel{background:var(--panel);padding:16px;border-radius:8px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:var(--text)}
 
-textarea{width:100%;height:120px;background:rgba(255,255,255,0.95);color:#111;border-radius:4px;border:1px solid rgba(0,0,0,0.1);padding:8px}
+textarea{width:100%;height:120px;background:rgba(255,255,255,0.04);color:var(--text);border-radius:6px;border:1px solid rgba(255,255,255,0.04);padding:10px}
 
-input[type=text], input{width:100%;padding:8px;margin:8px 0;background:rgba(255,255,255,0.95);color:#111;border-radius:4px;border:1px solid rgba(0,0,0,0.1)}
+input[type=text], input{width:100%;padding:8px;margin:8px 0;background:rgba(255,255,255,0.04);color:var(--text);border-radius:6px;border:1px solid rgba(255,255,255,0.04)}
 
 .result, .saved{display:flex;align-items:center;gap:8px;padding:6px 0;color:#fff}
 
-button{padding:6px 10px;margin-left:6px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:4px}
+button{padding:8px 12px;margin-left:6px;background:linear-gradient(180deg,var(--accent),#2e8fe6);color:#08121b;border:0;border-radius:6px;box-shadow:0 4px 10px rgba(0,0,0,0.35)}
 
 /* make links readable */
-a{color:#ffd; text-decoration:underline; text-shadow:0 1px 2px rgba(0,0,0,0.6)}
+a{color:var(--accent); text-decoration:underline; text-shadow:0 1px 2px rgba(0,0,0,0.4)}
 
 /* Ensure form controls are above overlay */
 textarea, input, button, .panel{position:relative;z-index:1}
