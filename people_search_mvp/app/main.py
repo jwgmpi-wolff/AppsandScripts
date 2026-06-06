@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -157,4 +158,6 @@ app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="
 @app.get("/")
 async def index():
     index_path = os.path.join(ROOT, "static", "index.html")
-    return StaticFiles(directory=os.path.join(ROOT, "static"))
+    if os.path.exists(index_path):
+        return FileResponse(index_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Index not found")
