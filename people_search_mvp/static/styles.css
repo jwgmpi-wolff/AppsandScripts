@@ -9,7 +9,8 @@
 	--muted: #8fb8d6; /* Light storm blue for muted text */
 	--accent: #2e76b3; /* Cobalt (accent) */
 	--input-bg: rgba(46,118,179,0.06);
-	--input-border: rgba(46,118,179,0.14);
+	--input-border: rgba(46,118,179,0.92);
+	--panel-border: rgba(46,118,179,0.92);
 }
 
 body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100vh;color:var(--text);background:var(--bg);background-image:url('/static/wolf_background.png');background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
@@ -26,7 +27,7 @@ body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100
 .panel{background:var(--panel);padding:16px;border-radius:8px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:var(--text)}
 
 /* highlight the first panel (search area) with a subtle blue tint */
-.container .panel:first-of-type{background:linear-gradient(180deg, rgba(46,118,179,0.04), rgba(46,118,179,0.02));border:1px solid rgba(46,118,179,0.06)}
+.container .panel:first-of-type{background:linear-gradient(180deg, rgba(46,118,179,0.04), rgba(46,118,179,0.02));border:1px solid var(--panel-border)}
 
 label{color:var(--text);font-weight:600}
 
