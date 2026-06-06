@@ -2,15 +2,15 @@
 :root {
 	--hero-overlay-top:0.35;
 	--hero-overlay-bottom:0.15;
-	--bg: #2b2f32; /* mid-dark page background */
-	--panel: rgba(20,22,24,0.7);
-	--panel-strong: rgba(18,20,22,0.85);
-	--text: #e6eef6;
-	--muted: #9aa6b2;
-	--accent: #4aa3ff;
+	--bg: #1b1e20; /* Graphite (darker) */
+	--panel: rgba(18,20,22,0.88);
+	--panel-strong: rgba(12,14,16,0.95);
+	--text: #a6b8c6; /* Slate Blue (darker text) */
+	--muted: #697881; /* Storm Gray (darker muted) */
+	--accent: #2e76b3; /* Cobalt (darker accent) */
 }
 
-body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100vh;color:var(--text);background:var(--bg)}
+body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;min-height:100vh;color:var(--text);background:var(--bg);background-image:url('/static/wolf_background.png');background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
 
 .hero{background-image:url('/static/wolf_background.png');background-size:cover;background-position:center;background-repeat:no-repeat;height:40vh;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;position:relative;margin-bottom:18px}
 .hero::before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,var(--hero-overlay-top)), rgba(0,0,0,var(--hero-overlay-bottom)));z-index:0}
