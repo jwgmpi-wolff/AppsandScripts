@@ -1,0 +1,13 @@
+version: 1.0
+name: sbqdemo
+metadata:
+  template: sbqdemo
+  description: Service Bus Queue Demo with Container Apps and KEDA
+services:
+  consumer:
+    project: src/consumer
+    docker:
+      path: src/consumer
+    host:
+      containerapp:
+        image: consumer:latest

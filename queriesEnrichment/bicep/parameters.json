@@ -1,0 +1,34 @@
+// Parameters file for Bicep deployment
+// Customize these values for your environment
+
+param location = 'westus2'
+param environment = 'prod'
+param projectName = 'workbookaudit'
+
+param commonTags = {
+  environment: environment
+  project: projectName
+  owner: 'Jerry Wolff'
+  costCenter: 'IT-Operations'
+  backupPolicy: 'Daily'
+}
+
+// AKS Configuration
+param aksClusterName = 'workbookaudit-aks-prod'
+param aksNodeCount = 2
+param aksVmSize = 'Standard_D2s_v3'
+param aksOSType = 'Linux'
+
+// Container Registry
+param acrName = 'workbookauditacr'
+param acrSku = 'Standard'
+
+// Storage Account
+param storageAccountName = 'workbookauditsa'
+param storageSku = 'Standard_LRS'
+
+// Key Vault
+param keyVaultName = 'workbookaudit-kv-prod'
+
+// Managed Identity
+param identityName = 'workbookaudit-identity-prod'

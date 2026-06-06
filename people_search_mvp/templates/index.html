@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Public Search Intelligence Prototype</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Public Search Intelligence</h1>
+      <p>Low-cost prototype for public-source search, result storage, and relevance learning.</p>
+    </div>
+    <nav>
+      <a href="#search">Search</a>
+      <a href="#results">Results</a>
+      <a href="#history">History</a>
+    </nav>
+  </header>
+
+  <main class="grid">
+    <section class="panel" id="search">
+      <h2>Search</h2>
+      <form id="search-form" class="stack">
+        <label>Query
+          <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
+        </label>
+        <label>Entity type
+          <select name="entity">
+            <option value="public">Public profile</option>
+            <option value="org">Organization</option>
+            <option value="news">News & media</option>
+          </select>
+        </label>
+        <label>Source scope
+          <select name="source">
+            <option value="all">All public sources</option>
+            <option value="web">Web</option>
+            <option value="news">News</option>
+          </select>
+        </label>
+        <label>Max results
+          <input name="max_results" type="number" min="5" max="20" value="8" />
+        </label>
+        <button type="submit">Run search</button>
+      </form>
+      <div id="status" class="status">Ready.</div>
+      <div id="learning" class="pill-box"></div>
+    </section>
+
+    <section class="panel" id="results">
+      <h2>Search Results</h2>
+      <div id="result-list" class="result-list"></div>
+    </section>
+
+    <section class="panel" id="scanner">
+      <h2>Webcam / Stream Scanner</h2>
+      <form id="scan-form" class="stack">
+        <label>URLs or pattern
+          <textarea name="urls" rows="4" placeholder="One URL per line, or pattern like https://example.com/cam{1-50} or https://site.com/*"></textarea>
+        </label>
+        <label>Replacements (for * patterns)
+          <input name="replacements" type="text" placeholder="comma or newline separated replacements" />
+        </label>
+        <label>Timeout (seconds)
+          <input name="timeout" type="number" min="2" max="30" value="8" />
+        </label>
+        <div style="display:flex;gap:8px">
+          <button type="submit">Run scan</button>
+          <button id="clear-recent" type="button">Clear most recent scan</button>
+        </div>
+      </form>
+      <div id="scan-status" class="status">Ready to scan.</div>
+      <div id="scan-results"></div>
+      <div style="margin-top:8px">
+        <label>Search saved links
+          <input id="saved-q" placeholder="search saved URLs" />
+        </label>
+        <select id="saved-which"><option value="success">Successes</option><option value="failure">Failures</option></select>
+        <button id="saved-search">Search DB</button>
+        <button id="open-selected">Open Selected</button>
+        <div id="saved-list" class="result-list" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <aside class="panel" id="history">
+      <h2>Recent History</h2>
+      <ul id="history-list" class="history-list"></ul>
+    </aside>
+  </main>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const resultList = document.getElementById('result-list');
+    const status = document.getElementById('status');
+    const learning = document.getElementById('learning');
+    const historyList = document.getElementById('history-list');
+
+    function renderResults(data) {
+      resultList.innerHTML = '';
+      if (!data.results || !data.results.length) {
+        resultList.innerHTML = '<p>No results found.</p>';
+        return;
+      }
+
+      data.results.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'card';
+        card.innerHTML = `
+          <h3>${item.title}</h3>
+          <p class="muted">Score: ${item.score} · Source: ${item.source}</p>
+          <p>${item.snippet || 'Public web result preview.'}</p>
+          <a href="${item.url}" target="_blank" rel="noreferrer">Open source</a>
+        `;
+        resultList.appendChild(card);
+      });
+    }
+
+    function renderLearning(weights) {
+      const items = Object.entries(weights).sort((a, b) => b[1] - a[1]);
+      learning.innerHTML = items.slice(0, 6).map(([term, weight]) => `<span class="pill">${term} (${weight.toFixed(2)})</span>`).join('');
+    }
+
+    function loadHistory() {
+      fetch('/history').then(r => r.json()).then(items => {
+        historyList.innerHTML = items.map(item => `<li><strong>${item.query}</strong><br/>${item.result_count} results · ${item.created_at}</li>`).join('');
+      });
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      status.textContent = 'Searching…';
+      const formData = new FormData(form);
+      const response = await fetch('/search', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (data.error) {
+        status.textContent = data.error;
+        return;
+      }
+      renderResults(data);
+      renderLearning(data.learning_terms || {});
+      status.textContent = `Search complete for “${data.query}” (${data.results.length} results).`;
+      loadHistory();
+    });
+
+    loadHistory();
+
+    // Scanner UI bindings
+    const scanForm = document.getElementById('scan-form');
+    const scanStatus = document.getElementById('scan-status');
+    const scanResults = document.getElementById('scan-results');
+    const clearRecentBtn = document.getElementById('clear-recent');
+    const savedQ = document.getElementById('saved-q');
+    const savedWhich = document.getElementById('saved-which');
+    const savedSearchBtn = document.getElementById('saved-search');
+    const savedList = document.getElementById('saved-list');
+    const openSelectedBtn = document.getElementById('open-selected');
+
+    function renderScanResults(obj) {
+      scanResults.innerHTML = '';
+      const s = document.createElement('div');
+      s.innerHTML = `<h3>Successes (${obj.results.success.length})</h3>` + obj.results.success.map(r => `<div class="card"><label><input type=checkbox data-url="${r.url}" /> <a href="${r.url}" target="_blank">${r.url}</a> [${r.status}] ${r.content_type || ''} ${r.note || ''}</label></div>`).join('');
+      const f = document.createElement('div');
+      f.innerHTML = `<h3>Failures (${obj.results.failure.length})</h3>` + obj.results.failure.map(r => `<div class="card"><label><input type=checkbox data-url="${r.url}" /> ${r.url} — ${r.error}</label></div>`).join('');
+      scanResults.appendChild(s);
+      scanResults.appendChild(f);
+    }
+
+    scanForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      scanStatus.textContent = 'Scanning…';
+      const formData = new FormData(scanForm);
+      const resp = await fetch('/scan_webcams', { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (data.error) {
+        scanStatus.textContent = data.error;
+        return;
+      }
+      renderScanResults(data);
+      scanStatus.textContent = `Scan complete — ${data.count} checked. Successes: ${data.results.success.length}`;
+    });
+
+    clearRecentBtn.addEventListener('click', async () => {
+      if (!confirm('Delete the most recent scan and its results?')) return;
+      const r = await fetch('/clear_recent_scan', { method: 'POST' });
+      const j = await r.json();
+      scanStatus.textContent = j.deleted ? `Deleted scan ${j.scan_id}` : 'No recent scan to delete.';
+      scanResults.innerHTML = '';
+    });
+
+    savedSearchBtn.addEventListener('click', async () => {
+      const q = savedQ.value || '';
+      const which = savedWhich.value || 'success';
+      const r = await fetch(`/saved_webcams?q=${encodeURIComponent(q)}&which=${which}`);
+      const items = await r.json();
+      savedList.innerHTML = items.map(it => `<div class="card"><label><input type=checkbox data-url="${it.url}" /> <a href="${it.url}" target="_blank">${it.url}</a> ${it.content_type ? '['+it.content_type+']' : ''} ${it.error ? '('+it.error+')' : ''}</label></div>`).join('');
+    });
+
+    openSelectedBtn.addEventListener('click', () => {
+      const boxes = Array.from(document.querySelectorAll('input[type=checkbox][data-url]:checked'));
+      boxes.forEach(b => { window.open(b.getAttribute('data-url'), '_blank'); });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+---
+# Namespace for the workbook audit application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workbook-audit
+  labels:
+    app: workbook-audit
+    managed: "true"
+
+---
+# ServiceAccount for Managed Identity integration
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workbook-audit-sa
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+
+---
+# ClusterRole for reading Application Insights workbooks and Key Vault secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbook-audit-reader
+  labels:
+    app: workbook-audit
+rules:
+  # Pod logs and events (for debugging)
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch"]
+  # ConfigMap access (for configuration)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding to attach role to ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workbook-audit-reader-binding
+  labels:
+    app: workbook-audit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workbook-audit-reader
+subjects:
+  - kind: ServiceAccount
+    name: workbook-audit-sa
+    namespace: workbook-audit
+
+---
+# ConfigMap for environment variables and configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbook-audit-config
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+data:
+  # Azure settings
+  AZURE_SUBSCRIPTION_ID: "your-subscription-id"
+  AZURE_RESOURCE_GROUP: "wolffmlrg"
+  AZURE_KEYVAULT_NAME: "wolffmlkv"
+  AZURE_KEYVAULT_ENDPOINT: "https://wolffmlkv.vault.azure.net/"
+  
+  # AI Foundry settings (can override with secrets if needed)
+  AZURE_AI_ENDPOINT: "https://your-ai-instance.openai.azure.com/"
+  
+  # Storage account for uploading results
+  AZURE_STORAGE_ACCOUNT: "wolffautosa"
+  AZURE_STORAGE_CONTAINER: "graphqueriessamples"
+  
+  # Script configuration
+  SCRIPT_PATH: "/app/scripts/Extract_Queries_From_Deployment_Workbooks.ps1"
+  OUTPUT_PATH: "/app/output"
+
+---
+# Secret for sensitive AI Foundry and Storage credentials (alternative to Key Vault)
+# NOTE: In production, use Azure Key Vault and Workload Identity instead
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workbook-audit-secrets
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+type: Opaque
+stringData:
+  # These should be retrieved from Azure Key Vault in production
+  AZURE_AI_KEY: "your-ai-foundry-key"
+  AZURE_STORAGE_KEY: "your-storage-account-key"

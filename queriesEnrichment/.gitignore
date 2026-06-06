@@ -1,0 +1,118 @@
+# Git ignore for Kubernetes Workbook Audit Project
+
+# Environment and configuration
+.env
+.env.local
+.env.*.local
+config/.env
+config/.env.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build and output
+bin/
+obj/
+dist/
+build/
+output/
+*.log
+*.tmp
+
+# Docker
+docker/.dockerbuild/
+Dockerfile.bak
+
+# Bicep compilation output
+bicep/*.json
+!bicep/parameters.json
+bicep/compiled/
+
+# Kubernetes manifests (generated)
+kubernetes/*.yaml.backup
+kubernetes/*.yaml.tmp
+
+# Azure and credentials
+.azure/
+*.kubeconfig
+kubeconfig.yaml
+credentials.json
+serviceAccountKey.json
+
+# Temporary files
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+.tmp/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+*.exe
+*.dll
+
+# PowerShell
+*.ps1.bak
+*.psm1.bak
+Profile.ps1
+
+# Test coverage
+coverage/
+*.coverage
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Node modules (if any)
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+
+# Gradle
+.gradle/
+build/
+
+# Sensitive patterns
+*secret*
+*password*
+*token*
+*key*
+!*.example
+!*.template
+
+# Large files (logs, dumps)
+*.dmp
+*.dump
+*.heapdump
+core.*
+
+# IDE workspace settings
+.vscode/settings.json
+.vscode/launch.json
+.idea/workspace.xml
+
+# Backup files from editors
+*#
+*~
+.#*
