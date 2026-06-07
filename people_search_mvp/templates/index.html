@@ -31,27 +31,35 @@
       <section class="panel" id="search">
       <h2>Search</h2>
       <form id="search-form" class="stack">
-        <label>Query
-          <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
-        </label>
-        <label>Entity type
-          <select name="entity">
-            <option value="public">Public profile</option>
-            <option value="org">Organization</option>
-            <option value="news">News & media</option>
-          </select>
-        </label>
-        <label>Source scope
-          <select name="source">
-            <option value="all">All public sources</option>
-            <option value="web">Web</option>
-            <option value="news">News</option>
-          </select>
-        </label>
-        <label>Max results
-          <input name="max_results" type="number" min="5" max="20" value="8" />
-        </label>
-        <button type="submit">Run search</button>
+        <div style="display:flex;gap:8px;flex-direction:column">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <label>Query
+                <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
+              </label>
+              <label>Max results
+                <input name="max_results" type="number" min="5" max="20" value="8" />
+              </label>
+            </div>
+            <div style="width:320px;display:flex;flex-direction:column;gap:8px">
+              <label>Entity type
+                <select name="entity">
+                  <option value="public">Public profile</option>
+                  <option value="org">Organization</option>
+                  <option value="news">News & media</option>
+                </select>
+              </label>
+              <label>Source scope
+                <select name="source">
+                  <option value="all">All public sources</option>
+                  <option value="web">Web</option>
+                  <option value="news">News</option>
+                </select>
+              </label>
+              <button type="submit">Run search</button>
+            </div>
+          </div>
+        </div>
       </form>
       <div id="status" class="status">Ready.</div>
       <div id="learning" class="pill-box"></div>
