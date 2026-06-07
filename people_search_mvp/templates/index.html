@@ -31,9 +31,9 @@
       <section class="panel" id="search">
       <h2>Search</h2>
       <form id="search-form" class="stack">
-        <div style="display:flex;gap:8px;flex-direction:column">
-          <div style="display:flex;gap:8px;align-items:flex-start">
-            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+        <div class="vertical-stack">
+          <div class="two-col">
+            <div class="left">
               <label>Query
                 <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
               </label>
@@ -41,7 +41,7 @@
                 <input name="max_results" type="number" min="5" max="20" value="8" />
               </label>
             </div>
-            <div style="width:320px;display:flex;flex-direction:column;gap:8px">
+            <div class="right">
               <label>Entity type
                 <select name="entity">
                   <option value="public">Public profile</option>
