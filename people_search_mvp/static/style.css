@@ -12,7 +12,8 @@
 	color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+/* Use the user-supplied image as a full-page background for public pages */
+body { margin: 0; min-height: 100vh; background: var(--bg) url('/static/wolf_background.png') center/cover no-repeat fixed; color: var(--text); }
 .topbar { display:flex; justify-content:space-between; gap:1rem; align-items:center; padding: 1rem 1.2rem; }
 nav a { color:var(--accent); text-decoration:none; margin-left: .8rem; }
 
