@@ -55,6 +55,10 @@ nav a { color:var(--accent); text-decoration:none; margin-left: .8rem; }
 /* Make the People Search panel half the viewport width on larger screens */
 #tab-people .panel#search { width:50vw; max-width:900px; }
 @media (max-width: 980px) { #tab-people .panel#search { width:100%; max-width:100%; } }
+
+/* Apply same sizing to the history box so it matches the People Search panel */
+#history.panel { width:50vw; max-width:900px; margin-left:auto; }
+@media (max-width: 980px) { #history.panel { width:100%; max-width:100%; margin-left:0; } }
 label { display:grid; gap:.25rem; font-size:.95rem; color:var(--text); }
 input, select, button { border-radius: 8px; border: 1px solid var(--input-border); padding: .65rem .75rem; background: var(--input-bg); color: var(--text); }
 button { cursor:pointer; }
