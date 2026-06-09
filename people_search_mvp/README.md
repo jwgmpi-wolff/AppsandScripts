@@ -48,3 +48,20 @@ From the UI at `/` use the "Webcam / Stream Scanner" panel.
 - "Clear most recent scan" deletes the last scan and its associated results.
 
 Databases: `search_intelligence.db` (contains search results plus scanner tables `webcam_scans`, `webcam_success`, `webcam_failure`).
+
+Background worker (optional)
+- This project supports background scanning via RQ + Redis. To use it, install Redis and the Python requirements (`redis`, `rq`).
+- Start a worker from the project folder:
+
+```powershell
+# start redis (platform dependent)
+redis-server
+# in another shell, start an RQ worker
+rq worker
+```
+
+If Redis/RQ is unavailable the app falls back to a threaded background runner, but RQ provides more reliability and persistence.
+
+CSV import/export
+- Use the UI controls under the "Webcam / Stream Scanner" panel to export saved successes/failures as CSV.
+- Use the CSV import control to upload a CSV with a header containing `url` and optionally `status_code,content_type,note` for successes or `url,error` for failures.

@@ -8,6 +8,22 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request
+from urllib.parse import urlparse
+import csv
+import io
+import datetime
+import time
+
+# optional background worker (RQ)
+try:
+    import redis
+    from rq import Queue
+    RQ_AVAILABLE = True
+    redis_conn = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+    queue = Queue(connection=redis_conn)
+except Exception:
+    RQ_AVAILABLE = False
+    queue = None
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "search_intelligence.db"
@@ -103,6 +119,20 @@ def init_db():
             error TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(scan_id) REFERENCES webcam_scans(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS webcam_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER,
+            job_id TEXT,
+            status TEXT DEFAULT 'queued',
+            progress INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -308,6 +338,42 @@ def expand_patterns(input_text: str, replacements_text: str = ""):
     return items
 
 
+def find_webcam_urls_from_query(query: str, max_results: int = 8):
+    """Run provider searches for a free-text query and return candidate URLs
+    that look like webcams, livestreams, or camera endpoints.
+    """
+    results, errors = fetch_results("all", query, max_results)
+    candidates = []
+    seen = set()
+
+    webcam_indicators = ("camera", "webcam", "stream", "mjpeg", "m3u8", "live", "ipcam", "snapshot")
+    for item in results:
+        url = item.get("url")
+        title = (item.get("title") or "").lower()
+        snippet = (item.get("snippet") or "").lower()
+        if not url:
+            continue
+        if url in seen:
+            continue
+
+        # prefer URLs that have explicit video/stream extensions
+        if any(ext in url.lower() for ext in (".m3u8", ".mjpeg", ".mp4", ".mjpg")):
+            candidates.append(url)
+            seen.add(url)
+            continue
+
+        # next prefer pages whose title/snippet mention webcams/stream
+        text = " ".join([title, snippet, url.lower()])
+        if any(k in text for k in webcam_indicators):
+            candidates.append(url)
+            seen.add(url)
+            continue
+
+        # otherwise skip noisy results
+
+    return candidates
+
+
 def check_url(url: str, timeout: int = 8):
     try:
         resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=timeout, stream=False)
@@ -337,6 +403,69 @@ def check_url(url: str, timeout: int = 8):
         return False, None, None, str(ex)
 
 
+def perform_scan_job(scan_id, urls, timeout=8, task_id=None):
+    """Background worker job: checks each URL and writes to DB, updates task progress."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    total = len(urls)
+    if task_id:
+        cur.execute("UPDATE webcam_tasks SET total = ?, status = ?, progress = 0 WHERE id = ?", (total, 'running', task_id))
+        conn.commit()
+
+    i = 0
+    for u in urls:
+        i += 1
+        ok, status, ctype, note = check_url(u, timeout=timeout)
+        if ok:
+            cur.execute(
+                "INSERT INTO webcam_success(scan_id, url, status_code, content_type, note) VALUES(?, ?, ?, ?, ?)",
+                (scan_id, u, status or 0, ctype or "", note or ""),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO webcam_failure(scan_id, url, error) VALUES(?, ?, ?)",
+                (scan_id, u, note),
+            )
+
+        if task_id:
+            cur.execute("UPDATE webcam_tasks SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (i, task_id))
+        conn.commit()
+
+    if task_id:
+        cur.execute("UPDATE webcam_tasks SET status = ?, progress = total, updated_at = CURRENT_TIMESTAMP WHERE id = ?", ('completed', task_id))
+        conn.commit()
+    conn.close()
+
+
+def enqueue_scan_job(scan_id, urls, timeout=8):
+    conn = get_conn()
+    cur = conn.cursor()
+    # create task record
+    cur.execute("INSERT INTO webcam_tasks(scan_id, status, progress, total) VALUES(?, ?, ?, ?)", (scan_id, 'queued', 0, len(urls)))
+    task_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    if RQ_AVAILABLE and queue:
+        # enqueue background job and store job id
+        job = queue.enqueue(perform_scan_job, scan_id, urls, timeout, task_id)
+        conn = get_conn()
+        conn.execute("UPDATE webcam_tasks SET job_id = ? WHERE id = ?", (job.get_id(), task_id))
+        conn.commit()
+        conn.close()
+        return {'task_id': task_id, 'job_id': job.get_id()}
+    else:
+        # Fall back to a thread-based background run
+        import threading
+
+        def run():
+            perform_scan_job(scan_id, urls, timeout=timeout, task_id=task_id)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        return {'task_id': task_id, 'job_id': None}
+
+
 @app.route("/scan_webcams", methods=["POST"])
 def scan_webcams():
     urls_text = request.form.get("urls", "")
@@ -346,16 +475,50 @@ def scan_webcams():
     except Exception:
         timeout = 8
 
-    urls = expand_patterns(urls_text, replacements)
-    if not urls:
-        return jsonify({"error": "Provide one or more URLs or a pattern."}), 400
+    raw_items = expand_patterns(urls_text, replacements)
+    if not raw_items:
+        return jsonify({"error": "Provide one or more URLs, patterns, or keyword queries."}), 400
 
+    # Build a list of real http(s) URLs. If an item looks like a plain keyword
+    # (no scheme and no dot), treat it as a search query and expand to candidate
+    # webcam/stream URLs using search providers.
+    urls = []
+    for it in raw_items:
+        it = it.strip()
+        if not it:
+            continue
+        if it.lower().startswith(("http://", "https://")):
+            urls.append(it)
+            continue
+        # bare domain without scheme -> add http://
+        if re.match(r"^[\w\-]+\.[\w\.-]+", it):
+            urls.append("http://" + it)
+            continue
+
+        # otherwise treat as keyword search
+        candidates = find_webcam_urls_from_query(it, max_results=8)
+        for c in candidates:
+            urls.append(c)
+
+    if not urls:
+        return jsonify({"error": "No candidate URLs found from provided inputs."}), 400
+
+    # create scan row
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("INSERT INTO webcam_scans DEFAULT VALUES")
     scan_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # background requested?
+    if request.form.get('background') in ('1', 'true', 'yes', 'on'):
+        job = enqueue_scan_job(scan_id, urls, timeout=timeout)
+        return jsonify({"scan_id": scan_id, "background": True, "task": job})
 
     results = {"success": [], "failure": []}
+    conn = get_conn()
+    cur = conn.cursor()
     for u in urls:
         ok, status, ctype, note = check_url(u, timeout=timeout)
         if ok:
@@ -374,22 +537,162 @@ def scan_webcams():
     conn.commit()
     conn.close()
 
-    return jsonify({"scan_id": scan_id, "results": results, "count": len(urls)})
+    return jsonify({"scan_id": scan_id, "results": results, "count": len(urls), "background": False})
+
+
+@app.route('/enqueue_scan', methods=['POST'])
+def enqueue_scan():
+    urls_text = request.form.get('urls', '')
+    replacements = request.form.get('replacements', '')
+    try:
+        timeout = int(request.form.get('timeout', 8))
+    except Exception:
+        timeout = 8
+    raw_items = expand_patterns(urls_text, replacements)
+    if not raw_items:
+        return jsonify({'error': 'Provide one or more URLs, patterns, or keyword queries.'}), 400
+
+    urls = []
+    for it in raw_items:
+        it = it.strip()
+        if not it:
+            continue
+        if it.lower().startswith(("http://", "https://")):
+            urls.append(it)
+            continue
+        if re.match(r"^[\w\-]+\.[\w\.-]+", it):
+            urls.append("http://" + it)
+            continue
+        candidates = find_webcam_urls_from_query(it, max_results=8)
+        for c in candidates:
+            urls.append(c)
+
+    if not urls:
+        return jsonify({'error': 'No candidate URLs found from provided inputs.'}), 400
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO webcam_scans DEFAULT VALUES")
+    scan_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    job = enqueue_scan_job(scan_id, urls, timeout=timeout)
+    return jsonify({'scan_id': scan_id, 'task': job, 'rq_available': RQ_AVAILABLE})
+
+
+@app.route('/scan_status')
+def scan_status():
+    job_id = request.args.get('job_id')
+    task_id = request.args.get('task_id')
+    conn = get_conn()
+    cur = conn.cursor()
+    if task_id:
+        row = cur.execute('SELECT id, scan_id, job_id, status, progress, total, created_at, updated_at FROM webcam_tasks WHERE id = ?', (task_id,)).fetchone()
+        conn.close()
+        return jsonify(dict(row) if row else {})
+    if job_id:
+        row = cur.execute('SELECT id, scan_id, job_id, status, progress, total, created_at, updated_at FROM webcam_tasks WHERE job_id = ?', (job_id,)).fetchone()
+        conn.close()
+        return jsonify(dict(row) if row else {})
+    conn.close()
+    return jsonify({})
+
+
+@app.route('/export_webcams')
+def export_webcams():
+    which = request.args.get('which', 'success')
+    conn = get_conn()
+    if which == 'failure':
+        rows = conn.execute('SELECT url,error,created_at FROM webcam_failure ORDER BY id DESC').fetchall()
+        headers = ['url', 'error', 'created_at']
+    else:
+        rows = conn.execute('SELECT url,status_code,content_type,note,created_at FROM webcam_success ORDER BY id DESC').fetchall()
+        headers = ['url', 'status_code', 'content_type', 'note', 'created_at']
+    conn.close()
+
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(headers)
+    for r in rows:
+        cw.writerow([r[h] for h in headers])
+
+    output = si.getvalue()
+    return (output, 200, {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': f'attachment; filename="webcam_{which}_{datetime.datetime.utcnow().isoformat()}.csv"'
+    })
+
+
+@app.route('/import_webcams', methods=['POST'])
+def import_webcams():
+    which = request.args.get('which', 'success')
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'error': 'file required'}), 400
+    stream = io.StringIO(f.stream.read().decode('utf-8'))
+    reader = csv.DictReader(stream)
+    conn = get_conn()
+    cur = conn.cursor()
+    count = 0
+    for row in reader:
+        url = row.get('url') or row.get('URL')
+        if not url:
+            continue
+        if which == 'failure':
+            error = row.get('error') or ''
+            cur.execute('INSERT INTO webcam_failure(scan_id, url, error) VALUES(?, ?, ?)', (None, url, error))
+        else:
+            status_code = row.get('status_code') or row.get('status') or 0
+            content_type = row.get('content_type') or ''
+            note = row.get('note') or ''
+            cur.execute('INSERT INTO webcam_success(scan_id, url, status_code, content_type, note) VALUES(?, ?, ?, ?, ?)', (None, url, status_code, content_type, note))
+        count += 1
+    conn.commit()
+    conn.close()
+    return jsonify({'imported': count})
 
 
 @app.route("/saved_webcams")
 def saved_webcams():
-    q = request.args.get("q", "").strip().lower()
-    which = request.args.get("which", "success")
+    q = request.args.get('q', '').strip().lower()
+    which = request.args.get('which', 'success')
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = min(200, max(5, int(request.args.get('per_page', 50))))
+    content_type = request.args.get('content_type', '').strip().lower()
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
+
+    params = []
+    where_clauses = []
+    if q:
+        where_clauses.append('lower(url) LIKE ?')
+        params.append(f'%{q}%')
+    if content_type:
+        where_clauses.append('lower(content_type) LIKE ?')
+        params.append(f'%{content_type}%')
+    if date_from:
+        where_clauses.append('date(created_at) >= date(?)')
+        params.append(date_from)
+    if date_to:
+        where_clauses.append('date(created_at) <= date(?)')
+        params.append(date_to)
+
+    where_sql = (' WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
+    offset = (page - 1) * per_page
+
     conn = get_conn()
-    if which == "failure":
-        rows = conn.execute("SELECT * FROM webcam_failure WHERE lower(url) LIKE ? ORDER BY id DESC LIMIT 200", (f"%{q}%",)).fetchall()
-        data = [dict(r) for r in rows]
+    if which == 'failure':
+        sql = f"SELECT * FROM webcam_failure {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?"
     else:
-        rows = conn.execute("SELECT * FROM webcam_success WHERE lower(url) LIKE ? ORDER BY id DESC LIMIT 200", (f"%{q}%",)).fetchall()
-        data = [dict(r) for r in rows]
+        sql = f"SELECT * FROM webcam_success {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?"
+
+    rows = conn.execute(sql, (*params, per_page, offset)).fetchall()
+    data = [dict(r) for r in rows]
+    # count total
+    count_sql = f"SELECT COUNT(1) as cnt FROM {'webcam_failure' if which=='failure' else 'webcam_success'} {where_sql}"
+    total = conn.execute(count_sql, params).fetchone()['cnt']
     conn.close()
-    return jsonify(data)
+    return jsonify({'items': data, 'page': page, 'per_page': per_page, 'total': total})
 
 
 @app.route("/clear_recent_scan", methods=["POST"])
@@ -433,6 +736,55 @@ def update_learning_weights(query_terms, scores):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+def display_title_for_url(u: str):
+    try:
+        p = urlparse(u)
+        title = p.netloc
+        if p.path and p.path != "/":
+            title += p.path
+        return title
+    except Exception:
+        return u
+
+
+@app.route('/webcams_page')
+def webcams_page():
+    """Render a simple public-facing page of saved webcams filtered by `q`.
+    Example: /webcams_page?q=everett
+    """
+    q = (request.args.get('q') or '').strip().lower()
+    limit = min(200, max(10, int(request.args.get('limit') or 50)))
+
+    conn = get_conn()
+    cur = conn.cursor()
+    params = []
+    where = ''
+    if q:
+        where = "WHERE lower(url) LIKE ? OR lower(note) LIKE ? OR lower(content_type) LIKE ?"
+        params = [f'%{q}%', f'%{q}%', f'%{q}%']
+
+    sql = f"SELECT url, status_code, content_type, note, created_at FROM webcam_success {where} ORDER BY id DESC LIMIT ?"
+    rows = cur.execute(sql, (*params, limit)).fetchall()
+    conn.close()
+
+    items = []
+    for r in rows:
+        url = r['url']
+        ctype = r['content_type'] or ''
+        note = r['note'] or ''
+        is_video = any(ext in url.lower() for ext in ('.m3u8', '.mjpeg', '.mp4', '.mjpg')) or ctype.startswith('video')
+        items.append({
+            'url': url,
+            'title': display_title_for_url(url),
+            'content_type': ctype,
+            'note': note,
+            'is_video': is_video,
+        })
+
+    page_title = f"Webcams matching '{q}'" if q else 'Webcams'
+    return render_template('webcams_page.html', title=page_title, items=items, query=q)
 
 @app.route("/search", methods=["POST"])
 def search():
