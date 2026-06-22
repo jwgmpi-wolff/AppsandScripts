@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPTraceback — Geolocation Lookup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <!-- Header -->
+    <header>
+      <div class="logo">
+        <span class="logo-icon">&#127758;</span>
+        <span class="logo-text">IPTraceback</span>
+      </div>
+      <p class="tagline">Approximate geolocation for any public IP address, domain, or URL</p>
+    </header>
+
+    <!-- Lookup form -->
+    <main>
+      <section class="card form-card">
+        <form id="lookup-form" autocomplete="off" novalidate>
+          <label for="query-input" class="visually-hidden">IP address, domain, or URL</label>
+          <div class="input-row">
+            <input
+              id="query-input"
+              type="text"
+              placeholder="e.g.  8.8.8.8  •  example.com  •  https://www.github.com"
+              spellcheck="false"
+              required
+            />
+            <button type="submit" id="lookup-btn">
+              <span class="btn-icon">&#128269;</span>
+              Lookup
+            </button>
+          </div>
+          <div id="input-error" class="input-error" role="alert" aria-live="polite"></div>
+        </form>
+
+        <!-- Examples -->
+        <div class="examples">
+          <span class="examples-label">Try:</span>
+          <button class="example-chip" data-value="8.8.8.8">8.8.8.8</button>
+          <button class="example-chip" data-value="1.1.1.1">1.1.1.1</button>
+          <button class="example-chip" data-value="github.com">github.com</button>
+          <button class="example-chip" data-value="https://www.microsoft.com">microsoft.com</button>
+        </div>
+      </section>
+
+      <!-- Loading indicator -->
+      <div id="loading" class="loading hidden" aria-live="polite" aria-busy="true">
+        <div class="spinner"></div>
+        <span>Looking up location&hellip;</span>
+      </div>
+
+      <!-- Error banner -->
+      <div id="error-banner" class="error-banner hidden" role="alert" aria-live="assertive"></div>
+
+      <!-- Results -->
+      <section id="results-section" class="card results-card hidden">
+        <div class="results-header">
+          <h2 class="results-title">
+            <span class="results-icon">&#128205;</span>
+            Location Results
+          </h2>
+          <span class="results-note">All results are approximate and do not represent an exact physical address.</span>
+        </div>
+
+        <div class="results-grid">
+          <!-- Left column: identity -->
+          <div class="result-group">
+            <h3 class="group-title">Input &amp; Identity</h3>
+            <table class="result-table">
+              <tbody>
+                <tr><th>Input Provided</th><td id="r-input"></td></tr>
+                <tr><th>Input Type</th><td id="r-type"></td></tr>
+                <tr><th>Resolved Hostname</th><td id="r-hostname"></td></tr>
+                <tr><th>Resolved IP</th><td id="r-ip"></td></tr>
+                <tr><th>Organization / ISP</th><td id="r-org"></td></tr>
+                <tr><th>ASN</th><td id="r-asn"></td></tr>
+                <tr><th>ASN Name</th><td id="r-asnname"></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Right column: location -->
+          <div class="result-group">
+            <h3 class="group-title">Location Details</h3>
+            <table class="result-table">
+              <tbody>
+                <tr><th>Country</th><td id="r-country"></td></tr>
+                <tr><th>State / Province</th><td id="r-state"></td></tr>
+                <tr><th>City</th><td id="r-city"></td></tr>
+                <tr><th>Postal Code</th><td id="r-postal"></td></tr>
+                <tr><th>Latitude</th><td id="r-lat"></td></tr>
+                <tr><th>Longitude</th><td id="r-lon"></td></tr>
+                <tr><th>Time Zone</th><td id="r-tz"></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Map link -->
+        <div id="map-link-row" class="map-link-row hidden">
+          <a id="map-link" href="#" target="_blank" rel="noopener noreferrer" class="map-btn">
+            &#127760; View approximate location on map
+          </a>
+        </div>
+
+      </section>
+    </main>
+
+    <footer>
+      <p>Geolocation data provided by <a href="https://ip-api.com" target="_blank" rel="noopener noreferrer">ip-api.com</a> &mdash; for informational purposes only.</p>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

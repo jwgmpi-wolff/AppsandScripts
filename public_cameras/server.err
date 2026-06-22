@@ -1,0 +1,116 @@
+2026-06-14 14:24:23,726 INFO agent.db DB initialised at C:\.git\public_cameras\cameras.db
+2026-06-14 14:24:23,730 INFO cameras-agent Starting Public Cameras Agent on port 5000
+2026-06-14 14:24:23,785 INFO werkzeug [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.0.0.112:5000
+2026-06-14 14:24:23,786 INFO werkzeug [33mPress CTRL+C to quit[0m
+2026-06-14 14:24:33,390 INFO agent.crawler Starting camera search  keyword=''
+2026-06-14 14:24:33,391 INFO agent.crawler Seeds loaded: 179
+2026-06-14 14:24:34,119 INFO agent.sources.faa FAA: built 123 camera entries
+2026-06-14 14:24:34,274 INFO httpx HTTP Request: GET https://www.tripcheck.com/tripcheck/Cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,282 INFO agent.sources.dotcams TripCheck: 0 cameras
+2026-06-14 14:24:34,341 INFO httpx HTTP Request: GET https://data.alertwildfire.org/api/firehawks-rv3/latest "HTTP/1.1 502 Bad Gateway"
+2026-06-14 14:24:34,372 ERROR agent.sources.alertwildfire AlertWildfire fetch failed: Server error '502 Bad Gateway' for url 'https://data.alertwildfire.org/api/firehawks-rv3/latest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502
+2026-06-14 14:24:34,383 INFO httpx HTTP Request: GET https://cotrip.org/speed/getCameras.do "HTTP/1.1 308 Permanent Redirect"
+2026-06-14 14:24:34,392 INFO httpx HTTP Request: GET https://www.wyoroad.info/iticket/xml/wy511_travelerinfo.xml "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:34,395 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d2/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,398 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d4/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,399 INFO agent.sources.dotcams COTRIP: 0 cameras
+2026-06-14 14:24:34,403 INFO agent.sources.dotcams WYDOT: 0 cameras
+2026-06-14 14:24:34,436 INFO httpx HTTP Request: GET https://nvroads.com/api/cameras "HTTP/1.1 301 Moved Permanently"
+2026-06-14 14:24:34,438 INFO agent.sources.dotcams NV511: 0 cameras
+2026-06-14 14:24:34,440 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d12/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,441 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d11/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,442 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d1/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,446 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d10/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,449 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d5/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,450 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d6/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,451 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d9/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,452 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d7/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,453 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d3/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,454 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d8/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,474 INFO agent.sources.caltrans Caltrans: collected 0 cameras
+2026-06-14 14:24:34,489 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/texas/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,499 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/europe/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,504 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/usa/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,505 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/canada/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,518 INFO httpx HTTP Request: GET https://www.udottraffic.utah.gov/1.0/udotcamera "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,520 INFO agent.sources.dotcams UDOT: 0 cameras
+2026-06-14 14:24:34,522 INFO httpx HTTP Request: GET https://511mn.org/cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,529 INFO agent.sources.dotcams MnDOT: 0 cameras
+2026-06-14 14:24:34,584 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/illinois/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,609 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/california/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,621 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/newyork/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,625 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,627 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/florida/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,656 INFO httpx HTTP Request: GET https://www.earthcam.com/world/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,790 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/canada.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,895 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/usa.html "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:34,898 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/espana.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,899 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/italia.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:40,498 INFO agent.sources.aggregators Aggregators: collected 1180 cameras
+2026-06-14 14:24:40,505 INFO agent.crawler   alertwildfire    \u2192 0 cameras
+2026-06-14 14:24:40,507 INFO agent.crawler   caltrans         \u2192 0 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   dotcams          \u2192 0 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   faa              \u2192 123 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   aggregators      \u2192 1180 cameras
+2026-06-14 14:24:40,509 INFO agent.crawler Total after dedup: 1372
+2026-06-14 14:24:40,558 INFO agent.crawler Search complete in 7.17s – 1372 total, 1372 after filter
+2026-06-14 14:24:40,565 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:40] "POST /api/search HTTP/1.1" 200 -
+2026-06-14 14:24:48,933 INFO agent.crawler Starting camera search  keyword='alaska'
+2026-06-14 14:24:48,935 INFO agent.crawler Seeds loaded: 179
+2026-06-14 14:24:49,501 INFO agent.sources.faa FAA: built 123 camera entries
+2026-06-14 14:24:49,697 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/canada/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,699 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/europe/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,701 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/newyork/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,706 INFO httpx HTTP Request: GET https://511mn.org/cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:49,712 INFO agent.sources.dotcams MnDOT: 0 cameras
+2026-06-14 14:24:49,715 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/usa/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,715 INFO httpx HTTP Request: GET https://cotrip.org/speed/getCameras.do "HTTP/1.1 308 Permanent Redirect"
+2026-06-14 14:24:49,719 INFO agent.sources.dotcams COTRIP: 0 cameras
+2026-06-14 14:24:49,720 INFO httpx HTTP Request: GET https://www.tripcheck.com/tripcheck/Cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:49,722 INFO agent.sources.dotcams TripCheck: 0 cameras
+2026-06-14 14:24:49,722 INFO httpx HTTP Request: GET https://nvroads.com/api/cameras "HTTP/1.1 301 Moved Permanently"
+2026-06-14 14:24:49,724 INFO agent.sources.dotcams NV511: 0 cameras
+2026-06-14 14:24:49,735 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/florida/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,737 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d11/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,742 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d3/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,745 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d5/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,749 INFO httpx HTTP Request: GET https://data.alertwildfire.org/api/firehawks-rv3/latest "HTTP/1.1 502 Bad Gateway"
+2026-06-14 14:24:49,750 ERROR agent.sources.alertwildfire AlertWildfire fetch failed: Server error '502 Bad Gateway' for url 'https://data.alertwildfire.org/api/firehawks-rv3/latest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502
+2026-06-14 14:24:49,750 INFO httpx HTTP Request: GET https://www.wyoroad.info/iticket/xml/wy511_travelerinfo.xml "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:49,752 INFO agent.sources.dotcams WYDOT: 0 cameras
+2026-06-14 14:24:49,756 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/texas/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,765 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d6/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,766 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d2/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,770 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d10/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,775 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d1/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,776 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d7/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,777 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d8/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,780 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d4/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,784 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d9/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,786 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d12/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,787 INFO agent.sources.caltrans Caltrans: collected 0 cameras
+2026-06-14 14:24:49,848 INFO httpx HTTP Request: GET https://www.udottraffic.utah.gov/1.0/udotcamera "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,850 INFO agent.sources.dotcams UDOT: 0 cameras
+2026-06-14 14:24:49,864 INFO httpx HTTP Request: GET https://www.earthcam.com/world/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,875 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/california/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,899 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,921 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/illinois/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:50,112 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/canada.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:50,224 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/usa.html "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:50,225 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/espana.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:50,226 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/italia.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:55,572 INFO agent.sources.aggregators Aggregators: collected 1180 cameras
+2026-06-14 14:24:55,585 INFO agent.crawler   alertwildfire    \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   caltrans         \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   dotcams          \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   faa              \u2192 123 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   aggregators      \u2192 1180 cameras
+2026-06-14 14:24:55,587 INFO agent.crawler Total after dedup: 1372
+2026-06-14 14:24:55,679 INFO agent.crawler Search complete in 6.75s – 1372 total, 139 after filter
+2026-06-14 14:24:55,682 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:55] "POST /api/search HTTP/1.1" 200 -
+2026-06-14 14:24:57,728 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:57] "GET /api/stats HTTP/1.1" 200 -
