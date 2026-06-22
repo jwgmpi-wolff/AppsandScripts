@@ -4,20 +4,23 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 import azure.functions as func
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -30,11 +33,13 @@ HTTP_ROUTE_AUTH_LEVEL = (
     else func.AuthLevel.FUNCTION
 )
 
-ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
+_artifact_dir_override = (os.getenv("FINOPS_ARTIFACT_DIR") or "").strip()
+ARTIFACT_DIR = Path(_artifact_dir_override) if _artifact_dir_override else (Path(tempfile.gettempdir()) / "finops-artifacts")
 ARTIFACT_DIR.mkdir(exist_ok=True)
 HOURS_PER_YEAR = 24 * 365
 RETAIL_CACHE_TTL_HOURS = 24
 REPORT_DB_PATH = ARTIFACT_DIR / "finops_reports.db"
+_CURRENT_SUBSCRIPTION_ID = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
 
 
 def _resolve_az_executable() -> str:
@@ -59,7 +64,11 @@ def _resolve_az_executable() -> str:
 
 
 def run_az(*args: str) -> Any:
-    az_executable = _resolve_az_executable()
+    try:
+        az_executable = _resolve_az_executable()
+    except RuntimeError:
+        return _run_az_fallback(*args)
+
     completed = subprocess.run([az_executable, *args], capture_output=True, text=True)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "Azure CLI command failed")
@@ -70,6 +79,123 @@ def run_az(*args: str) -> Any:
         return json.loads(output)
     except json.JSONDecodeError:
         return output
+
+
+def _get_arm_access_token() -> str:
+    resource = "https://management.azure.com/"
+    identity_endpoint = os.getenv("IDENTITY_ENDPOINT")
+    identity_header = os.getenv("IDENTITY_HEADER")
+
+    if identity_endpoint and identity_header:
+        token_url = f"{identity_endpoint}?api-version=2019-08-01&resource={quote(resource, safe='')}"
+        request = Request(token_url, headers={"X-IDENTITY-HEADER": identity_header, "Metadata": "true"})
+    else:
+        token_url = f"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource={quote(resource, safe='')}"
+        request = Request(token_url, headers={"Metadata": "true"})
+
+    with urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    token = payload.get("access_token")
+    if not token:
+        raise RuntimeError("Managed identity token acquisition failed")
+    return str(token)
+
+
+def _arm_get_paged(path: str, params: dict[str, str]) -> list[dict[str, Any]]:
+    token = _get_arm_access_token()
+    base = "https://management.azure.com"
+    next_url = f"{base}{path}?{urlencode(params)}"
+    items: list[dict[str, Any]] = []
+
+    while next_url:
+        request = Request(next_url, headers={"Authorization": f"Bearer {token}"})
+        with urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        page_items = payload.get("value") if isinstance(payload, dict) else None
+        if isinstance(page_items, list):
+            items.extend(page_items)
+        next_link = payload.get("nextLink") if isinstance(payload, dict) else None
+        next_url = str(next_link) if next_link else ""
+
+    return items
+
+
+def _arm_get(path: str, api_version: str) -> dict[str, Any]:
+    token = _get_arm_access_token()
+    url = f"https://management.azure.com{path}?api-version={quote(api_version, safe='')}"
+    request = Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urlopen(request, timeout=60) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _run_az_fallback(*args: str) -> Any:
+    global _CURRENT_SUBSCRIPTION_ID
+    if len(args) >= 2 and args[0] == "account" and args[1] == "list":
+        subscriptions = _arm_get_paged("/subscriptions", {"api-version": "2020-01-01"})
+        return [{"id": item.get("subscriptionId"), "name": item.get("displayName")} for item in subscriptions]
+
+    if len(args) >= 4 and args[0] == "account" and args[1] == "set" and args[2] == "--subscription":
+        _CURRENT_SUBSCRIPTION_ID = args[3]
+        return []
+
+    sub_id = _CURRENT_SUBSCRIPTION_ID or (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+    if not sub_id:
+        raise RuntimeError("No subscription id is available for non-CLI execution")
+
+    if len(args) >= 2 and args[0] == "resource" and args[1] == "list":
+        resources = _arm_get_paged(f"/subscriptions/{sub_id}/resources", {"api-version": "2021-04-01"})
+        output: list[dict[str, Any]] = []
+        for item in resources:
+            output.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "type": item.get("type"),
+                    "location": item.get("location"),
+                    "resourceGroup": item.get("resourceGroup"),
+                    "subscriptionId": sub_id,
+                }
+            )
+        return output
+
+    if len(args) >= 3 and args[0] == "consumption" and args[1] == "usage" and args[2] == "list":
+        logging.info("Azure CLI not available in host; cost usage collection is skipped in fallback mode.")
+        return []
+
+    if len(args) >= 3 and args[0] == "advisor" and args[1] == "recommendation" and args[2] == "list":
+        recommendations = _arm_get_paged(
+            f"/subscriptions/{sub_id}/providers/Microsoft.Advisor/recommendations",
+            {"api-version": "2023-01-01"},
+        )
+        output = []
+        for item in recommendations:
+            props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+            short_desc = props.get("shortDescription") if isinstance(props.get("shortDescription"), dict) else {}
+            output.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "category": props.get("category"),
+                    "impact": props.get("impact"),
+                    "severity": props.get("risk"),
+                    "description": short_desc.get("problem"),
+                    "solution": short_desc.get("solution"),
+                    "resourceId": props.get("resourceMetadata", {}).get("resourceId") if isinstance(props.get("resourceMetadata"), dict) else None,
+                    "annualSavingsAmount": props.get("annualSavingsAmount"),
+                    "savingsAmount": props.get("savingsAmount"),
+                    "extendedProperties": props.get("extendedProperties") if isinstance(props.get("extendedProperties"), dict) else {},
+                }
+            )
+        return output
+
+    if len(args) >= 5 and args[0] == "vm" and args[1] == "show" and args[2] == "--ids":
+        vm_id = args[3]
+        vm = _arm_get(vm_id, "2023-09-01")
+        hardware = vm.get("properties", {}).get("hardwareProfile") if isinstance(vm.get("properties"), dict) else {}
+        return hardware.get("vmSize")
+
+    raise RuntimeError("Azure CLI is not available and requested command is unsupported in fallback mode")
 
 
 def _month_range() -> tuple[str, str]:
@@ -719,25 +845,69 @@ def write_sqlite(snapshot: dict[str, Any]) -> Path:
 def make_pdf(snapshot: dict[str, Any]) -> Path:
     pdf_path = ARTIFACT_DIR / "finops_summary.pdf"
     styles = getSampleStyleSheet()
-    story = [Paragraph("Azure FinOps Summary", styles['Heading1']), Spacer(1, 0.2 * inch)]
-    story.append(Paragraph(f"Generated: {snapshot['generatedAt']}", styles['BodyText']))
-    story.append(Paragraph(f"Period: {snapshot['startDate']} to {snapshot['endDate']}", styles['BodyText']))
+    body_style = styles["BodyText"].clone("FinOpsBody")
+    body_style.fontSize = 8
+    body_style.leading = 9
+    heading1_style = styles["Heading1"].clone("FinOpsHeading1")
+    heading1_style.fontSize = 15
+    heading1_style.leading = 17
+    heading2_style = styles["Heading2"].clone("FinOpsHeading2")
+    heading2_style.fontSize = 10
+    heading2_style.leading = 12
+    cell_style = styles["BodyText"].clone("FinOpsCell")
+    cell_style.fontSize = 5.5
+    cell_style.leading = 6.2
+    cell_style.wordWrap = "CJK"
+    cell_style.splitLongWords = True
+    header_cell_style = styles["BodyText"].clone("FinOpsHeaderCell")
+    header_cell_style.fontSize = 6
+    header_cell_style.leading = 6.6
+    header_cell_style.wordWrap = "CJK"
+    header_cell_style.splitLongWords = True
+
+    def _pdf_cell(value: Any, *, header: bool = False) -> Paragraph:
+        text = "" if value is None else str(value)
+        text = escape(text).replace("\n", "<br/>")
+        return Paragraph(text, header_cell_style if header else cell_style)
+
+    story = [Paragraph("Azure FinOps Summary", heading1_style), Spacer(1, 0.12 * inch)]
+    story.append(Paragraph(f"Generated: {snapshot['generatedAt']}", body_style))
+    story.append(Paragraph(f"Period: {snapshot['startDate']} to {snapshot['endDate']}", body_style))
     story.append(Spacer(1, 0.2 * inch))
 
     total_cost = round(sum(float(item.get('cost') or 0) for item in snapshot['costs']), 2)
-    story.append(Paragraph(f"Total cost in period: ${total_cost:,.2f}", styles['Heading2']))
+    story.append(Paragraph(f"Total cost in period: ${total_cost:,.2f}", heading2_style))
     story.append(Spacer(1, 0.1 * inch))
 
-    resource_table = [['Resource', 'Type', 'Location', 'Subscription'], *[(r.get('name','-'), r.get('type','-'), r.get('location','-'), r.get('subscriptionId','-')) for r in snapshot['resources'][:15]]]
-    table = Table(resource_table, repeatRows=1)
+    resource_table = [[
+        _pdf_cell('Resource', header=True),
+        _pdf_cell('Type', header=True),
+        _pdf_cell('Location', header=True),
+        _pdf_cell('Subscription', header=True),
+    ], *[
+        (
+            _pdf_cell(r.get('name', '-')),
+            _pdf_cell(r.get('type', '-')),
+            _pdf_cell(r.get('location', '-')),
+            _pdf_cell(r.get('subscriptionId', '-')),
+        )
+        for r in snapshot['resources'][:15]
+    ]]
+    table = Table(resource_table, repeatRows=1, colWidths=[2.5 * inch, 2.3 * inch, 1.6 * inch, 2.4 * inch])
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2F6FED')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('LEADING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
     ]))
-    story.append(Paragraph("Top resources", styles['Heading2']))
+    story.append(Paragraph("Top resources", heading2_style))
     story.append(table)
     story.append(Spacer(1, 0.2 * inch))
 
@@ -747,53 +917,70 @@ def make_pdf(snapshot: dict[str, Any]) -> Path:
     savings_plan_3y_total = round(sum(_to_float(rec.get('savingsPlanSavings3Year')) or 0 for rec in snapshot['recommendations']), 2)
 
     story.append(Spacer(1, 0.2 * inch))
-    story.append(Paragraph("Estimated commitment savings totals", styles['Heading2']))
-    story.append(Paragraph(f"Reservation 1Y: ${reservation_1y_total:,.2f}", styles['BodyText']))
-    story.append(Paragraph(f"Reservation 3Y: ${reservation_3y_total:,.2f}", styles['BodyText']))
-    story.append(Paragraph(f"Savings Plan 1Y: ${savings_plan_1y_total:,.2f}", styles['BodyText']))
-    story.append(Paragraph(f"Savings Plan 3Y: ${savings_plan_3y_total:,.2f}", styles['BodyText']))
+    story.append(Paragraph("Estimated commitment savings totals", heading2_style))
+    story.append(Paragraph(f"Reservation 1Y: ${reservation_1y_total:,.2f}", body_style))
+    story.append(Paragraph(f"Reservation 3Y: ${reservation_3y_total:,.2f}", body_style))
+    story.append(Paragraph(f"Savings Plan 1Y: ${savings_plan_1y_total:,.2f}", body_style))
+    story.append(Paragraph(f"Savings Plan 3Y: ${savings_plan_3y_total:,.2f}", body_style))
     story.append(Spacer(1, 0.1 * inch))
 
     rec_table = [[
-        'Recommendation',
-        'Impact',
-        'Resource',
-        'Resv 1Y',
-        'Resv 2Y',
-        'Resv 3Y',
-        'SP 1Y',
-        'SP 2Y',
-        'SP 3Y',
-        'Currency',
-        'Basis',
+        _pdf_cell('Recommendation', header=True),
+        _pdf_cell('Impact', header=True),
+        _pdf_cell('Resource', header=True),
+        _pdf_cell('Resv 1Y', header=True),
+        _pdf_cell('Resv 2Y', header=True),
+        _pdf_cell('Resv 3Y', header=True),
+        _pdf_cell('SP 1Y', header=True),
+        _pdf_cell('SP 2Y', header=True),
+        _pdf_cell('SP 3Y', header=True),
+        _pdf_cell('Currency', header=True),
+        _pdf_cell('Basis', header=True),
     ], *[
         (
-            rec.get('name', '-'),
-            rec.get('impact', '-'),
-            rec.get('resourceName', '-'),
-            rec.get('reservationSavings1Year', '-'),
-            rec.get('reservationSavings2Year', '-'),
-            rec.get('reservationSavings3Year', '-'),
-            rec.get('savingsPlanSavings1Year', '-'),
-            rec.get('savingsPlanSavings2Year', '-'),
-            rec.get('savingsPlanSavings3Year', '-'),
-            rec.get('savingsCurrency') or rec.get('pricingCurrency') or '-',
-            rec.get('savingsEstimateBasis', '-'),
+            _pdf_cell(rec.get('name', '-')),
+            _pdf_cell(rec.get('impact', '-')),
+            _pdf_cell(rec.get('resourceName', '-')),
+            _pdf_cell(rec.get('reservationSavings1Year', '-')),
+            _pdf_cell(rec.get('reservationSavings2Year', '-')),
+            _pdf_cell(rec.get('reservationSavings3Year', '-')),
+            _pdf_cell(rec.get('savingsPlanSavings1Year', '-')),
+            _pdf_cell(rec.get('savingsPlanSavings2Year', '-')),
+            _pdf_cell(rec.get('savingsPlanSavings3Year', '-')),
+            _pdf_cell(rec.get('savingsCurrency') or rec.get('pricingCurrency') or '-'),
+            _pdf_cell(rec.get('savingsEstimateBasis', '-')),
         )
         for rec in snapshot['recommendations']
     ]]
-    rec = Table(rec_table, repeatRows=1)
+    rec = Table(
+        rec_table,
+        repeatRows=1,
+        colWidths=[1.55 * inch, 0.5 * inch, 1.15 * inch, 0.55 * inch, 0.55 * inch, 0.55 * inch, 0.55 * inch, 0.55 * inch, 0.55 * inch, 0.55 * inch, 0.65 * inch],
+    )
     rec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F766E')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTSIZE', (0, 0), (-1, -1), 6),
+        ('LEADING', (0, 0), (-1, -1), 7),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 2),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 1),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
     ]))
-    story.append(Paragraph("Advisor recommendations", styles['Heading2']))
+    story.append(Paragraph("Advisor recommendations", heading2_style))
     story.append(rec)
 
-    doc = SimpleDocTemplate(str(pdf_path), pagesize=letter)
+    doc = SimpleDocTemplate(
+        str(pdf_path),
+        pagesize=landscape(letter),
+        leftMargin=0.3 * inch,
+        rightMargin=0.3 * inch,
+        topMargin=0.35 * inch,
+        bottomMargin=0.35 * inch,
+    )
     doc.build(story)
     return pdf_path
 
@@ -803,61 +990,221 @@ def make_powerpoint(snapshot: dict[str, Any]) -> Path:
     deck.slide_width = Inches(13.333)
     deck.slide_height = Inches(7.5)
 
+    recommendations = snapshot.get('recommendations', [])
+    resources = snapshot.get('resources', [])
+
+    resource_lookup = {
+        str(resource.get('id') or '').lower(): resource
+        for resource in resources
+        if resource.get('id')
+    }
+    associated_resources: dict[str, dict[str, Any]] = {}
+    category_counts: Counter[str] = Counter()
+    impact_counts: Counter[str] = Counter()
+
+    for rec in recommendations:
+        category = str(rec.get('category') or 'Unknown')
+        impact = str(rec.get('impact') or 'Unknown')
+        category_counts[category] += 1
+        impact_counts[impact] += 1
+
+        resource_id = str(rec.get('resourceId') or '').strip()
+        if not resource_id:
+            continue
+
+        key = resource_id.lower()
+        if key not in associated_resources:
+            resource_info = resource_lookup.get(key, {})
+            associated_resources[key] = {
+                'resourceId': resource_id,
+                'name': resource_info.get('name') or rec.get('resourceName') or '-',
+                'type': resource_info.get('type') or rec.get('resourceType') or '-',
+                'location': resource_info.get('location') or '-',
+                'resourceGroup': resource_info.get('resourceGroup') or '-',
+                'subscriptionId': resource_info.get('subscriptionId') or '-',
+                'recommendationCount': 0,
+                'highImpactCount': 0,
+                'reservationSavings1YearTotal': 0.0,
+                'savingsPlanSavings1YearTotal': 0.0,
+            }
+
+        current = associated_resources[key]
+        current['recommendationCount'] += 1
+        if impact.lower() == 'high':
+            current['highImpactCount'] += 1
+        current['reservationSavings1YearTotal'] += _to_float(rec.get('reservationSavings1Year')) or 0.0
+        current['savingsPlanSavings1YearTotal'] += _to_float(rec.get('savingsPlanSavings1Year')) or 0.0
+
+    associated_resource_rows = sorted(
+        associated_resources.values(),
+        key=lambda item: (
+            -int(item.get('recommendationCount') or 0),
+            str(item.get('name') or '').lower(),
+        ),
+    )
+
+    reservation_1y_total = round(sum(_to_float(rec.get('reservationSavings1Year')) or 0 for rec in recommendations), 2)
+    reservation_3y_total = round(sum(_to_float(rec.get('reservationSavings3Year')) or 0 for rec in recommendations), 2)
+    savings_plan_1y_total = round(sum(_to_float(rec.get('savingsPlanSavings1Year')) or 0 for rec in recommendations), 2)
+    savings_plan_3y_total = round(sum(_to_float(rec.get('savingsPlanSavings3Year')) or 0 for rec in recommendations), 2)
+
+    title_color = RGBColor(17, 24, 39)
+    subtitle_color = RGBColor(71, 85, 105)
+    body_color = RGBColor(30, 41, 59)
+    header_fill_color = RGBColor(30, 64, 175)
+    header_text_color = RGBColor(255, 255, 255)
+    row_alt_fill_color = RGBColor(248, 250, 252)
+    background_color = RGBColor(245, 247, 250)
+
+    def _set_slide_background(slide_obj: Any) -> None:
+        fill = slide_obj.background.fill
+        fill.solid()
+        fill.fore_color.rgb = background_color
+
+    def _style_title(slide_obj: Any, size: int = 28) -> None:
+        title_shape = slide_obj.shapes.title
+        if not title_shape or not title_shape.has_text_frame:
+            return
+        title_frame = title_shape.text_frame
+        for paragraph in title_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.LEFT
+            for run in paragraph.runs:
+                run.font.name = "Segoe UI Semibold"
+                run.font.size = Pt(size)
+                run.font.color.rgb = title_color
+
+    def _set_text_frame_lines(text_frame: Any, lines: list[str], font_size: int) -> None:
+        text_frame.clear()
+        for idx, line in enumerate(lines):
+            paragraph = text_frame.paragraphs[0] if idx == 0 else text_frame.add_paragraph()
+            paragraph.text = line
+            paragraph.level = 0
+            paragraph.space_after = Pt(6)
+            paragraph.alignment = PP_ALIGN.LEFT
+            for run in paragraph.runs:
+                run.font.name = "Segoe UI"
+                run.font.size = Pt(font_size)
+                run.font.color.rgb = subtitle_color if idx == 0 else body_color
+
     slide = deck.slides.add_slide(deck.slide_layouts[1])
+    _set_slide_background(slide)
     slide.shapes.title.text = "Azure FinOps Summary"
-    slide.placeholders[1].text = f"Generated {snapshot['generatedAt']}\nPeriod {snapshot['startDate']} to {snapshot['endDate']}"
+    _style_title(slide, size=30)
+    _set_text_frame_lines(
+        slide.placeholders[1].text_frame,
+        [
+            f"Generated {snapshot['generatedAt']}",
+            f"Period {snapshot['startDate']} to {snapshot['endDate']}",
+            f"Advisor recommendations: {len(recommendations)}",
+            f"Resources with recommendations: {len(associated_resource_rows)}",
+        ],
+        font_size=15,
+    )
 
     slide2 = deck.slides.add_slide(deck.slide_layouts[1])
-    slide2.shapes.title.text = "Top resources"
+    _set_slide_background(slide2)
+    slide2.shapes.title.text = "Advisor recommendations summary"
+    _style_title(slide2, size=26)
     body = slide2.placeholders[1].text_frame
-    body.clear()
-    for resource in snapshot['resources'][:8]:
-        p = body.paragraphs[0] if body.paragraphs else body.add_paragraph()
-        p.text = f"{resource.get('name', '-')} | {resource.get('type', '-')} | {resource.get('location', '-')}"
-        p.level = 0
+    top_categories = category_counts.most_common(3)
+    top_impacts = impact_counts.most_common(3)
+    summary_lines = [
+        f"Top categories: {', '.join(f'{name} ({count})' for name, count in top_categories) if top_categories else '-'}",
+        f"By impact: {', '.join(f'{name} ({count})' for name, count in top_impacts) if top_impacts else '-'}",
+        f"Reservation savings 1Y: {reservation_1y_total:,.2f}",
+        f"Reservation savings 3Y: {reservation_3y_total:,.2f}",
+        f"Savings Plan savings 1Y: {savings_plan_1y_total:,.2f}",
+        f"Savings Plan savings 3Y: {savings_plan_3y_total:,.2f}",
+    ]
+    _set_text_frame_lines(body, summary_lines, font_size=14)
 
     slide3 = deck.slides.add_slide(deck.slide_layouts[1])
-    slide3.shapes.title.text = "Advisor recommendations"
+    _set_slide_background(slide3)
+    slide3.shapes.title.text = "Top Advisor opportunities"
+    _style_title(slide3, size=26)
     body3 = slide3.placeholders[1].text_frame
-    body3.clear()
-    for rec in snapshot['recommendations'][:6]:
-        p = body3.paragraphs[0] if body3.paragraphs else body3.add_paragraph()
-        p.text = (
+    top_recommendations = sorted(
+        recommendations,
+        key=lambda rec: (
+            _impact_rank(rec.get('impact')),
+            -(_to_float(rec.get('reservationSavings1Year')) or 0),
+            -(_to_float(rec.get('savingsPlanSavings1Year')) or 0),
+        ),
+    )
+    top_lines: list[str] = []
+    for rec in top_recommendations[:6]:
+        top_lines.append(
             f"{rec.get('name', '-')} ({rec.get('impact', '-')}) | {rec.get('resourceName', '-')} | "
             f"Resv1Y {rec.get('reservationSavings1Year', '-')} | "
             f"SP1Y {rec.get('savingsPlanSavings1Year', '-')}"
         )
+    _set_text_frame_lines(body3, top_lines or ["No advisor recommendations found in this period."], font_size=13)
 
     slide4 = deck.slides.add_slide(deck.slide_layouts[5])
-    slide4.shapes.title.text = "Reservation and Savings Plan Details"
+    _set_slide_background(slide4)
+    slide4.shapes.title.text = "Resources associated with Advisor recommendations"
+    _style_title(slide4, size=24)
     top = Inches(1.2)
     left = Inches(0.3)
     width = Inches(12.7)
     height = Inches(5.8)
-    rows = min(len(snapshot['recommendations']), 10) + 1
+    rows = min(len(associated_resource_rows), 12) + 1
     cols = 8
     table_shape = slide4.shapes.add_table(rows, cols, left, top, width, height)
     table = table_shape.table
 
-    headers = ["Recommendation", "Resource", "Resv1Y", "Resv2Y", "Resv3Y", "SP1Y", "SP2Y", "SP3Y"]
-    for idx, header in enumerate(headers):
-        cell = table.cell(0, idx)
-        cell.text = header
+    headers = ["Resource Name", "Resource Type", "Location", "Resource Group", "Recommendations", "High Impact", "Resv1Y Total", "SP1Y Total"]
+    column_widths = [
+        Inches(2.2),
+        Inches(2.4),
+        Inches(1.0),
+        Inches(1.4),
+        Inches(1.0),
+        Inches(0.9),
+        Inches(1.4),
+        Inches(1.4),
+    ]
+    for idx, column_width in enumerate(column_widths):
+        table.columns[idx].width = column_width
 
-    for row_idx, rec in enumerate(snapshot['recommendations'][: rows - 1], start=1):
+    def _format_ppt_cell(cell: Any, text: str, is_header: bool = False) -> None:
+        cell.text = text
+        cell.margin_left = Inches(0.03)
+        cell.margin_right = Inches(0.03)
+        cell.margin_top = Inches(0.02)
+        cell.margin_bottom = Inches(0.02)
+        fill = cell.fill
+        fill.solid()
+        fill.fore_color.rgb = header_fill_color if is_header else RGBColor(255, 255, 255)
+        text_frame = cell.text_frame
+        text_frame.word_wrap = True
+        for paragraph in text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.LEFT
+            for run in paragraph.runs:
+                run.font.name = "Segoe UI"
+                run.font.size = Pt(8 if is_header else 7)
+                run.font.color.rgb = header_text_color if is_header else body_color
+
+    for idx, header in enumerate(headers):
+        _format_ppt_cell(table.cell(0, idx), header, is_header=True)
+
+    for row_idx, resource in enumerate(associated_resource_rows[: rows - 1], start=1):
         values = [
-            str(rec.get('name', '-')),
-            str(rec.get('resourceName', '-')),
-            str(rec.get('reservationSavings1Year', '-')),
-            str(rec.get('reservationSavings2Year', '-')),
-            str(rec.get('reservationSavings3Year', '-')),
-            str(rec.get('savingsPlanSavings1Year', '-')),
-            str(rec.get('savingsPlanSavings2Year', '-')),
-            str(rec.get('savingsPlanSavings3Year', '-')),
+            str(resource.get('name', '-')),
+            str(resource.get('type', '-')),
+            str(resource.get('location', '-')),
+            str(resource.get('resourceGroup', '-')),
+            str(resource.get('recommendationCount', 0)),
+            str(resource.get('highImpactCount', 0)),
+            f"{float(resource.get('reservationSavings1YearTotal') or 0):,.2f}",
+            f"{float(resource.get('savingsPlanSavings1YearTotal') or 0):,.2f}",
         ]
         for col_idx, value in enumerate(values):
-            cell = table.cell(row_idx, col_idx)
-            cell.text = value
+            _format_ppt_cell(table.cell(row_idx, col_idx), value)
+            if row_idx % 2 == 0:
+                alt_fill = table.cell(row_idx, col_idx).fill
+                alt_fill.solid()
+                alt_fill.fore_color.rgb = row_alt_fill_color
 
     pptx_path = ARTIFACT_DIR / "finops_summary.pptx"
     deck.save(pptx_path)
