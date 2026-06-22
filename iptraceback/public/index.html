@@ -22,49 +22,77 @@
     <main>
       <section class="card form-card">
         <form id="lookup-form" autocomplete="off" novalidate>
-          <label for="query-input" class="visually-hidden">IP address, domain, or URL</label>
-          <div class="input-row">
-            <input
-              id="query-input"
-              type="text"
-              placeholder="e.g.  8.8.8.8  •  example.com  •  https://www.github.com"
+          <div class="form-tabs">
+            <button type="button" class="form-tab active" data-tab="single">Single Lookup</button>
+            <button type="button" class="form-tab" data-tab="batch">Batch Lookup</button>
+          </div>
+
+          <!-- Single lookup -->
+          <div id="tab-single" class="form-tab-content active">
+            <label for="query-input" class="visually-hidden">IP address, domain, or URL</label>
+            <div class="input-row">
+              <input
+                id="query-input"
+                type="text"
+                placeholder="e.g.  8.8.8.8  •  example.com  •  https://www.github.com"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <button type="submit" id="lookup-btn">
+                <span class="btn-icon">&#128269;</span>
+                Lookup
+              </button>
+            </div>
+            <div id="input-error" class="input-error" role="alert" aria-live="polite"></div>
+
+            <!-- Examples -->
+            <div class="examples">
+              <span class="examples-label">Try:</span>
+              <button type="button" class="example-chip" data-value="8.8.8.8">8.8.8.8</button>
+              <button type="button" class="example-chip" data-value="1.1.1.1">1.1.1.1</button>
+              <button type="button" class="example-chip" data-value="github.com">github.com</button>
+              <button type="button" class="example-chip" data-value="microsoft.com">microsoft.com</button>
+            </div>
+          </div>
+
+          <!-- Batch lookup -->
+          <div id="tab-batch" class="form-tab-content">
+            <label for="batch-input" class="batch-label">Enter IPs or domains (one per line)</label>
+            <textarea
+              id="batch-input"
+              placeholder="8.8.8.8&#10;1.1.1.1&#10;google.com&#10;cloudflare.com"
               spellcheck="false"
-              required
-            />
-            <button type="submit" id="lookup-btn">
+              rows="5"
+            ></textarea>
+            <div class="batch-info">Max 50 lookups per batch</div>
+            <button type="submit" id="batch-lookup-btn" class="btn-primary">
               <span class="btn-icon">&#128269;</span>
-              Lookup
+              Look up All
             </button>
           </div>
-          <div id="input-error" class="input-error" role="alert" aria-live="polite"></div>
         </form>
-
-        <!-- Examples -->
-        <div class="examples">
-          <span class="examples-label">Try:</span>
-          <button class="example-chip" data-value="8.8.8.8">8.8.8.8</button>
-          <button class="example-chip" data-value="1.1.1.1">1.1.1.1</button>
-          <button class="example-chip" data-value="github.com">github.com</button>
-          <button class="example-chip" data-value="https://www.microsoft.com">microsoft.com</button>
-        </div>
       </section>
 
       <!-- Loading indicator -->
       <div id="loading" class="loading hidden" aria-live="polite" aria-busy="true">
         <div class="spinner"></div>
-        <span>Looking up location&hellip;</span>
+        <span id="loading-text">Looking up location&hellip;</span>
       </div>
 
       <!-- Error banner -->
       <div id="error-banner" class="error-banner hidden" role="alert" aria-live="assertive"></div>
 
-      <!-- Results -->
+      <!-- Results (Single) -->
       <section id="results-section" class="card results-card hidden">
         <div class="results-header">
-          <h2 class="results-title">
-            <span class="results-icon">&#128205;</span>
-            Location Results
-          </h2>
+          <div class="results-title-row">
+            <h2 class="results-title">
+              <span class="results-icon">&#128205;</span>
+              Location Results
+              <span id="cache-indicator" class="cache-indicator hidden" title="Result from cache">⚡ Cached</span>
+              <span id="warning-indicator" class="warning-indicator hidden" title="Warning">⚠️ Warning</span>
+            </h2>
+          </div>
           <span class="results-note">All results are approximate and do not represent an exact physical address.</span>
         </div>
 
@@ -74,13 +102,13 @@
             <h3 class="group-title">Input &amp; Identity</h3>
             <table class="result-table">
               <tbody>
-                <tr><th>Input Provided</th><td id="r-input"></td></tr>
+                <tr><th>Input Provided</th><td id="r-input" class="copyable" data-copy-value></td></tr>
                 <tr><th>Input Type</th><td id="r-type"></td></tr>
-                <tr><th>Resolved Hostname</th><td id="r-hostname"></td></tr>
-                <tr><th>Resolved IP</th><td id="r-ip"></td></tr>
-                <tr><th>Organization / ISP</th><td id="r-org"></td></tr>
-                <tr><th>ASN</th><td id="r-asn"></td></tr>
-                <tr><th>ASN Name</th><td id="r-asnname"></td></tr>
+                <tr><th>Resolved Hostname</th><td id="r-hostname" class="copyable" data-copy-value></td></tr>
+                <tr><th>Resolved IP</th><td id="r-ip" class="copyable" data-copy-value></td></tr>
+                <tr><th>Organization / ISP</th><td id="r-org" class="copyable" data-copy-value></td></tr>
+                <tr><th>ASN</th><td id="r-asn" class="copyable" data-copy-value></td></tr>
+                <tr><th>ASN Name</th><td id="r-asnname" class="copyable" data-copy-value></td></tr>
               </tbody>
             </table>
           </div>
@@ -90,13 +118,13 @@
             <h3 class="group-title">Location Details</h3>
             <table class="result-table">
               <tbody>
-                <tr><th>Country</th><td id="r-country"></td></tr>
-                <tr><th>State / Province</th><td id="r-state"></td></tr>
-                <tr><th>City</th><td id="r-city"></td></tr>
-                <tr><th>Postal Code</th><td id="r-postal"></td></tr>
-                <tr><th>Latitude</th><td id="r-lat"></td></tr>
-                <tr><th>Longitude</th><td id="r-lon"></td></tr>
-                <tr><th>Time Zone</th><td id="r-tz"></td></tr>
+                <tr><th>Country</th><td id="r-country" class="copyable" data-copy-value></td></tr>
+                <tr><th>State / Province</th><td id="r-state" class="copyable" data-copy-value></td></tr>
+                <tr><th>City</th><td id="r-city" class="copyable" data-copy-value></td></tr>
+                <tr><th>Postal Code</th><td id="r-postal" class="copyable" data-copy-value></td></tr>
+                <tr><th>Latitude</th><td id="r-lat" class="copyable" data-copy-value></td></tr>
+                <tr><th>Longitude</th><td id="r-lon" class="copyable" data-copy-value></td></tr>
+                <tr><th>Time Zone</th><td id="r-tz" class="copyable" data-copy-value></td></tr>
               </tbody>
             </table>
           </div>
@@ -109,6 +137,31 @@
           </a>
         </div>
 
+        <!-- Export -->
+        <div class="results-footer">
+          <button id="export-btn" class="btn-secondary">
+            <span class="btn-icon">&#128190;</span>
+            Export as JSON
+          </button>
+        </div>
+      </section>
+
+      <!-- Results (Batch) -->
+      <section id="batch-results-section" class="card results-card hidden">
+        <div class="results-header">
+          <h2 class="results-title">
+            <span class="results-icon">&#128205;</span>
+            Batch Results
+          </h2>
+          <span class="batch-progress" id="batch-progress"></span>
+        </div>
+        <div id="batch-results-list" class="batch-results-list"></div>
+        <div class="results-footer">
+          <button id="batch-export-btn" class="btn-secondary">
+            <span class="btn-icon">&#128190;</span>
+            Export as JSON
+          </button>
+        </div>
       </section>
     </main>
 
