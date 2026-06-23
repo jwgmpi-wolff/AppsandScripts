@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "screenshots:install": "playwright install chromium",
+    "screenshots:capture": "node scripts/capture-screenshots.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.17",
@@ -33,6 +35,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "oxlint": "^1.69.0",
+    "playwright": "^1.61.1",
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.0"

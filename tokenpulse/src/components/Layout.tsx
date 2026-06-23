@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { BarChart3, Zap, FolderOpen, Cpu, Bell, Activity } from 'lucide-react';
+import { BarChart3, Zap, FolderOpen, Cpu, Bell, Activity, Lightbulb } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/projects', label: 'Projects', icon: FolderOpen, end: false },
   { to: '/models', label: 'Models', icon: Cpu, end: false },
   { to: '/alerts', label: 'Alerts', icon: Bell, end: false },
+  { to: '/recommendations', label: 'Recommendations', icon: Lightbulb, end: false },
 ];
 
 export function Layout() {
