@@ -13,7 +13,7 @@ import {
   formatTokens,
   formatNumber,
 } from '@/data/queries';
-import { usageEvents, models } from '@/data/sampleData';
+import { useLiveData } from '@/data/LiveDataContext';
 import { TrendingUp, DollarSign, FolderOpen, Cpu } from 'lucide-react';
 
 function KpiCard({
@@ -46,6 +46,10 @@ function KpiCard({
 }
 
 export function DashboardPage() {
+  const { data } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -53,18 +57,19 @@ export function DashboardPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  const today = useMemo(() => getEventsInWindow(1), []);
-  const week = useMemo(() => getEventsInWindow(7), []);
-  const month = useMemo(() => getEventsInWindow(30), []);
-  const dailyBuckets = useMemo(() => getDailyBuckets(usageEvents, 30), []);
-  const projectCosts = useMemo(() => getCostByProject(), []);
+  const now = useMemo(() => new Date(), []);
+  const today = useMemo(() => getEventsInWindow(live.usageEvents, 1, now), [live.usageEvents, now]);
+  const week = useMemo(() => getEventsInWindow(live.usageEvents, 7, now), [live.usageEvents, now]);
+  const month = useMemo(() => getEventsInWindow(live.usageEvents, 30, now), [live.usageEvents, now]);
+  const dailyBuckets = useMemo(() => getDailyBuckets(live.usageEvents, live.models, 30, now), [live.usageEvents, live.models, now]);
+  const projectCosts = useMemo(() => getCostByProject(live), [live]);
 
   const topModel = useMemo(() => {
     const counts: Record<string, number> = {};
     month.forEach(e => { counts[e.modelId] = (counts[e.modelId] ?? 0) + 1; });
     const topId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
-    return models.find(m => m.id === topId)?.name ?? '—';
-  }, [month]);
+    return live.models.find(m => m.id === topId)?.name ?? '—';
+  }, [month, live.models]);
 
   const donutData = useMemo(() =>
     projectCosts.map(({ project, cost }) => ({
@@ -77,6 +82,28 @@ export function DashboardPage() {
   const activeProjects = useMemo(() =>
     new Set(month.map(e => e.projectId)).size,
   [month]);
+
+  const topSources = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const event of month) {
+      const key = event.source ?? 'Unknown source';
+      counts.set(key, (counts.get(key) ?? 0) + event.inputTokens + event.outputTokens);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  }, [month]);
+
+  const topPurposes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const event of month) {
+      const key = event.purpose ?? event.operationName ?? 'General model usage';
+      counts.set(key, (counts.get(key) ?? 0) + event.inputTokens + event.outputTokens);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  }, [month]);
 
   if (loading) {
     return (
@@ -179,8 +206,46 @@ export function DashboardPage() {
         <CardHeader>
           <CardTitle>Daily Cost by Provider (30d)</CardTitle>
         </CardHeader>
-        <ProviderStackedBar data={dailyBuckets} height={220} />
+        <ProviderStackedBar data={dailyBuckets} providers={live.providers} height={220} />
       </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Where Tokens Come From</CardTitle>
+            <CardSubtitle>Top sources in last 30 days</CardSubtitle>
+          </CardHeader>
+          <div className="space-y-2">
+            {topSources.length === 0 && (
+              <p className="text-sm text-slate-500">No usage events found in this window.</p>
+            )}
+            {topSources.map(([label, tokens]) => (
+              <div key={label} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                <span className="text-sm text-slate-700 truncate pr-3" title={label}>{label}</span>
+                <span className="text-sm font-semibold text-slate-900">{formatTokens(tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>What Tokens Are Used For</CardTitle>
+            <CardSubtitle>Top operations in last 30 days</CardSubtitle>
+          </CardHeader>
+          <div className="space-y-2">
+            {topPurposes.length === 0 && (
+              <p className="text-sm text-slate-500">No usage events found in this window.</p>
+            )}
+            {topPurposes.map(([label, tokens]) => (
+              <div key={label} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                <span className="text-sm text-slate-700 truncate pr-3" title={label}>{label}</span>
+                <span className="text-sm font-semibold text-slate-900">{formatTokens(tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

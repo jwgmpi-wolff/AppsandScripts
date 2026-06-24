@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { usageEvents, models, projects } from '@/data/sampleData';
+import { useLiveData } from '@/data/LiveDataContext';
 import { formatCost, formatTokens, formatNumber } from '@/data/queries';
 import { Lightbulb, TrendingDown, Zap, ArrowRightLeft } from 'lucide-react';
 
@@ -15,37 +15,41 @@ interface Recommendation {
   details: string[];
 }
 
-function modelById(id: string) {
-  return models.find(m => m.id === id);
-}
-
-function projectById(id: string) {
-  return projects.find(p => p.id === id);
-}
-
 export function RecommendationsPage() {
+  const { data } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
+  function modelById(id: string) {
+    return live.models.find(m => m.id === id);
+  }
+
+  function projectById(id: string) {
+    return live.projects.find(p => p.id === id);
+  }
+
   const [appliedPolicies, setAppliedPolicies] = useState<Set<string>>(new Set());
 
   const totalCost = useMemo(
-    () => usageEvents.reduce((sum, e) => sum + e.cost, 0),
-    [],
+    () => live.usageEvents.reduce((sum, e) => sum + e.cost, 0),
+    [live.usageEvents],
   );
 
   const totalInputTokens = useMemo(
-    () => usageEvents.reduce((sum, e) => sum + e.inputTokens, 0),
-    [],
+    () => live.usageEvents.reduce((sum, e) => sum + e.inputTokens, 0),
+    [live.usageEvents],
   );
 
   const totalOutputTokens = useMemo(
-    () => usageEvents.reduce((sum, e) => sum + e.outputTokens, 0),
-    [],
+    () => live.usageEvents.reduce((sum, e) => sum + e.outputTokens, 0),
+    [live.usageEvents],
   );
 
   const recommendations = useMemo<Recommendation[]>(() => {
     const recs: Recommendation[] = [];
 
     const modelTotals = new Map<string, { events: number; inputTokens: number; outputTokens: number; cost: number }>();
-    for (const evt of usageEvents) {
+    for (const evt of live.usageEvents) {
       const current = modelTotals.get(evt.modelId) ?? { events: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
       current.events += 1;
       current.inputTokens += evt.inputTokens;
@@ -103,7 +107,7 @@ export function RecommendationsPage() {
     }
 
     const projectTotals = new Map<string, { cost: number; tokens: number; events: number }>();
-    for (const evt of usageEvents) {
+    for (const evt of live.usageEvents) {
       const current = projectTotals.get(evt.projectId) ?? { cost: 0, tokens: 0, events: 0 };
       current.cost += evt.cost;
       current.tokens += evt.inputTokens + evt.outputTokens;
@@ -136,7 +140,7 @@ export function RecommendationsPage() {
     }
 
     return recs.sort((a, b) => b.estimatedMonthlySavingsUsd - a.estimatedMonthlySavingsUsd);
-  }, [totalCost, totalInputTokens, totalOutputTokens]);
+  }, [totalCost, totalInputTokens, totalOutputTokens, live.usageEvents]);
 
   const estimatedTotalSavings = useMemo(
     () => recommendations.reduce((sum, r) => sum + r.estimatedMonthlySavingsUsd, 0),
@@ -157,7 +161,7 @@ export function RecommendationsPage() {
 
   const topModelsByCost = useMemo(() => {
     const byModel = new Map<string, { cost: number; tokens: number; events: number }>();
-    for (const evt of usageEvents) {
+    for (const evt of live.usageEvents) {
       const current = byModel.get(evt.modelId) ?? { cost: 0, tokens: 0, events: 0 };
       current.cost += evt.cost;
       current.tokens += evt.inputTokens + evt.outputTokens;
@@ -173,7 +177,7 @@ export function RecommendationsPage() {
       }))
       .sort((a, b) => b.cost - a.cost)
       .slice(0, 4);
-  }, []);
+  }, [live.usageEvents]);
 
   const allPolicyIds = useMemo(
     () => recommendations.map(r => r.id),
@@ -261,7 +265,7 @@ export function RecommendationsPage() {
             <div className="text-xs text-slate-500 mt-1">After: <span className="font-semibold text-emerald-700">{formatCost(projectedSpend)}</span></div>
           </div>
           <div className="text-xs text-slate-400 mt-2">
-            {formatTokens(totalInputTokens + totalOutputTokens)} across {formatNumber(usageEvents.length)} events
+            {formatTokens(totalInputTokens + totalOutputTokens)} across {formatNumber(live.usageEvents.length)} events
           </div>
         </Card>
       </div>

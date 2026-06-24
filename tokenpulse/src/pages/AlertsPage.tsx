@@ -6,23 +6,26 @@ import { ProgressBar } from '@/components/ui/ProgressBar';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
-import { alerts as initialAlerts } from '@/data/sampleData';
-import { projects } from '@/data/sampleData';
 import { getEventsInWindow, filterEvents, sumCost } from '@/data/queries';
+import { useLiveData } from '@/data/LiveDataContext';
 import type { Alert } from '@/data/types';
 import { Plus, Pencil, Trash2, Bell, BellOff, AlertTriangle, CheckCircle } from 'lucide-react';
 
-function getProjectName(id: string) { return projects.find(p => p.id === id)?.name ?? id; }
-function getProjectColor(id: string) { return projects.find(p => p.id === id)?.color ?? '#94a3b8'; }
-
 function useAlertSpend(alert: Alert): number {
+  const { data } = useLiveData();
+
   return useMemo(() => {
+    if (!data) return 0;
+
+    const start = new Date();
+    start.setDate(start.getDate() - alert.windowDays);
+
     const evts = alert.scope === 'global'
-      ? getEventsInWindow(alert.windowDays)
-      : filterEvents({ projectId: alert.projectId, startDate: (() => { const d = new Date('2026-06-23T23:59:59Z'); d.setDate(d.getDate() - alert.windowDays); return d; })() });
+      ? getEventsInWindow(data.usageEvents, alert.windowDays)
+      : filterEvents(data.usageEvents, data.models, { projectId: alert.projectId, startDate: start });
+
     return sumCost(evts);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alert.id, alert.scope, alert.projectId, alert.windowDays]);
+  }, [alert.id, alert.scope, alert.projectId, alert.windowDays, data]);
 }
 
 const emptyAlert: Omit<Alert, 'id'> = {
@@ -39,11 +42,15 @@ function AlertCard({
   onEdit,
   onDelete,
   onToggle,
+  getProjectName,
+  getProjectColor,
 }: {
   alert: Alert;
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
+  getProjectName: (id: string) => string;
+  getProjectColor: (id: string) => string;
 }) {
   const spend = useAlertSpend(alert);
   const pct = Math.min(100, (spend / alert.thresholdUsd) * 100);
@@ -112,10 +119,17 @@ function AlertCard({
 }
 
 export function AlertsPage() {
-  const [alertList, setAlertList] = useState<Alert[]>(initialAlerts);
+  const { data, saveAlert, deleteAlert: removeAlert } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
+  function getProjectName(id: string) { return live.projects.find(p => p.id === id)?.name ?? id; }
+  function getProjectColor(id: string) { return live.projects.find(p => p.id === id)?.color ?? '#94a3b8'; }
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Alert | null>(null);
   const [form, setForm] = useState<Omit<Alert, 'id'>>(emptyAlert);
+  const alertList = live.alerts;
 
   function openAdd() {
     setEditing(null);
@@ -129,22 +143,24 @@ export function AlertsPage() {
     setDialogOpen(true);
   }
 
-  function saveAlert() {
+  async function persistAlert() {
     if (!form.name.trim()) return;
     if (editing) {
-      setAlertList(list => list.map(a => a.id === editing.id ? { ...a, ...form } : a));
+      await saveAlert({ ...editing, ...form });
     } else {
-      setAlertList(list => [...list, { id: `alert-${Date.now()}`, ...form }]);
+      await saveAlert(form);
     }
     setDialogOpen(false);
   }
 
-  function deleteAlert(id: string) {
-    setAlertList(list => list.filter(a => a.id !== id));
+  async function deleteAlert(id: string) {
+    await removeAlert(id);
   }
 
-  function toggleAlert(id: string) {
-    setAlertList(list => list.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
+  async function toggleAlert(id: string) {
+    const existing = alertList.find(a => a.id === id);
+    if (!existing) return;
+    await saveAlert({ ...existing, enabled: !existing.enabled });
   }
 
   const active = alertList.filter(a => a.enabled);
@@ -171,8 +187,10 @@ export function AlertsPage() {
                 key={a.id}
                 alert={a}
                 onEdit={() => openEdit(a)}
-                onDelete={() => deleteAlert(a.id)}
-                onToggle={() => toggleAlert(a.id)}
+                onDelete={() => void deleteAlert(a.id)}
+                onToggle={() => void toggleAlert(a.id)}
+                getProjectName={getProjectName}
+                getProjectColor={getProjectColor}
               />
             ))}
           </div>
@@ -188,8 +206,10 @@ export function AlertsPage() {
                 key={a.id}
                 alert={a}
                 onEdit={() => openEdit(a)}
-                onDelete={() => deleteAlert(a.id)}
-                onToggle={() => toggleAlert(a.id)}
+                onDelete={() => void deleteAlert(a.id)}
+                onToggle={() => void toggleAlert(a.id)}
+                getProjectName={getProjectName}
+                getProjectColor={getProjectColor}
               />
             ))}
           </div>
@@ -236,7 +256,7 @@ export function AlertsPage() {
               onChange={e => setForm(f => ({ ...f, projectId: e.target.value || undefined }))}
               options={[
                 { value: '', label: 'Select a project…' },
-                ...projects.map(p => ({ value: p.id, label: p.name })),
+                ...live.projects.map(p => ({ value: p.id, label: p.name })),
               ]}
             />
           )}
@@ -252,7 +272,7 @@ export function AlertsPage() {
             label="Window"
             id="alert-window"
             value={form.windowDays.toString()}
-            onChange={e => setForm(f => ({ ...f, windowDays: parseInt(e.target.value) }))}
+            onChange={e => setForm(f => ({ ...f, windowDays: parseInt(e.target.value, 10) }))}
             options={[
               { value: '1', label: 'Daily (1 day)' },
               { value: '7', label: 'Weekly (7 days)' },
@@ -262,7 +282,7 @@ export function AlertsPage() {
 
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveAlert} disabled={!form.name.trim()}>
+            <Button onClick={() => void persistAlert()} disabled={!form.name.trim()}>
               {editing ? 'Save Changes' : 'Create Alert'}
             </Button>
           </div>

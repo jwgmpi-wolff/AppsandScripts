@@ -4,17 +4,22 @@ import { Badge } from '@/components/ui/Badge';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { getCostByProject, getSparklineForProject, filterEvents, sumCost, formatCost, formatTokens, formatNumber } from '@/data/queries';
-import { models, providers } from '@/data/sampleData';
+import { useLiveData } from '@/data/LiveDataContext';
 import { ArrowLeft } from 'lucide-react';
 
-function getModelName(id: string) { return models.find(m => m.id === id)?.name ?? id; }
-function getProviderName(id: string) { return providers.find(p => p.id === id)?.name ?? id; }
-function getModelProviderId(id: string) { return models.find(m => m.id === id)?.providerId ?? ''; }
-function getProviderColor(id: string) { return providers.find(p => p.id === id)?.color ?? '#94a3b8'; }
-
 export function ProjectsPage() {
+  const { data } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
+  function getModelName(id: string) { return live.models.find(m => m.id === id)?.name ?? id; }
+  function getProviderName(id: string) { return live.providers.find(p => p.id === id)?.name ?? id; }
+  function getModelProviderId(id: string) { return live.models.find(m => m.id === id)?.providerId ?? ''; }
+  function getProviderColor(id: string) { return live.providers.find(p => p.id === id)?.color ?? '#94a3b8'; }
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const projectCosts = useMemo(() => getCostByProject(), []);
+  const now = useMemo(() => new Date(), []);
+  const projectCosts = useMemo(() => getCostByProject(live), [live]);
 
   const selectedProject = useMemo(() =>
     projectCosts.find(p => p.project.id === selectedId),
@@ -22,7 +27,7 @@ export function ProjectsPage() {
 
   const perModelData = useMemo(() => {
     if (!selectedId) return [];
-    const evts = filterEvents({ projectId: selectedId });
+    const evts = filterEvents(live.usageEvents, live.models, { projectId: selectedId });
     const byModel: Record<string, { cost: number; tokens: number; count: number }> = {};
     evts.forEach(e => {
       byModel[e.modelId] = byModel[e.modelId] ?? { cost: 0, tokens: 0, count: 0 };
@@ -33,7 +38,7 @@ export function ProjectsPage() {
     return Object.entries(byModel)
       .map(([modelId, v]) => ({ modelId, ...v }))
       .sort((a, b) => b.cost - a.cost);
-  }, [selectedId]);
+  }, [selectedId, live]);
 
   const donutData = useMemo(() =>
     perModelData.map(d => ({
@@ -128,10 +133,10 @@ export function ProjectsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {projectCosts.map(({ project, cost, tokens }) => {
-          const sparkData = getSparklineForProject(project.id);
-          const total30Cost = sumCost(filterEvents({}));
+          const sparkData = getSparklineForProject(live, project.id, 14, now);
+          const total30Cost = sumCost(filterEvents(live.usageEvents, live.models, {}));
           const pct = total30Cost > 0 ? (cost / total30Cost * 100).toFixed(1) : '0';
-          const evtCount = filterEvents({ projectId: project.id }).length;
+          const evtCount = filterEvents(live.usageEvents, live.models, { projectId: project.id }).length;
           return (
             <button
               key={project.id}

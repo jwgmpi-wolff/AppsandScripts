@@ -2,13 +2,17 @@ import { useMemo } from 'react';
 import { Card } from '@/components/ui/Card';
 import { HorizBarChart } from '@/components/charts/HorizBarChart';
 import { getCostByModel, formatCost, formatTokens, formatNumber } from '@/data/queries';
-import { providers } from '@/data/sampleData';
-
-function getProviderColor(id: string) { return providers.find(p => p.id === id)?.color ?? '#94a3b8'; }
-function getProviderName(id: string) { return providers.find(p => p.id === id)?.name ?? id; }
+import { useLiveData } from '@/data/LiveDataContext';
 
 export function ModelsPage() {
-  const modelData = useMemo(() => getCostByModel(), []);
+  const { data } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
+  function getProviderColor(id: string) { return live.providers.find(p => p.id === id)?.color ?? '#94a3b8'; }
+  function getProviderName(id: string) { return live.providers.find(p => p.id === id)?.name ?? id; }
+
+  const modelData = useMemo(() => getCostByModel(live), [live]);
 
   const chartData = useMemo(() =>
     modelData.map(d => ({

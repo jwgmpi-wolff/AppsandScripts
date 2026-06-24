@@ -24,5 +24,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Validate API proxy syntax
+        run: node --check server/index.mjs
+
       - name: Build
         run: npm run build

@@ -11,7 +11,7 @@ It includes:
 - A multi-page analytics UI (Dashboard, Usage Explorer, Projects, Models, Alerts, Recommendations)
 - Simulated policy application for cost recommendations (per policy and apply-all)
 - CI checks on pull requests and pushes
-- Automated GitHub Pages deployment on push to `main`
+- Automated deployment options for GitHub Pages and Azure App Service
 
 ## Table of Contents
 
@@ -25,15 +25,16 @@ It includes:
 - Project Structure
 - Data Model
 - Deployment and Redeploy from GitHub
+- Azure App Service Deployment (Frontend + API Proxy)
 - Troubleshooting
 - Development Notes
 - Future Improvements
 
 ## Overview
 
-TokenPulse is currently a frontend analytics app backed by deterministic sample data in `src/data/sampleData.ts`.
+TokenPulse runs in live-data-only mode. It fetches tenant/resource usage from an API endpoint and does not ship a demo fallback.
 
-The app is designed so that data access and query logic are centralized in `src/data/queries.ts`, making it straightforward to replace sample data with an API later.
+All pages are blocked behind a live data gate until the API responds successfully.
 
 ## Tech Stack
 
@@ -145,6 +146,15 @@ npm ci
 npm run dev
 ```
 
+### Run locally with live API proxy
+
+1. Copy `.env.example` to `.env` and set `TOKENPULSE_UPSTREAM_BASE_URL` to your tenant API.
+2. Start frontend + API together:
+
+```bash
+npm run dev:full
+```
+
 Vite will print the local URL, typically:
 
 - `http://localhost:5173`
@@ -166,6 +176,12 @@ npm run preview
 
 - `npm run dev`
   - Start Vite development server
+- `npm run api:dev`
+  - Start local API proxy server in watch mode on `http://127.0.0.1:8787`
+- `npm run dev:full`
+  - Run API proxy and Vite dev server concurrently
+- `npm run start:api`
+  - Start local API proxy server once (no watch)
 - `npm run build`
   - Type-check (`tsc -b`) and create production bundle in `dist/`
 - `npm run preview`
@@ -203,6 +219,8 @@ tokenpulse/
     workflows/
       ci.yml
       deploy-pages.yml
+  server/
+    index.mjs
   public/
   src/
     components/
@@ -210,7 +228,8 @@ tokenpulse/
       ui/
       Layout.tsx
     data/
-      sampleData.ts
+      liveApi.ts
+      LiveDataContext.tsx
       queries.ts
       types.ts
     pages/
@@ -238,7 +257,30 @@ Core types are defined in `src/data/types.ts`:
 
 Current data source:
 
-- `src/data/sampleData.ts` generates deterministic 30-day usage events
+- `VITE_TOKENPULSE_DATA_URL` (defaults to `/api/tokenpulse`)
+- Expected response shape:
+
+```json
+{
+  "providers": [{ "id": "azure-openai", "name": "Azure OpenAI", "color": "#0078d4" }],
+  "models": [{ "id": "gpt-4o", "providerId": "azure-openai", "name": "GPT-4o", "inputPricePer1k": 0.005, "outputPricePer1k": 0.015 }],
+  "projects": [{ "id": "proj-a", "name": "Project A", "color": "#6366f1", "description": "..." }],
+  "usageEvents": [{ "id": "evt-1", "timestamp": "2026-06-24T10:15:00Z", "projectId": "proj-a", "modelId": "gpt-4o", "inputTokens": 1200, "outputTokens": 450, "cost": 0.012 }],
+  "alerts": [{ "id": "alert-1", "name": "Monthly Budget", "scope": "global", "thresholdUsd": 500, "windowDays": 30, "enabled": true }]
+}
+```
+
+- Alerts mutation endpoints used by the UI:
+  - `POST ${VITE_TOKENPULSE_DATA_URL}/alerts`
+  - `PUT ${VITE_TOKENPULSE_DATA_URL}/alerts/:id`
+  - `DELETE ${VITE_TOKENPULSE_DATA_URL}/alerts/:id`
+
+Proxy behavior in local development:
+
+- Frontend requests `/api/tokenpulse` to the local proxy (`server/index.mjs`).
+- Proxy forwards upstream to `${TOKENPULSE_UPSTREAM_BASE_URL}/tokenpulse`.
+- Alert writes are forwarded to `${TOKENPULSE_UPSTREAM_BASE_URL}/tokenpulse/alerts...`.
+- Proxy responses are explicitly `no-store`.
 
 Query and formatting helpers:
 
@@ -255,6 +297,11 @@ Query and formatting helpers:
 - `.github/workflows/deploy-pages.yml`
   - Trigger: pushes to `main` and manual dispatch
   - Steps: install, build, upload Pages artifact, deploy
+
+- `.github/workflows/deploy-azure-appservice.yml`
+  - Trigger: manual dispatch only
+  - Steps: install, build, provision/update App Service via Bicep, deploy frontend+proxy package
+  - Guardrail: requires deployer to provide tenant/subscription and explicit `REAUTH_OK` confirmation
 
 ### One-time GitHub setup
 
@@ -278,6 +325,44 @@ npm run build -- --base=./
 ```
 
 This ensures static assets resolve correctly when published by GitHub Pages.
+
+## Azure App Service Deployment (Frontend + API Proxy)
+
+TokenPulse can deploy frontend and API proxy together to one Linux App Service.
+
+IaC template:
+
+- `infra/appservice.bicep`
+
+Deployment workflow:
+
+- `.github/workflows/deploy-azure-appservice.yml`
+
+Required repository variables:
+
+- `AZURE_WEBAPP_NAME`
+- `AZURE_APP_SERVICE_PLAN_NAME`
+- `AZURE_RESOURCE_GROUP`
+- `AZURE_LOCATION`
+
+Required repository secrets:
+
+- `AZURE_CLIENT_ID`
+- `TOKENPULSE_UPSTREAM_BASE_URL`
+- `TOKENPULSE_UPSTREAM_BEARER_TOKEN` (optional)
+
+Required manual workflow inputs at deploy time:
+
+- `tenant_id`
+- `subscription_id`
+- `reauth_confirmation` (must equal `REAUTH_OK`)
+
+App behavior in Azure:
+
+- Node 22 Linux runtime
+- `npm start` launches `server/index.mjs`
+- `server/index.mjs` serves both `dist/` and `/api/*`
+- Health check endpoint: `/healthz`
 
 ## Troubleshooting
 
@@ -328,7 +413,6 @@ Check:
 
 ## Future Improvements
 
-- Replace sample data with a backend API
 - Add authentication and per-team scopes
 - Add persisted alert policies and recommendation state
 - Add CSV export for usage and recommendation reports

@@ -1,4 +1,4 @@
-export type ProviderName = 'Azure OpenAI' | 'OpenAI' | 'Anthropic' | 'Google Gemini' | 'Cohere';
+export type ProviderName = string;
 
 export interface Provider {
   id: string;
@@ -29,6 +29,10 @@ export interface UsageEvent {
   inputTokens: number;
   outputTokens: number;
   cost: number;
+  source?: string;
+  purpose?: string;
+  resourceId?: string;
+  operationName?: string;
 }
 
 export interface Alert {
@@ -39,4 +43,12 @@ export interface Alert {
   thresholdUsd: number;
   windowDays: number;
   enabled: boolean;
+}
+
+export interface TokenPulseDataset {
+  providers: Provider[];
+  models: Model[];
+  projects: Project[];
+  usageEvents: UsageEvent[];
+  alerts: Alert[];
 }

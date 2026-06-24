@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import { providers } from '@/data/sampleData';
+import type { Provider } from '@/data/types';
 
 interface DayBucket {
   date: string;
@@ -9,10 +9,11 @@ interface DayBucket {
 
 interface StackedBarChartProps {
   data: DayBucket[];
+  providers: Provider[];
   height?: number;
 }
 
-export function ProviderStackedBar({ data, height = 200 }: StackedBarChartProps) {
+export function ProviderStackedBar({ data, providers, height = 200 }: StackedBarChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -98,7 +99,7 @@ export function ProviderStackedBar({ data, height = 200 }: StackedBarChartProps)
         gg.selectAll('text').attr('fill', '#94a3b8').attr('font-size', '11');
         gg.selectAll('line').remove();
       });
-  }, [data, height]);
+  }, [data, providers, height]);
 
   return (
     <div ref={containerRef} className="w-full">

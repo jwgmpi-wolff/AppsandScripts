@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { filterEvents, formatCost, formatNumber, sumCost } from '@/data/queries';
-import { providers, projects, models } from '@/data/sampleData';
+import { useLiveData } from '@/data/LiveDataContext';
 import type { UsageEvent } from '@/data/types';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 
@@ -12,14 +12,18 @@ type SortDir = 'asc' | 'desc';
 
 const PAGE_SIZE = 50;
 
-function getModelName(id: string) { return models.find(m => m.id === id)?.name ?? id; }
-function getProjectName(id: string) { return projects.find(p => p.id === id)?.name ?? id; }
-function getProjectColor(id: string) { return projects.find(p => p.id === id)?.color ?? '#94a3b8'; }
-function getProviderColor(providerId: string) { return providers.find(p => p.id === providerId)?.color ?? '#94a3b8'; }
-function getProviderName(providerId: string) { return providers.find(p => p.id === providerId)?.name ?? providerId; }
-function getModelProviderId(modelId: string) { return models.find(m => m.id === modelId)?.providerId ?? ''; }
-
 export function UsageExplorerPage() {
+  const { data } = useLiveData();
+  if (!data) return null;
+  const live = data;
+
+  function getModelName(id: string) { return live.models.find(m => m.id === id)?.name ?? id; }
+  function getProjectName(id: string) { return live.projects.find(p => p.id === id)?.name ?? id; }
+  function getProjectColor(id: string) { return live.projects.find(p => p.id === id)?.color ?? '#94a3b8'; }
+  function getProviderColor(providerId: string) { return live.providers.find(p => p.id === providerId)?.color ?? '#94a3b8'; }
+  function getProviderName(providerId: string) { return live.providers.find(p => p.id === providerId)?.name ?? providerId; }
+  function getModelProviderId(modelId: string) { return live.models.find(m => m.id === modelId)?.providerId ?? ''; }
+
   const [providerFilter, setProviderFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
   const [dateRange, setDateRange] = useState('30');
@@ -28,13 +32,13 @@ export function UsageExplorerPage() {
   const [page, setPage] = useState(1);
 
   const cutoff = useMemo(() => {
-    const d = new Date('2026-06-23T23:59:59Z');
-    d.setDate(d.getDate() - parseInt(dateRange));
+    const d = new Date();
+    d.setDate(d.getDate() - parseInt(dateRange, 10));
     return d;
   }, [dateRange]);
 
   const filtered = useMemo(() => {
-    const evts = filterEvents({
+    const evts = filterEvents(live.usageEvents, live.models, {
       providerId: providerFilter || undefined,
       projectId: projectFilter || undefined,
       startDate: cutoff,
@@ -47,7 +51,7 @@ export function UsageExplorerPage() {
       else if (sortKey === 'cost') diff = a.cost - b.cost;
       return sortDir === 'asc' ? diff : -diff;
     });
-  }, [providerFilter, projectFilter, cutoff, sortKey, sortDir]);
+  }, [providerFilter, projectFilter, cutoff, sortKey, sortDir, live]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -80,7 +84,7 @@ export function UsageExplorerPage() {
               onChange={e => { setProviderFilter(e.target.value); setPage(1); }}
               options={[
                 { value: '', label: 'All Providers' },
-                ...providers.map(p => ({ value: p.id, label: p.name })),
+                ...live.providers.map(p => ({ value: p.id, label: p.name })),
               ]}
             />
           </div>
@@ -91,7 +95,7 @@ export function UsageExplorerPage() {
               onChange={e => { setProjectFilter(e.target.value); setPage(1); }}
               options={[
                 { value: '', label: 'All Projects' },
-                ...projects.map(p => ({ value: p.id, label: p.name })),
+                ...live.projects.map(p => ({ value: p.id, label: p.name })),
               ]}
             />
           </div>
@@ -124,6 +128,8 @@ export function UsageExplorerPage() {
                 </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Project</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Model</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600">From</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600">Used For</th>
                 <th className="px-4 py-3 text-right">
                   <button className="flex items-center gap-1 font-semibold text-slate-600 hover:text-slate-900 ml-auto" onClick={() => toggleSort('inputTokens')}>
                     Input <SortIcon k="inputTokens" />
@@ -147,12 +153,17 @@ export function UsageExplorerPage() {
                 <td className="px-4 py-2 text-indigo-700">Totals ({formatNumber(filtered.length)} events)</td>
                 <td className="px-4 py-2" />
                 <td className="px-4 py-2" />
+                <td className="px-4 py-2" />
+                <td className="px-4 py-2" />
                 <td className="px-4 py-2 text-right text-indigo-700">{formatNumber(filtered.reduce((s, e) => s + e.inputTokens, 0))}</td>
                 <td className="px-4 py-2 text-right text-indigo-700">{formatNumber(filtered.reduce((s, e) => s + e.outputTokens, 0))}</td>
                 <td className="px-4 py-2 text-right text-indigo-700">{formatCost(sumCost(filtered))}</td>
               </tr>
               {pageData.map(event => {
                 const providerId = getModelProviderId(event.modelId);
+                const fallbackSource = `${getProviderName(providerId)} · ${getModelName(event.modelId)}`;
+                const fromLabel = event.source ?? fallbackSource;
+                const usedForLabel = event.purpose ?? event.operationName ?? 'Model inference / tenant operation';
                 return (
                   <tr key={event.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
@@ -166,6 +177,12 @@ export function UsageExplorerPage() {
                         <span className="text-slate-800 font-medium">{getModelName(event.modelId)}</span>
                         <span className="text-xs text-slate-400" style={{ color: getProviderColor(providerId) }}>{getProviderName(providerId)}</span>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 min-w-[220px]">
+                      <div className="truncate" title={fromLabel}>{fromLabel}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 min-w-[260px]">
+                      <div className="truncate" title={usedForLabel}>{usedForLabel}</div>
                     </td>
                     <td className="px-4 py-3 text-right text-slate-600">{formatNumber(event.inputTokens)}</td>
                     <td className="px-4 py-3 text-right text-slate-600">{formatNumber(event.outputTokens)}</td>
