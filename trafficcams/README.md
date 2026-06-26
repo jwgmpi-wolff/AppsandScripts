@@ -1,6 +1,14 @@
 # 🚗 Traffic Camera Dashboard
 
-A modern, interactive web application for viewing and filtering Washington State traffic cameras from WSDOT, regional airports, and city traffic systems. Browse 596+ live traffic cameras with intelligent location classification, clickable city/highway filters, and full-screen image preview modal.
+A modern, interactive web application for viewing and filtering Washington State traffic cameras from WSDOT, regional airports, and city traffic systems. Browse **596 live traffic cameras** with intelligent location classification, clickable city/highway filters, responsive filtering, and full-screen image preview modal.
+
+**Latest Updates:**
+- ✅ All 596 cameras fully classified (0 Unknown)
+- ✅ 28 highway corridors mapped (includes WA-018, WA-096, WA-104, WA-161, Ferry-Service)
+- ✅ 18 cities with camera counts
+- ✅ City & Highway filter links working independently
+- ✅ Real-time statistics and filtering
+- ✅ Live camera previews with lazy loading
 
 ![Traffic Camera Dashboard - Split Screen View](https://via.placeholder.com/1200x600?text=Traffic+Camera+Dashboard)
 
@@ -8,23 +16,27 @@ A modern, interactive web application for viewing and filtering Washington State
 
 ### 📊 Comprehensive Camera Database
 - **596 traffic cameras** from WSDOT highways, regional airports, and city systems
-- **Intelligent location classification**: Automatically categorized by city, state, highway, corridor, and region
-- **Real-time metadata**: Camera ID, type, location, and traffic corridor information
+- **100% classified**: All cameras assigned to city, highway, corridor, and region (0 Unknown)
+- **28 highway corridors**: I-5, I-90, I-405, US-2, US-99, US-395, WA-018 through WA-531, Ferry-Service
+- **18 cities mapped**: Seattle (286), Renton (102), Everett (45), Olympia (44), Longview (27), and more
+- **Real-time metadata**: Camera ID, type, location, corridor, county, and traffic region
 
 ### 🎯 Interactive Dashboard
-- **Split-screen layout**: Filter sidebar on left, live camera gallery on right
-- **Clickable city list**: Top 10 cities - click to filter and view cameras
-- **Clickable highway list**: Top 10 highways - click to view all cameras on that route
-- **Multi-criteria filtering**: Search by city, highway, camera type, or region
-- **Live camera feed**: Up to 24 real-time traffic camera images per view
-- **Full-screen modal**: Click any camera image to view enlarged with metadata
+- **Split-screen layout**: Responsive filter sidebar (350px on desktop) + live camera gallery
+- **Top Cities Quick-Click**: 10 most-monitored cities - click to instantly view all cameras
+- **Top Highways Quick-Click**: 10 busiest corridors - click to filter and view route cameras
+- **Independent filters**: City and highway links clear other filters to prevent conflicts
+- **Multi-criteria filtering**: Search by city name, highway, camera type, or geographic region
+- **Live camera feed**: Display up to 24 real-time traffic camera images per view
+- **Full-screen modal**: Click any camera to view enlarged with city/camera ID info
 
 ### 🔍 Smart Filtering
-- **Search box**: Find cameras by city name
-- **Highway dropdown**: Filter by specific route (I-5, I-90, WA-520, etc.)
+- **Search box**: Real-time city name search with auto-completion
+- **Highway dropdown**: Select from 28 highway corridors (I-5, WA-520, WA-018, etc.)
 - **Camera type filter**: Highway Camera, City Traffic Camera, Airport Camera
-- **Region filter**: Central King County, North Puget Sound, etc.
-- **Clear selection**: Reset all filters with one click
+- **Region filter**: 13 geographic regions (Central King County, North Puget Sound, etc.)
+- **Clear selection**: One-click reset to view all 596 cameras
+- **Live stats**: Counter updates showing selected cameras count in real-time
 
 ### 📱 Responsive Design
 - **Desktop-optimized**: Full split-screen layout on wide displays
@@ -37,6 +49,39 @@ A modern, interactive web application for viewing and filtering Washington State
 - **Visual feedback**: Selection indicators and stat updates
 - **Keyboard support**: ESC to close modals, intuitive navigation
 - **Real-time updates**: Stats refresh as you filter
+
+---
+
+## 📝 Recent Updates & Fixes
+
+### Version 1.2.0 - Complete Classification & Filter Independence (Latest)
+- ✅ **WA-018 Highway Restored**: 19 cameras in Longview corridor now displaying correctly
+- ✅ **Filter Independence**: City and highway links now clear other filters automatically
+  - Prevents "0 cameras found" when multiple filters conflict
+  - Clicking city link clears highway/type/region filters
+  - Clicking highway link clears city/type/region filters
+- ✅ **Database Sync**: Ensured camera data synchronized between root and public folders
+- ✅ **OCR/Heuristic Fixes**: Classified all remaining Unknown cameras
+  - 18 "WSDOT Highway" → Olympia (US-395)
+  - 1 "Regional Airport" → Seattle (Airport)
+
+### Version 1.1.0 - Full Location Classification
+- ✅ **All 596 Cameras Classified**: Zero Unknown cameras
+- ✅ **Highway Expansion**: Added 6 new highway mappings
+  - WA-018 (19 cameras - Longview)
+  - WA-096 (5 cameras)
+  - WA-104 (5 cameras)
+  - WA-161 (1 camera)
+  - Ferry-Service (4 cameras)
+- ✅ **Database Regeneration**: Created enhanced camera array with complete metadata
+
+### Version 1.0.0 - Initial Release
+- ✅ Interactive dashboard with 596 cameras
+- ✅ Split-screen layout with filters
+- ✅ Real-time camera gallery with lazy loading
+- ✅ Full-screen image modal with metadata
+- ✅ City and highway filtering
+- ✅ Responsive design for desktop/tablet/mobile
 
 ---
 
