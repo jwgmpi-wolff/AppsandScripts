@@ -1,0 +1,14 @@
+{
+  "name": "iptraceback",
+  "version": "1.0.0",
+  "description": "IP / domain geolocation lookup web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "npx nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Public Camera Intelligence</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ── Top bar ──────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div>
+      <h1 style="margin:0;font-size:1.3rem">📷 Public Camera Intelligence</h1>
+      <p style="margin:2px 0 0;font-size:.85rem;color:var(--muted)">
+        Discover &amp; browse publicly accessible webcam feeds – no login required
+      </p>
+    </div>
+    <nav>
+      <a href="#search-section">Search</a>
+      <a href="#grid-section">Live Feeds</a>
+      <a href="#table-section">Data Table</a>
+      <a href="#stats-section">Stats</a>
+    </nav>
+  </header>
+
+  <!-- ── Hero / Search panel ──────────────────────────────────────── -->
+  <div class="hero" id="search-section">
+    <div class="overlay">
+      <h1>Find Publicly Accessible Webcams</h1>
+      <p style="color:var(--muted);margin:4px 0 14px">
+        Searches AlertWildfire, Caltrans, state DOT systems &amp; curated feeds.
+        Results are stored with full location &amp; metadata.
+      </p>
+      <div class="hero-search">
+        <input id="keyword-input" type="text" placeholder="Optional keyword – e.g. mountain, traffic, beach, wildfire …" />
+        <button id="search-btn" type="button">🔍 Search</button>
+      </div>
+      <div id="search-status" class="status" style="margin-top:10px">Ready – click Search to discover cameras.</div>
+      <div id="search-meta" style="font-size:.82rem;color:var(--muted);margin-top:4px"></div>
+    </div>
+  </div>
+
+  <!-- ── Filter bar ───────────────────────────────────────────────── -->
+  <div style="padding:10px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--panel-strong);border-bottom:1px solid var(--panel-border)">
+    <input id="db-q"    type="text"    placeholder="Filter saved cameras…"  style="flex:1;min-width:200px" />
+    <input id="db-state" type="text"   placeholder="State (e.g. CA)"        style="width:90px" />
+    <select id="db-feed">
+      <option value="">All types</option>
+      <option value="image">Image/Snapshot</option>
+      <option value="mjpeg">MJPEG Stream</option>
+      <option value="hls">HLS/M3U8</option>
+      <option value="embed">Embed</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
+      Show
+      <select id="db-limit">
+        <option value="12">12</option>
+        <option value="24">24</option>
+        <option value="48" selected>48</option>
+        <option value="96">96</option>
+        <option value="192">192</option>
+        <option value="384">384</option>
+        <option value="768">768</option>
+        <option value="custom">Custom</option>
+      </select>
+      <input id="db-limit-custom" type="number" min="10" max="1000" step="1" value="48" style="width:96px" />
+      per page
+    </label>
+    <button id="filter-btn" type="button">Filter DB</button>
+    <span id="db-total" style="color:var(--muted);font-size:.85rem"></span>
+    <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
+      <input id="show-offline" type="checkbox" /> Show unverified/offline
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
+      <input id="auto-refresh" type="checkbox" /> Auto-refresh images (30 s)
+    </label>
+    <select id="view-mode">
+      <option value="grid">Grid View</option>
+      <option value="table">Table View</option>
+    </select>
+  </div>
+
+  <!-- ── Live-feeds grid ──────────────────────────────────────────── -->
+  <div id="grid-section" style="padding:16px">
+    <div id="camera-grid" class="cam-grid">
+      <div class="empty-state">Run a search or use Filter DB to load cameras.</div>
+    </div>
+    <div id="pagination" style="margin-top:12px;display:flex;gap:8px;align-items:center"></div>
+  </div>
+
+  <!-- ── Table view ───────────────────────────────────────────────── -->
+  <div id="table-section" style="padding:0 16px 16px;display:none">
+    <div class="panel" style="overflow-x:auto">
+      <table id="cam-table" class="cam-table">
+        <thead>
+          <tr>
+            <th>Thumb</th>
+            <th>Title</th>
+            <th>Location</th>
+            <th>State</th>
+            <th>Type</th>
+            <th>Source</th>
+            <th>Tags</th>
+            <th>Discovered</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="cam-table-body">
+          <tr><td colspan="9" class="empty-state">No data loaded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Stats ────────────────────────────────────────────────────── -->
+  <div id="stats-section" style="padding:0 16px 24px">
+    <div class="panel" style="max-width:860px">
+      <h2 style="margin-top:0">Database Stats</h2>
+      <div id="stats-body" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="stat-card"><span class="stat-num" id="stat-total">–</span><span class="stat-label">Total cameras</span></div>
+        <div class="stat-card"><span class="stat-num" id="stat-online">–</span><span class="stat-label">Verified online</span></div>
+        <div class="stat-card"><span class="stat-num" id="stat-sources">–</span><span class="stat-label">Sources</span></div>
+      </div>
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <h3>By Source</h3>
+          <ul id="stat-by-source" class="stat-list"></ul>
+        </div>
+        <div>
+          <h3>By State</h3>
+          <ul id="stat-by-state"  class="stat-list"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent searches -->
+    <div class="panel" style="max-width:860px;margin-top:12px">
+      <h2 style="margin-top:0">Recent Searches</h2>
+      <table class="cam-table" style="width:100%">
+        <thead><tr><th>Query</th><th>Results</th><th>Sources</th><th>Time</th></tr></thead>
+        <tbody id="history-body"><tr><td colspan="4" class="empty-state">No searches yet.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Full-screen image modal ──────────────────────────────────── -->
+  <div id="modal" class="modal" style="display:none" onclick="closeModal()">
+    <div class="modal-inner" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal()">✕</button>
+      <img id="modal-img" src="" alt="Camera" style="max-width:100%;max-height:80vh;display:block;margin:0 auto" />
+      <div id="modal-meta" style="margin-top:10px;font-size:.9rem;color:var(--muted)"></div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button onclick="refreshModal()">↺ Refresh</button>
+        <a id="modal-link" href="#" target="_blank"><button>↗ Open feed</button></a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

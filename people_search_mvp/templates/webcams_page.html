@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title }}</title>
+  <style>
+    :root{ --bg:#1b1e20; --panel:rgba(18,20,22,0.88); --text:#cfeeff; --muted:#8fb8d6; --accent:#2e76b3; }
+    body { font-family: Arial, Helvetica, sans-serif; margin: 16px; background:var(--bg); color:var(--text); }
+    header { margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); gap: 12px; }
+    .card { border: 1px solid rgba(46,118,179,0.12); padding: 8px; border-radius: 6px; background:var(--panel); }
+    .thumb { width: 100%; height: 180px; object-fit: cover; background: #000; display:block; }
+    .meta { margin-top: 6px; font-size: 13px; color:var(--muted); }
+    .note { color: var(--muted); font-size: 12px; }
+    .controls { margin-bottom: 12px; }
+    .empty { color: var(--muted); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ title }}</h1>
+    <div class="controls">
+      <form method="get" action="/webcams_page">
+        <input type="text" name="q" placeholder="keyword or location (e.g., everett)" value="{{ query }}" />
+        <button type="submit">Filter</button>
+      </form>
+    </div>
+  </header>
+
+  {% if not items %}
+    <div class="empty">No webcams found for this query.</div>
+  {% else %}
+    <div class="grid">
+      {% for it in items %}
+        <div class="card">
+          {% if it.is_video %}
+            <!-- try to embed video or mjpeg as image source -->
+            {% if '.mjpg' in it.url or '.mjpeg' in it.url %}
+              <img class="thumb" src="{{ it.url }}" alt="{{ it.title }}" />
+            {% elif '.m3u8' in it.url %}
+              <video class="thumb" controls>
+                <source src="{{ it.url }}" />
+                Your browser does not support video playback.
+              </video>
+            {% else %}
+              <a href="{{ it.url }}" target="_blank"><img class="thumb" src="{{ it.url }}" alt="{{ it.title }}" onerror="this.style.display='none'"/></a>
+            {% endif %}
+          {% else %}
+            <a href="{{ it.url }}" target="_blank"><img class="thumb" src="{{ it.url }}" alt="{{ it.title }}" onerror="this.style.display='none'"/></a>
+          {% endif %}
+
+          <div class="meta">
+            <div><a href="{{ it.url }}" target="_blank">{{ it.title }}</a></div>
+            <div class="note">{{ it.content_type }} {{ it.note }}</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</body>
+</html>

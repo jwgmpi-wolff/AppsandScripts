@@ -1,0 +1,12 @@
+# .dockerignore file for Kubernetes container app
+*.md
+.git
+.gitignore
+.vscode
+bicep/*.json
+bicep/parameters.json
+kubernetes/
+scripts/*.ps1.bak
+config/examples/
+README.md
+LICENSE

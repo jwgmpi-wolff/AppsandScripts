@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Public Search Intelligence Prototype</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Public Search Intelligence</h1>
+      <p>Low-cost prototype for public-source search, result storage, and relevance learning.</p>
+    </div>
+    <nav>
+      <a href="#search">Search</a>
+      <a href="#results">Results</a>
+      <a href="#history">History</a>
+    </nav>
+  </header>
+
+  <div class="tabs" style="display:flex;gap:8px;align-items:center;margin:12px 16px;">
+    <button class="tab-button active" data-tab="people">People Search</button>
+    <button class="tab-button" data-tab="webcam">Webcam Live</button>
+  </div>
+
+  
+
+  <main>
+    <div id="tab-people" class="grid tab-panel" style="display:block;">
+      <section class="panel" id="search">
+      <h2>Search</h2>
+      <form id="search-form" class="stack">
+        <div class="vertical-stack">
+          <div class="two-col">
+            <div class="left">
+              <label>Query
+                <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
+              </label>
+              <label>Max results
+                <input name="max_results" type="number" min="5" max="20" value="8" />
+              </label>
+            </div>
+            <div class="right">
+              <label>Entity type
+                <select name="entity">
+                  <option value="public">Public profile</option>
+                  <option value="org">Organization</option>
+                  <option value="news">News & media</option>
+                </select>
+              </label>
+              <label>Source scope
+                <select name="source">
+                  <option value="all">All public sources</option>
+                  <option value="web">Web</option>
+                  <option value="news">News</option>
+                </select>
+              </label>
+              <button type="submit">Run search</button>
+            </div>
+          </div>
+        </div>
+      </form>
+      <div id="status" class="status">Ready.</div>
+      <div id="learning" class="pill-box"></div>
+
+      <h2 style="margin-top:18px">Search Results</h2>
+      <div id="result-list" class="result-list"></div>
+      </section>
+    </div>
+
+    <div id="tab-webcam" class="grid tab-panel" style="display:none;">
+      <section class="panel" id="scanner">
+      <h2>Webcam / Stream Scanner</h2>
+      <form id="scan-form" class="stack">
+        <div style="display:flex;gap:8px;flex-direction:column">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <textarea name="urls" rows="3" style="flex:1;min-width:260px" placeholder="One URL per line, or pattern like https://example.com/cam{1-50} or https://site.com/*"></textarea>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <input name="replacements" type="text" placeholder="replacements (comma/newline)" />
+              <input name="timeout" type="number" min="2" max="30" value="8" style="width:120px" />
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-start;margin-top:6px">
+            <button type="submit">Run scan</button>
+            <button id="enqueue-scan" type="button">Enqueue</button>
+            <button id="clear-recent" type="button">Clear recent</button>
+          </div>
+        </div>
+      </form>
+      <div id="scan-status" class="status">Ready to scan.</div>
+      <div id="scan-results"></div>
+      <div style="margin-top:8px">
+        <label>Search saved links
+          <input id="saved-q" placeholder="search saved URLs" />
+        </label>
+        <select id="saved-which"><option value="success">Successes</option><option value="failure">Failures</option></select>
+        <select id="saved-perpage"><option>25</option><option>50</option><option>100</option></select>
+        <input id="saved-content-type" placeholder="content type filter (e.g. video)" />
+        <input id="saved-date-from" type="date" />
+        <input id="saved-date-to" type="date" />
+        <button id="saved-search">Search DB</button>
+        <button id="saved-prev">Prev</button>
+        <button id="saved-next">Next</button>
+        <button id="open-selected">Open Selected</button>
+        <button id="export-csv">Export CSV</button>
+        <input id="import-file" type="file" accept=".csv" />
+        <button id="import-csv">Import CSV</button>
+        <div id="task-status" style="margin-top:6px;color:#cfe2ff"></div>
+        <div id="saved-list" class="result-list" style="margin-top:8px"></div>
+      </div>
+      </section>
+    </div>
+    
+    <aside class="panel" id="history" style="display:none;">
+      <h2>Recent History</h2>
+      <ul id="history-list" class="history-list"></ul>
+    </aside>
+  </main>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const resultList = document.getElementById('result-list');
+    const status = document.getElementById('status');
+    const learning = document.getElementById('learning');
+    const historyList = document.getElementById('history-list');
+
+    function renderResults(data) {
+      resultList.innerHTML = '';
+      if (!data.results || !data.results.length) {
+        resultList.innerHTML = '<p>No results found.</p>';
+        return;
+      }
+
+      data.results.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'card';
+        card.innerHTML = `
+          <h3>${item.title}</h3>
+          <p class="muted">Score: ${item.score} · Source: ${item.source}</p>
+          <p>${item.snippet || 'Public web result preview.'}</p>
+          <a href="${item.url}" target="_blank" rel="noreferrer">Open source</a>
+        `;
+        resultList.appendChild(card);
+      });
+    }
+
+    function renderLearning(weights) {
+      const items = Object.entries(weights).sort((a, b) => b[1] - a[1]);
+      const slice = items.slice(0, 6);
+      learning.innerHTML = slice.map(([term, weight]) => `<span class="pill">${term} (${weight.toFixed(2)})</span>`).join('');
+    }
+
+    function loadHistory() {
+      fetch('/history').then(r => r.json()).then(items => {
+        if (!Array.isArray(items)) {
+          console.warn('history() response not array', items);
+          items = [];
+        }
+        historyList.innerHTML = items.map(item => `<li><strong>${item.query}</strong><br/>${item.result_count} results · ${item.created_at}</li>`).join('');
+      }).catch(err => { console.error('loadHistory error', err); });
+    }
+
+    async function performSearch() {
+      // choose hero form or main search form
+      const activeForm = document.getElementById('search-form') || document.getElementById('hero-search');
+      if (!activeForm) return;
+      // ensure HTML5 validity first
+      if (!activeForm.checkValidity()) {
+        activeForm.reportValidity();
+        return;
+      }
+
+      const submitBtn = activeForm.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+      status.textContent = 'Searching…';
+      resultList.innerHTML = '';
+
+      try {
+        // if hero-search used, copy its query into the main search form input so results and history behave consistently
+        const hero = document.getElementById('hero-search');
+        const main = document.getElementById('search-form');
+        if (hero && main) {
+          const hq = hero.querySelector('input[name=query]');
+          const mq = main.querySelector('input[name=query]');
+          if (hq && mq) mq.value = hq.value;
+        }
+        const formData = new FormData(activeForm);
+        const response = await fetch('/search', { method: 'POST', body: formData });
+        if (!response.ok) {
+          const txt = await response.text().catch(() => '');
+          status.textContent = `Search failed: ${response.status} ${response.statusText} ${txt}`;
+          return;
+        }
+        const data = await response.json();
+        if (data.error) {
+          status.textContent = data.error;
+          return;
+        }
+        renderResults(data);
+        renderLearning(data.learning_terms || {});
+        status.textContent = `Search complete for “${data.query}” (${data.results.length} results).`;
+        loadHistory();
+      } catch (err) {
+        console.error('search error', err);
+        status.textContent = 'Search failed: ' + (err && err.message ? err.message : String(err));
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    form.addEventListener('submit', (e) => { e.preventDefault(); performSearch(); });
+
+    loadHistory();
+
+    // Scanner UI bindings
+    const scanForm = document.getElementById('scan-form');
+    const scanStatus = document.getElementById('scan-status');
+    const scanResults = document.getElementById('scan-results');
+    const clearRecentBtn = document.getElementById('clear-recent');
+    const savedQ = document.getElementById('saved-q');
+    const savedWhich = document.getElementById('saved-which');
+    const savedSearchBtn = document.getElementById('saved-search');
+    const savedList = document.getElementById('saved-list');
+    const openSelectedBtn = document.getElementById('open-selected');
+
+    function renderScanResults(obj) {
+      scanResults.innerHTML = '';
+      const s = document.createElement('div');
+      const successes = (obj && obj.results && Array.isArray(obj.results.success)) ? obj.results.success : [];
+      const failures = (obj && obj.results && Array.isArray(obj.results.failure)) ? obj.results.failure : [];
+      s.innerHTML = `<h3>Successes (${successes.length})</h3>` + successes.map(r => `<div class="card"><label><input type=checkbox data-url="${r.url}" /> <a href="${r.url}" target="_blank">${r.url}</a> [${r.status}] ${r.content_type || ''} ${r.note || ''}</label></div>`).join('');
+      const f = document.createElement('div');
+      f.innerHTML = `<h3>Failures (${failures.length})</h3>` + failures.map(r => `<div class="card"><label><input type=checkbox data-url="${r.url}" /> ${r.url} — ${r.error}</label></div>`).join('');
+      scanResults.appendChild(s);
+      scanResults.appendChild(f);
+    }
+
+    scanForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      scanStatus.textContent = 'Scanning…';
+      const formData = new FormData(scanForm);
+      const resp = await fetch('/scan_webcams', { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (data.error) {
+        scanStatus.textContent = data.error;
+        return;
+      }
+      renderScanResults(data);
+      scanStatus.textContent = `Scan complete — ${data.count} checked. Successes: ${data.results.success.length}`;
+    });
+
+    clearRecentBtn.addEventListener('click', async () => {
+      if (!confirm('Delete the most recent scan and its results?')) return;
+      const r = await fetch('/clear_recent_scan', { method: 'POST' });
+      const j = await r.json();
+      scanStatus.textContent = j.deleted ? `Deleted scan ${j.scan_id}` : 'No recent scan to delete.';
+      scanResults.innerHTML = '';
+    });
+
+    savedSearchBtn.addEventListener('click', async () => {
+      const q = savedQ.value || '';
+      const which = savedWhich.value || 'success';
+      const r = await fetch(`/saved_webcams?q=${encodeURIComponent(q)}&which=${which}`);
+      const items = await r.json();
+      const arr = Array.isArray(items) ? items : [];
+      savedList.innerHTML = arr.map(it => `<div class="card"><label><input type=checkbox data-url="${it.url}" /> <a href="${it.url}" target="_blank">${it.url}</a> ${it.content_type ? '['+it.content_type+']' : ''} ${it.error ? '('+it.error+')' : ''}</label></div>`).join('');
+    });
+
+    openSelectedBtn.addEventListener('click', () => {
+      const boxes = Array.from(document.querySelectorAll('input[type=checkbox][data-url]:checked'));
+      boxes.forEach(b => { window.open(b.getAttribute('data-url'), '_blank'); });
+    });
+
+    // enqueue background scan
+    const enqueueBtn = document.getElementById('enqueue-scan');
+    const taskStatus = document.getElementById('task-status');
+    enqueueBtn.addEventListener('click', async () => {
+      const formData = new FormData(scanForm);
+      const resp = await fetch('/enqueue_scan', { method: 'POST', body: formData });
+      const j = await resp.json();
+      if (j.error) { taskStatus.textContent = j.error; return; }
+      taskStatus.textContent = `Enqueued task ${j.task.task_id} (rq-ok=${j.rq_available})`;
+      // poll
+      const taskId = j.task.task_id;
+      const interval = setInterval(async () => {
+        const s = await fetch(`/scan_status?task_id=${taskId}`).then(r => r.json());
+        if (!s || !s.id) { taskStatus.textContent = 'No status yet'; return; }
+        taskStatus.textContent = `Task ${s.id}: ${s.status} ${s.progress || 0}/${s.total || 0}`;
+        if (s.status === 'completed') {
+          clearInterval(interval);
+        }
+      }, 2000);
+    });
+
+    // saved links paging and filters
+    let savedPage = 1;
+    function loadSaved() {
+      const q = savedQ.value || '';
+      const which = savedWhich.value || 'success';
+      const per = parseInt(document.getElementById('saved-perpage').value || '50');
+      const ct = document.getElementById('saved-content-type').value || '';
+      const df = document.getElementById('saved-date-from').value || '';
+      const dt = document.getElementById('saved-date-to').value || '';
+      fetch(`/saved_webcams?q=${encodeURIComponent(q)}&which=${which}&page=${savedPage}&per_page=${per}&content_type=${encodeURIComponent(ct)}&date_from=${df}&date_to=${dt}`)
+        .then(r => r.json()).then(data => {
+          const arr = (data && Array.isArray(data.items)) ? data.items : [];
+          savedList.innerHTML = arr.map(it => `<div class="card"><label><input type=checkbox data-url="${it.url}" /> <a href="${it.url}" target="_blank">${it.url}</a> ${it.content_type? '['+it.content_type+']':''} ${it.error? '('+it.error+')':''}</label></div>`).join('');
+          document.getElementById('saved-prev').disabled = savedPage <= 1;
+          document.getElementById('saved-next').disabled = (savedPage * (data && data.per_page ? data.per_page : per)) >= (data && data.total ? data.total : 0);
+        }).catch(err => { console.error('loadSaved error', err); });
+    }
+
+    document.getElementById('saved-search').addEventListener('click', () => { savedPage = 1; loadSaved(); });
+    document.getElementById('saved-prev').addEventListener('click', () => { if (savedPage>1) { savedPage--; loadSaved(); }});
+    document.getElementById('saved-next').addEventListener('click', () => { savedPage++; loadSaved(); });
+
+    document.getElementById('export-csv').addEventListener('click', () => {
+      const q = savedQ.value || '';
+      const which = savedWhich.value || 'success';
+      window.location = `/export_webcams?which=${which}`;
+    });
+
+    document.getElementById('import-csv').addEventListener('click', async () => {
+      const f = document.getElementById('import-file').files[0];
+      if (!f) { alert('Select a CSV file'); return; }
+      const which = savedWhich.value || 'success';
+      const fd = new FormData();
+      fd.append('file', f);
+      const r = await fetch(`/import_webcams?which=${which}`, { method: 'POST', body: fd });
+      const j = await r.json();
+      alert(`Imported ${j.imported} rows`);
+      loadSaved();
+    });
+
+    // initial saved list load
+    loadSaved();
+
+    // Tab switching for People Search vs Webcam Live
+    const tabButtons = document.querySelectorAll('.tab-button');
+    function setActiveTab(name) {
+      tabButtons.forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === name));
+      document.getElementById('tab-people').style.display = name === 'people' ? 'block' : 'none';
+      document.getElementById('tab-webcam').style.display = name === 'webcam' ? 'grid' : 'none';
+      const hist = document.getElementById('history');
+      if (hist) hist.style.display = name === 'people' ? 'block' : 'none';
+      try { localStorage.setItem('active_tab', name); } catch (e) {}
+    }
+    tabButtons.forEach(b => b.addEventListener('click', () => setActiveTab(b.getAttribute('data-tab'))));
+    // deep-link support: if URL hash present, respect it
+    try {
+      const hash = (location.hash || '').replace('#','');
+      if (hash === 'webcam' || hash === 'people') {
+        setActiveTab(hash);
+      } else {
+        const saved = localStorage.getItem('active_tab') || 'people';
+        setActiveTab(saved);
+      }
+    } catch (e) { setActiveTab('people'); }
+
+    // keyboard shortcuts: Ctrl+1 -> People, Ctrl+2 -> Webcam
+    window.addEventListener('keydown', (ev) => {
+      if (ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+        if (ev.key === '1') { ev.preventDefault(); setActiveTab('people'); }
+        if (ev.key === '2') { ev.preventDefault(); setActiveTab('webcam'); }
+      }
+    });
+    // header nav links should activate the People tab for search/results/history
+    document.querySelectorAll('header nav a').forEach(a => {
+      a.addEventListener('click', (ev) => {
+        const href = a.getAttribute('href') || '';
+        if (href.startsWith('#search') || href.startsWith('#results') || href.startsWith('#history')) {
+          ev.preventDefault();
+          setActiveTab('people');
+          // optionally scroll to the element
+          const id = href.replace('#','');
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView({behavior:'smooth'});
+        }
+      });
+    });
+  </script>
+</body>
+</html>

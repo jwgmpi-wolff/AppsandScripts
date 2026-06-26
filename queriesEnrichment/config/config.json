@@ -1,0 +1,46 @@
+{
+  "auditConfiguration": {
+    "region": "westus2",
+    "subscriptionFiltering": {
+      "enabled": true,
+      "includeSubscriptions": [],
+      "excludeSubscriptions": []
+    },
+    "workbooksCategory": "workbook",
+    "outputFormats": [
+      "csv",
+      "json",
+      "html"
+    ]
+  },
+  "aiFoundryConfiguration": {
+    "enabled": true,
+    "maxTokens": 500,
+    "temperature": 0.7,
+    "timeout": 30
+  },
+  "storageConfiguration": {
+    "uploadResults": true,
+    "retentionDays": 90,
+    "containerName": "graphqueriessamples"
+  },
+  "kubernetesConfiguration": {
+    "namespace": "workbook-audit",
+    "schedule": "0 2 * * *",
+    "ttlSecondsAfterFinished": 86400,
+    "backoffLimit": 2,
+    "resourceRequests": {
+      "cpu": "250m",
+      "memory": "512Mi"
+    },
+    "resourceLimits": {
+      "cpu": "1000m",
+      "memory": "1Gi"
+    }
+  },
+  "monitoring": {
+    "loggingLevel": "Information",
+    "metricsEnabled": true,
+    "healthCheckInterval": 30
+  }
+}

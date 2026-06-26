@@ -1,0 +1,166 @@
+---
+# CronJob for scheduled audit runs (runs daily at 2 AM UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: workbook-audit-cronjob
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+    type: scheduled-job
+spec:
+  # Schedule: Daily at 02:00 UTC
+  schedule: "0 2 * * *"
+  
+  # Keep 3 successful and 1 failed Job for reference
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  
+  # Job concurrency policy
+  concurrencyPolicy: Forbid
+  
+  # Job timeout (6 hours)
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    spec:
+      # Job configuration
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400  # Keep completed jobs for 24 hours
+      
+      template:
+        metadata:
+          labels:
+            app: workbook-audit
+            job-type: workbook-audit-job
+          annotations:
+            description: "Azure Monitor Workbook Query Audit"
+        
+        spec:
+          # Pod configuration
+          serviceAccountName: workbook-audit-sa
+          restartPolicy: OnFailure
+          
+          # Security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          
+          # Pod disruption budget (if running on multiple nodes)
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchExpressions:
+                        - key: app
+                          operator: In
+                          values:
+                            - workbook-audit
+                    topologyKey: kubernetes.io/hostname
+          
+          # Container specification
+          containers:
+            - name: workbook-audit-container
+              image: "workbookauditacr.azurecr.io/workbook-audit:latest"
+              imagePullPolicy: Always
+              
+              # Resource limits and requests
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "1000m"
+              
+              # Environment variables from ConfigMap and Secrets
+              envFrom:
+                - configMapRef:
+                    name: workbook-audit-config
+                - secretRef:
+                    name: workbook-audit-secrets
+              
+              # Additional environment variables
+              env:
+                - name: HOSTNAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              
+              # Volume mounts
+              volumeMounts:
+                - name: output-volume
+                  mountPath: /app/output
+                - name: scripts-volume
+                  mountPath: /app/scripts
+                  readOnly: true
+              
+              # Security context for container
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop:
+                    - ALL
+              
+              # Lifecycle hooks
+              lifecycle:
+                preStop:
+                  exec:
+                    command: ["/bin/sh", "-c", "sleep 15"]
+          
+          # Volumes
+          volumes:
+            - name: output-volume
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: scripts-volume
+              configMap:
+                name: workbook-audit-scripts
+                defaultMode: 0755
+
+---
+# ConfigMap for PowerShell scripts (loaded into container)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbook-audit-scripts
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+data:
+  # Note: In production, use Docker image with scripts embedded
+  # This ConfigMap is for overriding scripts without rebuilding the image
+  script-readme.txt: |
+    Place PowerShell scripts here if you want to override container defaults.
+    The Dockerfile should include scripts directly.
+
+---
+# Service Monitor for Prometheus (optional, if using Prometheus)
+apiVersion: v1
+kind: Service
+metadata:
+  name: workbook-audit-metrics
+  namespace: workbook-audit
+  labels:
+    app: workbook-audit
+spec:
+  type: ClusterIP
+  selector:
+    app: workbook-audit
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP

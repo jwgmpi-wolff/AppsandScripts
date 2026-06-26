@@ -1,0 +1,228 @@
+2026-06-14 14:24:23,726 INFO agent.db DB initialised at C:\.git\public_cameras\cameras.db
+2026-06-14 14:24:23,730 INFO cameras-agent Starting Public Cameras Agent on port 5000
+2026-06-14 14:24:23,785 INFO werkzeug [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.0.0.112:5000
+2026-06-14 14:24:23,786 INFO werkzeug [33mPress CTRL+C to quit[0m
+2026-06-14 14:24:33,390 INFO agent.crawler Starting camera search  keyword=''
+2026-06-14 14:24:33,391 INFO agent.crawler Seeds loaded: 179
+2026-06-14 14:24:34,119 INFO agent.sources.faa FAA: built 123 camera entries
+2026-06-14 14:24:34,274 INFO httpx HTTP Request: GET https://www.tripcheck.com/tripcheck/Cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,282 INFO agent.sources.dotcams TripCheck: 0 cameras
+2026-06-14 14:24:34,341 INFO httpx HTTP Request: GET https://data.alertwildfire.org/api/firehawks-rv3/latest "HTTP/1.1 502 Bad Gateway"
+2026-06-14 14:24:34,372 ERROR agent.sources.alertwildfire AlertWildfire fetch failed: Server error '502 Bad Gateway' for url 'https://data.alertwildfire.org/api/firehawks-rv3/latest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502
+2026-06-14 14:24:34,383 INFO httpx HTTP Request: GET https://cotrip.org/speed/getCameras.do "HTTP/1.1 308 Permanent Redirect"
+2026-06-14 14:24:34,392 INFO httpx HTTP Request: GET https://www.wyoroad.info/iticket/xml/wy511_travelerinfo.xml "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:34,395 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d2/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,398 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d4/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,399 INFO agent.sources.dotcams COTRIP: 0 cameras
+2026-06-14 14:24:34,403 INFO agent.sources.dotcams WYDOT: 0 cameras
+2026-06-14 14:24:34,436 INFO httpx HTTP Request: GET https://nvroads.com/api/cameras "HTTP/1.1 301 Moved Permanently"
+2026-06-14 14:24:34,438 INFO agent.sources.dotcams NV511: 0 cameras
+2026-06-14 14:24:34,440 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d12/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,441 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d11/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,442 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d1/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,446 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d10/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,449 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d5/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,450 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d6/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,451 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d9/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,452 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d7/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,453 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d3/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,454 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d8/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:34,474 INFO agent.sources.caltrans Caltrans: collected 0 cameras
+2026-06-14 14:24:34,489 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/texas/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,499 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/europe/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,504 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/usa/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,505 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/canada/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,518 INFO httpx HTTP Request: GET https://www.udottraffic.utah.gov/1.0/udotcamera "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,520 INFO agent.sources.dotcams UDOT: 0 cameras
+2026-06-14 14:24:34,522 INFO httpx HTTP Request: GET https://511mn.org/cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,529 INFO agent.sources.dotcams MnDOT: 0 cameras
+2026-06-14 14:24:34,584 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/illinois/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,609 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/california/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,621 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/newyork/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:34,625 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,627 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/florida/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,656 INFO httpx HTTP Request: GET https://www.earthcam.com/world/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:34,790 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/canada.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,895 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/usa.html "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:34,898 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/espana.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:34,899 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/italia.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:40,498 INFO agent.sources.aggregators Aggregators: collected 1180 cameras
+2026-06-14 14:24:40,505 INFO agent.crawler   alertwildfire    \u2192 0 cameras
+2026-06-14 14:24:40,507 INFO agent.crawler   caltrans         \u2192 0 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   dotcams          \u2192 0 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   faa              \u2192 123 cameras
+2026-06-14 14:24:40,508 INFO agent.crawler   aggregators      \u2192 1180 cameras
+2026-06-14 14:24:40,509 INFO agent.crawler Total after dedup: 1372
+2026-06-14 14:24:40,558 INFO agent.crawler Search complete in 7.17s – 1372 total, 1372 after filter
+2026-06-14 14:24:40,565 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:40] "POST /api/search HTTP/1.1" 200 -
+2026-06-14 14:24:48,933 INFO agent.crawler Starting camera search  keyword='alaska'
+2026-06-14 14:24:48,935 INFO agent.crawler Seeds loaded: 179
+2026-06-14 14:24:49,501 INFO agent.sources.faa FAA: built 123 camera entries
+2026-06-14 14:24:49,697 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/canada/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,699 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/europe/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,701 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/newyork/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,706 INFO httpx HTTP Request: GET https://511mn.org/cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:49,712 INFO agent.sources.dotcams MnDOT: 0 cameras
+2026-06-14 14:24:49,715 INFO httpx HTTP Request: GET https://www.webcamtaxi.com/en/usa/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,715 INFO httpx HTTP Request: GET https://cotrip.org/speed/getCameras.do "HTTP/1.1 308 Permanent Redirect"
+2026-06-14 14:24:49,719 INFO agent.sources.dotcams COTRIP: 0 cameras
+2026-06-14 14:24:49,720 INFO httpx HTTP Request: GET https://www.tripcheck.com/tripcheck/Cameras "HTTP/1.1 200 OK"
+2026-06-14 14:24:49,722 INFO agent.sources.dotcams TripCheck: 0 cameras
+2026-06-14 14:24:49,722 INFO httpx HTTP Request: GET https://nvroads.com/api/cameras "HTTP/1.1 301 Moved Permanently"
+2026-06-14 14:24:49,724 INFO agent.sources.dotcams NV511: 0 cameras
+2026-06-14 14:24:49,735 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/florida/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,737 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d11/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,742 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d3/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,745 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d5/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,749 INFO httpx HTTP Request: GET https://data.alertwildfire.org/api/firehawks-rv3/latest "HTTP/1.1 502 Bad Gateway"
+2026-06-14 14:24:49,750 ERROR agent.sources.alertwildfire AlertWildfire fetch failed: Server error '502 Bad Gateway' for url 'https://data.alertwildfire.org/api/firehawks-rv3/latest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502
+2026-06-14 14:24:49,750 INFO httpx HTTP Request: GET https://www.wyoroad.info/iticket/xml/wy511_travelerinfo.xml "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:49,752 INFO agent.sources.dotcams WYDOT: 0 cameras
+2026-06-14 14:24:49,756 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/texas/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,765 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d6/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,766 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d2/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,770 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d10/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,775 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d1/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,776 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d7/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,777 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d8/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,780 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d4/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,784 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d9/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,786 INFO httpx HTTP Request: GET https://cwwp2.dot.ca.gov/data/d12/cc/ccTVData.json "HTTP/1.1 500 Internal Server Error"
+2026-06-14 14:24:49,787 INFO agent.sources.caltrans Caltrans: collected 0 cameras
+2026-06-14 14:24:49,848 INFO httpx HTTP Request: GET https://www.udottraffic.utah.gov/1.0/udotcamera "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,850 INFO agent.sources.dotcams UDOT: 0 cameras
+2026-06-14 14:24:49,864 INFO httpx HTTP Request: GET https://www.earthcam.com/world/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,875 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/california/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:49,899 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/ "HTTP/1.1 302 Found"
+2026-06-14 14:24:49,921 INFO httpx HTTP Request: GET https://www.earthcam.com/usa/illinois/ "HTTP/1.1 403 Forbidden"
+2026-06-14 14:24:50,112 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/canada.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:50,224 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/usa.html "HTTP/1.1 404 Not Found"
+2026-06-14 14:24:50,225 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/espana.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:50,226 INFO httpx HTTP Request: GET https://www.skylinewebcams.com/en/webcam/italia.html "HTTP/1.1 200 OK"
+2026-06-14 14:24:55,572 INFO agent.sources.aggregators Aggregators: collected 1180 cameras
+2026-06-14 14:24:55,585 INFO agent.crawler   alertwildfire    \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   caltrans         \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   dotcams          \u2192 0 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   faa              \u2192 123 cameras
+2026-06-14 14:24:55,586 INFO agent.crawler   aggregators      \u2192 1180 cameras
+2026-06-14 14:24:55,587 INFO agent.crawler Total after dedup: 1372
+2026-06-14 14:24:55,679 INFO agent.crawler Search complete in 6.75s – 1372 total, 139 after filter
+2026-06-14 14:24:55,682 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:55] "POST /api/search HTTP/1.1" 200 -
+2026-06-14 14:24:57,728 INFO werkzeug 127.0.0.1 - - [14/Jun/2026 14:24:57] "GET /api/stats HTTP/1.1" 200 -
+2026-06-25 21:34:31,457 INFO agent.db DB initialised at C:\.git\public_cameras\cameras.db
+2026-06-25 21:34:31,458 INFO cameras-agent Starting Public Cameras Agent on port 7000
+2026-06-25 21:34:31,520 INFO werkzeug [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:7000
+ * Running on http://10.0.0.112:7000
+2026-06-25 21:34:31,520 INFO werkzeug [33mPress CTRL+C to quit[0m
+2026-06-25 21:34:41,703 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:34:41] "GET / HTTP/1.1" 200 -
+2026-06-25 21:36:12,387 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:12] "GET / HTTP/1.1" 200 -
+2026-06-25 21:36:12,485 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:12] "GET /static/style.css HTTP/1.1" 200 -
+2026-06-25 21:36:12,666 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:12] "GET /static/app.js HTTP/1.1" 200 -
+2026-06-25 21:36:12,807 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:12] "GET /api/cameras?q=&page=1&per_page=48&feed_type=&state=&include_offline=0 HTTP/1.1" 200 -
+2026-06-25 21:36:12,983 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:12] "GET /api/stats HTTP/1.1" 200 -
+2026-06-25 21:36:13,119 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:13] "GET /api/searches HTTP/1.1" 200 -
+2026-06-25 21:36:13,444 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:13] "GET /static/wolf_background.png HTTP/1.1" 200 -
+2026-06-25 21:36:13,775 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:13] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-06-25 21:36:16,306 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live3051.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,307 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/4115/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:16,325 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1385.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,327 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/4116/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:16,405 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5672.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,406 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/5832/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:16,428 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live425.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,431 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/6402/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:16,445 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5617.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,448 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/6177/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:16,661 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live833.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:16,665 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:16] "GET /api/camera/15887/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:19,945 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1011.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:19,951 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:19] "GET /api/camera/14044/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:20,299 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1198.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:20,302 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:20] "GET /api/camera/12672/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:20,373 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2970.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:20,374 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:20] "GET /api/camera/6535/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:20,376 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2564.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:20,378 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:20] "GET /api/camera/6488/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:20,420 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1448.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:20,422 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:20] "GET /api/camera/4066/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:20,515 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live781.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:20,517 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:20] "GET /api/camera/4067/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:22,933 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live3742.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:22,936 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:22] "GET /api/camera/4068/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,181 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1013.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,182 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4069/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,215 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1350.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,218 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4070/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,227 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1748.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,228 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4071/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,350 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1397.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,353 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4073/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,364 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5128.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,366 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4072/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:24,957 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1490.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:24,961 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:24] "GET /api/camera/4074/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:27,921 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1415.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:27,923 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:27] "GET /api/camera/4075/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:28,074 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live260.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:28,077 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:28] "GET /api/camera/4076/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:28,082 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2572.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:28,084 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:28] "GET /api/camera/4077/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:28,281 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2775.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:28,282 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:28] "GET /api/camera/4078/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:28,296 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5377.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:28,297 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:28] "GET /api/camera/4079/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:28,380 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2630.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:28,383 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:28] "GET /api/camera/4080/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,358 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live911.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,361 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4082/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,402 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2904.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,403 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2675.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,404 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4083/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,404 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4081/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,415 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2903.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,417 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4085/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,419 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live713.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,421 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1349.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:49,422 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4086/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:49,423 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:49] "GET /api/camera/4084/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:53,522 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5471.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,524 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4103/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:53,712 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live4402.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,715 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4102/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:53,768 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1688.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,769 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4098/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:53,784 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1895.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,785 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5841.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,785 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live628.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:53,787 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4101/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:53,787 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4099/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:53,789 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:53] "GET /api/camera/4100/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:56,828 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1626.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:56,831 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:56] "GET /api/camera/4096/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:58,064 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2816.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,066 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4087/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:58,087 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live6070.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,088 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4089/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:58,093 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5979.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,096 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1422.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,096 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4090/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:58,097 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4097/media?_t=1782448572811 HTTP/1.1" 200 -
+2026-06-25 21:36:58,107 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live2815.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,109 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4088/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:36:58,731 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live1418.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:36:58,735 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:36:58] "GET /api/camera/4091/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:37:00,586 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live490.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:37:00,588 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:37:00] "GET /api/camera/4093/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:37:00,594 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5515.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:37:00,597 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:37:00] "GET /api/camera/4094/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:37:00,608 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live5097.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:37:00,609 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:37:00] "GET /api/camera/4095/media?_t=1782448572810 HTTP/1.1" 200 -
+2026-06-25 21:37:00,622 INFO httpx HTTP Request: GET https://cdn.skylinewebcams.com/live355.jpg "HTTP/1.1 200 OK"
+2026-06-25 21:37:00,623 INFO werkzeug 127.0.0.1 - - [25/Jun/2026 21:37:00] "GET /api/camera/4092/media?_t=1782448572810 HTTP/1.1" 200 -
