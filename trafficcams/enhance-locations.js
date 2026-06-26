@@ -11,6 +11,48 @@ const LOCATION_DATABASE = {
         region: 'North Puget Sound',
         state: 'WA'
     },
+    '009': {
+        highway: 'US-395',
+        corridor: 'US-395 Corridor',
+        cities: ['Olympia', 'Longview', 'Yakima', 'Walla Walla'],
+        region: 'South/Central Washington',
+        state: 'WA'
+    },
+    '018': {
+        highway: 'WA-018',
+        corridor: 'WA-018 Corridor',
+        cities: ['Longview', 'Kalama', 'Winlock'],
+        region: 'Southwest Washington',
+        state: 'WA'
+    },
+    '096': {
+        highway: 'WA-096',
+        corridor: 'WA-096 Corridor',
+        cities: ['Longview', 'Toledo', 'Winlock'],
+        region: 'Southwest Washington',
+        state: 'WA'
+    },
+    '104': {
+        highway: 'WA-104',
+        corridor: 'WA-104 Corridor (Olympic Peninsula)',
+        cities: ['Port Townsend', 'Port Angeles', 'Chimacum'],
+        region: 'Olympic Peninsula',
+        state: 'WA'
+    },
+    '161': {
+        highway: 'WA-161',
+        corridor: 'WA-161 Corridor',
+        cities: ['Puyallup', 'Sumner', 'Orting'],
+        region: 'South Puget Sound',
+        state: 'WA'
+    },
+    '900': {
+        highway: 'Ferry-Service',
+        corridor: 'Washington State Ferries',
+        cities: ['Seattle', 'Bainbridge', 'Vashon', 'Tacoma'],
+        region: 'Puget Sound Ferry System',
+        state: 'WA'
+    },
     '005': {
         highway: 'I-5',
         corridor: 'I-5 Corridor',
