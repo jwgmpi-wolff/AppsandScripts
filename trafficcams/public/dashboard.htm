@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Camera Location Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header {
+            background: white; border-radius: 12px; padding: 30px;
+            margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .header h1 { color: #667eea; margin-bottom: 10px; }
+        .header p { color: #666; margin: 8px 0; }
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px; margin-top: 20px;
+        }
+        .stat-card {
+            background: #f5f7fa; padding: 15px; border-radius: 8px;
+            text-align: center; border-left: 4px solid #667eea;
+        }
+        .stat-card .number { font-size: 1.8em; font-weight: 700; color: #667eea; }
+        .stat-card .label { font-size: 0.9em; color: #666; margin-top: 5px; }
+        
+        .dashboard {
+            display: grid; grid-template-columns: 350px 1fr; gap: 20px; height: calc(100vh - 400px);
+        }
+        .sidebar {
+            background: white; border-radius: 12px; padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            height: 100%; overflow-y: auto; display: flex; flex-direction: column;
+        }
+        .sidebar h3 { color: #667eea; margin-bottom: 15px; font-size: 1.1em; flex-shrink: 0; }
+        .filter-group { margin-bottom: 15px; flex-shrink: 0; }
+        .filter-group label { display: block; font-weight: 600; color: #333; margin-bottom: 8px; font-size: 0.95em; }
+        .filter-group input,
+        .filter-group select {
+            width: 100%; padding: 8px; border: 1px solid #e0e0e0;
+            border-radius: 6px; font-size: 0.9em;
+        }
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .content {
+            background: white; border-radius: 12px; padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); height: 100%; overflow-y: auto;
+        }
+        .content h2 { color: #667eea; margin: 0 0 15px 0; font-size: 1.1em; }
+        .content h2:first-child { margin-top: 0; }
+        
+        .table-wrapper { display: none; }
+        table {
+            width: 100%; border-collapse: collapse; font-size: 0.95em;
+        }
+        th {
+            background: #f5f7fa; padding: 12px; text-align: left;
+            border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #667eea;
+        }
+        td {
+            padding: 12px; border-bottom: 1px solid #f0f0f0;
+            cursor: pointer; transition: all 0.2s;
+        }
+        tr:hover { background: #f0f4ff; }
+        
+        .badge {
+            display: inline-block; padding: 4px 10px; border-radius: 4px;
+            font-size: 0.85em; font-weight: 600; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .badge.city { background: #e3f2fd; color: #1976d2; }
+        .badge.city:hover { background: #bbdefb; }
+        .badge.highway { background: #f3e5f5; color: #7b1fa2; }
+        .badge.highway:hover { background: #e1bee7; }
+        .badge.type { background: #e8f5e9; color: #2e7d32; }
+        
+        .summary-section {
+            margin-top: 20px; padding: 15px; background: #f5f7fa;
+            border-radius: 8px;
+        }
+        .summary-section h4 { color: #667eea; margin-bottom: 12px; font-size: 0.95em; }
+        .summary-list { }
+        .summary-item {
+            padding: 10px; margin-bottom: 5px;
+            display: flex; justify-content: space-between;
+            background: white; border-radius: 6px; cursor: pointer;
+            transition: all 0.2s; border-left: 3px solid transparent;
+        }
+        .summary-item:hover {
+            background: #e3f2fd; border-left-color: #667eea; transform: translateX(5px);
+        }
+        .summary-item span:first-child { font-weight: 500; color: #333; flex: 1; }
+        .summary-item span:last-child { font-weight: 600; color: #667eea; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
+        
+        .gallery {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px; margin: 0;
+        }
+        .camera-card {
+            background: #f9f9f9; border-radius: 10px; overflow: hidden;
+            border: 1px solid #e0e0e0; transition: all 0.3s;
+            cursor: pointer;
+        }
+        .camera-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.12);
+            border-color: #667eea;
+        }
+        .camera-image {
+            width: 100%; height: 140px; background: #f0f0f0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5em; position: relative; overflow: hidden;
+        }
+        .camera-image img {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .camera-info { padding: 8px; }
+        .camera-id { font-weight: 700; color: #667eea; font-size: 0.8em; margin-bottom: 3px; }
+        .camera-location { font-weight: 600; color: #333; font-size: 0.9em; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .camera-details { font-size: 0.75em; color: #666; line-height: 1.3; display: none; }
+        .detail-row { display: flex; justify-content: space-between; padding: 2px 0; }
+        
+        /* Image Modal */
+        .modal {
+            display: none; position: fixed; z-index: 1000;
+            left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.9); animation: fadeIn 0.3s;
+        }
+        .modal.show { display: flex; }
+        .modal-content {
+            margin: auto; max-width: 90%; max-height: 90vh;
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center;
+        }
+        .modal img {
+            max-width: 100%; max-height: 80vh; object-fit: contain;
+            border-radius: 8px; box-shadow: 0 0 30px rgba(0,0,0,0.8);
+        }
+        .modal-info {
+            color: white; text-align: center; margin-top: 20px;
+            font-size: 1.1em;
+        }
+        .modal-close {
+            position: absolute; top: 30px; right: 40px;
+            color: white; font-size: 40px; font-weight: bold;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .modal-close:hover { color: #ddd; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .clear-selection {
+            display: none; margin-top: 10px; width: 100%;
+            padding: 10px; background: #ff6b6b; color: white;
+            border: none; border-radius: 6px; cursor: pointer;
+            font-weight: 600; font-size: 0.9em;
+        }
+        .clear-selection.show { display: block; }
+        .clear-selection:hover { background: #ff5252; }
+        
+        .no-results { text-align: center; padding: 40px; color: #999; }
+        .selection-info { 
+            margin-bottom: 15px; padding: 10px; background: #e3f2fd;
+            border-left: 4px solid #667eea; border-radius: 6px;
+            color: #333; font-weight: 500; font-size: 0.9em;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard { grid-template-columns: 1fr; height: auto; }
+            .sidebar { height: auto; }
+            .content { height: auto; }
+            .gallery { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Image Modal -->
+    <div id="imageModal" class="modal">
+        <span class="modal-close" onclick="closeImageModal()">&times;</span>
+        <div class="modal-content">
+            <img id="modalImage" src="" alt="Camera Image">
+            <div class="modal-info">
+                <div id="modalTitle"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🗺️ Traffic Camera Location Dashboard</h1>
+            <p><strong>Click any city or highway</strong> in the sidebar to view cameras</p>
+            <p style="font-size: 0.9em; color: #999;">All 596 cameras classified by location • Live traffic feeds</p>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="number" id="totalCameras">0</div>
+                    <div class="label">Total Cameras</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number" id="citiesCount">0</div>
+                    <div class="label">Cities</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number" id="highwaysCount">0</div>
+                    <div class="label">Highways</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number" id="visibleCount">0</div>
+                    <div class="label">Showing</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="dashboard">
+            <div class="sidebar">
+                <h3>🔍 Filters</h3>
+                
+                <div class="filter-group">
+                    <label for="cityFilter">🔎 Search City</label>
+                    <input type="text" id="cityFilter" placeholder="e.g. Seattle">
+                </div>
+                
+                <div class="filter-group">
+                    <label for="highwayFilter">🛣️ Highway</label>
+                    <select id="highwayFilter">
+                        <option value="">All Highways</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label for="typeFilter">📹 Camera Type</label>
+                    <select id="typeFilter">
+                        <option value="">All Types</option>
+                        <option value="Highway Camera">Highway Camera</option>
+                        <option value="City Traffic Camera">City Traffic Camera</option>
+                        <option value="Airport Camera">Airport Camera</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label for="regionFilter">📍 Region</label>
+                    <select id="regionFilter">
+                        <option value="">All Regions</option>
+                    </select>
+                </div>
+
+                <button class="clear-selection" id="clearBtn">✕ Clear Selection</button>
+
+                <div class="summary-section">
+                    <h4>📍 Top Cities (Click to View)</h4>
+                    <div class="summary-list" id="topCitiesList"></div>
+                </div>
+
+                <div class="summary-section">
+                    <h4>🛣️ Top Highways (Click to View)</h4>
+                    <div class="summary-list" id="topHighwaysList"></div>
+                </div>
+            </div>
+
+            <div class="content">
+                <div id="selectionInfo"></div>
+                
+                <h2 id="tableTitle">📋 All Cameras</h2>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>City</th>
+                                <th>Highway</th>
+                                <th>Type</th>
+                                <th>Region</th>
+                                <th>State</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cameraTable">
+                            <tr><td colspan="6" class="no-results">Loading cameras...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h2 id="galleryTitle" style="display: none;">📸 Live Camera Previews</h2>
+                <div class="gallery" id="cameraGallery"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allCameras = [];
+        let selectedFilter = { type: null, value: null };
+
+        async function loadCameras() {
+            try {
+                const response = await fetch('/api/cameras-enhanced');
+                if (!response.ok) {
+                    const text = await fetch('/camera-array-enhanced.js').then(r => r.text());
+                    const match = text.match(/const cameras = \[([\s\S]*?)\];/);
+                    if (match) {
+                        allCameras = JSON.parse('[' + match[1] + ']');
+                    }
+                } else {
+                    allCameras = await response.json();
+                }
+                
+                initializeUI();
+                render();
+            } catch (error) {
+                console.error('Error loading cameras:', error);
+            }
+        }
+
+        function initializeUI() {
+            const highways = [...new Set(allCameras.map(c => c.highway).filter(Boolean))].sort();
+            const hwSelect = document.getElementById('highwayFilter');
+            highways.forEach(hw => {
+                const option = document.createElement('option');
+                option.value = hw;
+                option.textContent = hw;
+                hwSelect.appendChild(option);
+            });
+
+            const regions = [...new Set(allCameras.map(c => c.region).filter(Boolean))].sort();
+            const regSelect = document.getElementById('regionFilter');
+            regions.forEach(reg => {
+                const option = document.createElement('option');
+                option.value = reg;
+                option.textContent = reg;
+                regSelect.appendChild(option);
+            });
+
+            document.getElementById('cityFilter').addEventListener('input', render);
+            document.getElementById('highwayFilter').addEventListener('change', render);
+            document.getElementById('typeFilter').addEventListener('change', render);
+            document.getElementById('regionFilter').addEventListener('change', render);
+            document.getElementById('clearBtn').addEventListener('click', clearSelection);
+
+            document.getElementById('totalCameras').textContent = allCameras.length;
+            const uniqueCities = new Set(allCameras.map(c => c.city).filter(Boolean));
+            document.getElementById('citiesCount').textContent = uniqueCities.size;
+            const uniqueHighways = new Set(allCameras.map(c => c.highway).filter(Boolean));
+            document.getElementById('highwaysCount').textContent = uniqueHighways.size;
+
+            const cityCounts = {};
+            allCameras.forEach(c => {
+                if (c.city) cityCounts[c.city] = (cityCounts[c.city] || 0) + 1;
+            });
+            const topCities = Object.entries(cityCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            document.getElementById('topCitiesList').innerHTML = topCities.map(([city, count]) => 
+                `<div class="summary-item" onclick="filterByCity('${city.replace(/'/g, "\\'")}')">
+                    <span>📍 ${city}</span>
+                    <span>${count}</span>
+                </div>`
+            ).join('');
+
+            const hwCounts = {};
+            allCameras.forEach(c => {
+                if (c.highway) hwCounts[c.highway] = (hwCounts[c.highway] || 0) + 1;
+            });
+            const topHighways = Object.entries(hwCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            document.getElementById('topHighwaysList').innerHTML = topHighways.map(([hw, count]) => 
+                `<div class="summary-item" onclick="filterByHighway('${hw}')">
+                    <span>🛣️ ${hw}</span>
+                    <span>${count}</span>
+                </div>`
+            ).join('');
+        }
+
+        function filterByCity(city) {
+            selectedFilter = { type: 'city', value: city };
+            document.getElementById('cityFilter').value = city;
+            render();
+        }
+
+        function filterByHighway(highway) {
+            selectedFilter = { type: 'highway', value: highway };
+            document.getElementById('highwayFilter').value = highway;
+            render();
+        }
+
+        function clearSelection() {
+            selectedFilter = { type: null, value: null };
+            document.getElementById('cityFilter').value = '';
+            document.getElementById('highwayFilter').value = '';
+            document.getElementById('typeFilter').value = '';
+            document.getElementById('regionFilter').value = '';
+            render();
+        }
+
+        function render() {
+            const cityFilter = document.getElementById('cityFilter').value.toLowerCase();
+            const highwayFilter = document.getElementById('highwayFilter').value;
+            const typeFilter = document.getElementById('typeFilter').value;
+            const regionFilter = document.getElementById('regionFilter').value;
+
+            const filtered = allCameras.filter(cam => {
+                if (cityFilter && !cam.city.toLowerCase().includes(cityFilter)) return false;
+                if (highwayFilter && cam.highway !== highwayFilter) return false;
+                if (typeFilter && cam.type !== typeFilter) return false;
+                if (regionFilter && cam.region !== regionFilter) return false;
+                return true;
+            });
+
+            updateUI(filtered);
+            updateTable(filtered);
+            updateGallery(filtered);
+        }
+
+        function updateUI(filtered) {
+            const clearBtn = document.getElementById('clearBtn');
+            const selectionInfo = document.getElementById('selectionInfo');
+            
+            if (selectedFilter.type) {
+                clearBtn.classList.add('show');
+                const label = selectedFilter.type === 'city' ? `📍 City: ${selectedFilter.value}` : `🛣️ Highway: ${selectedFilter.value}`;
+                selectionInfo.innerHTML = `<div class="selection-info">✓ <strong>${label}</strong> — ${filtered.length} cameras found</div>`;
+            } else {
+                clearBtn.classList.remove('show');
+                selectionInfo.innerHTML = '';
+            }
+            
+            document.getElementById('visibleCount').textContent = filtered.length;
+        }
+
+        function updateTable(filtered) {
+            const tbody = document.getElementById('cameraTable');
+            const tableTitle = document.getElementById('tableTitle');
+            
+            if (selectedFilter.type) {
+                tableTitle.textContent = `📋 Camera Table (${filtered.length} cameras)`;
+            } else {
+                tableTitle.textContent = `📋 All Cameras (${filtered.length})`;
+            }
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="no-results">No cameras found</td></tr>';
+            } else {
+                tbody.innerHTML = filtered.map(cam => `
+                    <tr>
+                        <td><strong>#${cam.id}</strong></td>
+                        <td><span class="badge city" onclick="event.stopPropagation(); filterByCity('${cam.city.replace(/'/g, "\\'")}')">${cam.city}</span></td>
+                        <td><span class="badge highway" onclick="event.stopPropagation(); filterByHighway('${cam.highway || '—'}')">${cam.highway || '—'}</span></td>
+                        <td><span class="badge type">${cam.type}</span></td>
+                        <td>${cam.region}</td>
+                        <td>${cam.state}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        function updateGallery(filtered) {
+            const gallery = document.getElementById('cameraGallery');
+            const galleryTitle = document.getElementById('galleryTitle');
+            
+            if (selectedFilter.type && filtered.length > 0) {
+                galleryTitle.style.display = 'block';
+                gallery.innerHTML = '';
+                
+                filtered.slice(0, 24).forEach(cam => {
+                    const card = document.createElement('div');
+                    card.className = 'camera-card';
+                    
+                    const imageDiv = document.createElement('div');
+                    imageDiv.className = 'camera-image';
+                    
+                    const img = document.createElement('img');
+                    img.src = cam.url;
+                    img.alt = `${cam.city} - Camera ${cam.id}`;
+                    img.loading = 'lazy';
+                    img.style.cursor = 'pointer';
+                    
+                    img.addEventListener('click', () => openImageModal(cam.url, cam.city, cam.id));
+                    img.addEventListener('error', () => {
+                        imageDiv.innerHTML = '<div style="color:#ccc; font-size:1.5em; display:flex; align-items:center; justify-content:center; height:100%;">📷</div>';
+                    });
+                    
+                    imageDiv.appendChild(img);
+                    
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'camera-info';
+                    infoDiv.innerHTML = `
+                        <div class="camera-id">Camera #${cam.id}</div>
+                        <div class="camera-location">${cam.city}</div>
+                        <div class="camera-details">
+                            ${cam.highway ? `<div class="detail-row"><span>🛣️ ${cam.highway}</span></div>` : ''}
+                            <div class="detail-row"><span>📍 ${cam.region}</span></div>
+                            <div class="detail-row"><span>📹 ${cam.type}</span></div>
+                        </div>
+                    `;
+                    
+                    card.appendChild(imageDiv);
+                    card.appendChild(infoDiv);
+                    gallery.appendChild(card);
+                });
+            } else {
+                galleryTitle.style.display = 'none';
+                gallery.innerHTML = '';
+            }
+        }
+        
+        function openImageModal(src, city, id) {
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalTitle = document.getElementById('modalTitle');
+            
+            modalImage.src = src;
+            modalTitle.textContent = `📍 ${city} • Camera #${id}`;
+            modal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            modal.classList.remove('show');
+            document.body.style.overflow = 'auto';
+        }
+        
+        // Close modal on escape key or clicking outside
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.getElementById('imageModal');
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal.classList.contains('show')) {
+                    closeImageModal();
+                }
+            });
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeImageModal();
+                }
+            });
+        });
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadCameras);
+        } else {
+            loadCameras();
+        }
+    </script>
+</body>
+</html>

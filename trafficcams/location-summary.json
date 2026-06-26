@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-06-26T05:28:14.410Z",
+  "total_cameras": 596,
+  "by_city": {
+    "Marysville": 4,
+    "Everett": 45,
+    "Monroe": 11,
+    "Seattle": 281,
+    "Renton": 102,
+    "Kent": 8,
+    "Snohomish": 8,
+    "Shoreline": 1,
+    "Tacoma": 1,
+    "Sea-Tac": 7,
+    "Bothell": 23,
+    "Edmonds": 15,
+    "Olympia": 6,
+    "Longview": 3,
+    "Arlington": 4,
+    "Auburn": 4
+  },
+  "by_highway": {
+    "WA-526": 2,
+    "WA-527": 11,
+    "US-2": 11,
+    "I-5": 162,
+    "I-90": 47,
+    "WA-99": 25,
+    "WA-167": 24,
+    "WA-169": 5,
+    "WA-181": 3,
+    "WA-202": 8,
+    "WA-204": 1,
+    "I-405": 69,
+    "WA-509": 2,
+    "WA-515": 1,
+    "WA-516": 8,
+    "WA-518": 7,
+    "WA-520": 45,
+    "WA-522": 23,
+    "WA-525": 15,
+    "WA-529": 2,
+    "WA-531": 6,
+    "US-99": 3
+  },
+  "by_type": {
+    "Highway Camera": 480,
+    "Airport Camera": 9,
+    "City Traffic Camera": 34
+  },
+  "regions": {
+    "North Puget Sound": 128,
+    "Central Puget Sound": 162,
+    "South Puget Sound": 7,
+    "South King County": 40,
+    "Central King County": 45,
+    "Southeast King County": 5
+  }
+}
