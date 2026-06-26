@@ -1,0 +1,29 @@
+{
+  "name": "iptracebackextended",
+  "version": "1.0.0",
+  "description": "Extended IP address decryption and extraction module for discovering hidden IPP addresses from multiple internet sources",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js",
+    "dev": "node index.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.18.2",
+    "js-base64": "^3.7.5",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "ip-address",
+    "decryption",
+    "obfuscation",
+    "ipp",
+    "geolocation",
+    "ip-extraction"
+  ],
+  "author": "",
+  "license": "MIT"
+}

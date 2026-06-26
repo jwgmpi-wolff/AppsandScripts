@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPTraceback Extended — Decode, Trace &amp; Analyse</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <!-- Header -->
+    <header>
+      <div class="logo">
+        <span class="logo-icon">&#128270;</span>
+        <span class="logo-text">IPTraceback<span class="logo-ext">Extended</span></span>
+      </div>
+      <p class="tagline">Decode obfuscated IPs · Scrape &amp; resolve · Classify · Geolocate</p>
+    </header>
+
+    <!-- Nav tabs -->
+    <nav class="nav-tabs" role="tablist">
+      <button class="nav-tab active" data-tab="decode"    role="tab" aria-selected="true">&#128274; Decode</button>
+      <button class="nav-tab"        data-tab="traceback" role="tab" aria-selected="false">&#127758; Traceback</button>
+      <button class="nav-tab"        data-tab="dns"       role="tab" aria-selected="false">&#128225; DNS Lookup</button>
+      <button class="nav-tab"        data-tab="classify"  role="tab" aria-selected="false">&#128202; Classify</button>
+      <button class="nav-tab"        data-tab="geolocate" role="tab" aria-selected="false">&#128205; Geolocate</button>
+    </nav>
+
+    <!-- Chain Execution Control -->
+    <div class="chain-control">
+      <label class="chain-toggle">
+        <input type="checkbox" id="chain-enabled" checked />
+        <span class="chain-label">&#9632; Chain Execution</span>
+      </label>
+      <span id="chain-status" class="chain-status"></span>
+      <button id="clear-all-btn" class="btn-secondary" title="Clear all cached data, forms, and results">
+        🗑️ Clear Data
+      </button>
+    </div>
+
+    <main>
+
+      <!-- ═══════════════════════════ DECODE ═══════════════════════════ -->
+      <section id="tab-decode" class="tab-pane active" role="tabpanel">
+        <div class="card form-card">
+          <h2 class="section-title">&#128274; Decode Encoded Input</h2>
+          <p class="section-desc">Paste a Base64, hex, URL-encoded, binary, or Caesar-rotated string to extract hidden IP addresses.</p>
+
+          <form id="decode-form" autocomplete="off" novalidate>
+            <label class="field-label" for="decode-input">Encoded string</label>
+            <textarea id="decode-input" rows="3" placeholder="e.g.  OTMuMTg0LjIxNi4zNA==  or  3138322e31363.." spellcheck="false"></textarea>
+
+            <div class="row-controls">
+              <div class="select-wrap">
+                <label class="field-label" for="decode-method">Method</label>
+                <select id="decode-method">
+                  <option value="auto">Auto (try all)</option>
+                  <option value="base64">Base64</option>
+                  <option value="hex">Hex</option>
+                  <option value="hex-numeric">Hex Numeric</option>
+                  <option value="url">URL Encoding</option>
+                  <option value="double-url">Double URL Encoding</option>
+                  <option value="binary">Binary</option>
+                  <option value="decimal">Decimal (ASCII)</option>
+                  <option value="rot13">ROT13</option>
+                  <option value="brute-force">Brute-force Rotation</option>
+                </select>
+              </div>
+              <button type="submit" class="btn-primary" id="decode-btn">
+                <span class="btn-icon">&#9654;</span> Decode
+              </button>
+            </div>
+
+            <div class="examples">
+              <span class="examples-label">Try:</span>
+              <button type="button" class="example-chip" data-target="decode-input" data-value="OTMuMTg0LjIxNi4zNA==">Base64</button>
+              <button type="button" class="example-chip" data-target="decode-input" data-value="39322e3136382e312e31">Hex</button>
+              <button type="button" class="example-chip" data-target="decode-input" data-value="38%2E38%2E38%2E38">URL</button>
+              <button type="button" class="example-chip" data-target="decode-input" data-value="00110001.00101110.00110001.00101110.00110001.00101110.00110001">Binary</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="decode-loading" class="loading hidden"><div class="spinner"></div><span>Decoding…</span></div>
+        <div id="decode-error"   class="error-banner hidden" role="alert"></div>
+
+        <section id="decode-results" class="card results-card hidden">
+          <h3 class="results-title"><span class="results-icon">&#128268;</span> Decode Results</h3>
+          <div id="decode-results-list" class="decode-results-list"></div>
+          <div class="results-footer">
+            <button id="decode-trace-btn" class="btn-primary hidden">&#127919; Trace Found IPs</button>
+            <button id="decode-export-btn" class="btn-secondary">&#128190; Export JSON</button>
+          </div>
+        </section>
+
+        <!-- Inline trace results from decode -->
+        <section id="decode-trace-section" class="card results-card hidden">
+          <h3 class="results-title"><span class="results-icon">&#127919;</span> Destination IP Trace</h3>
+          <div id="decode-trace-loading" class="loading hidden"><div class="spinner"></div><span>Tracing IPs&hellip;</span></div>
+          <div id="decode-trace-error"   class="error-banner hidden" role="alert"></div>
+          <div id="decode-trace-grid"    class="trace-grid"></div>
+        </section>
+      </section>
+
+      <!-- ═══════════════════════════ TRACEBACK ═══════════════════════ -->
+      <section id="tab-traceback" class="tab-pane" role="tabpanel">
+        <div class="card form-card">
+          <h2 class="section-title">&#127758; Full Traceback Pipeline</h2>
+          <p class="section-desc">Run the complete pipeline: decode → discover public IPs → scrape URLs → resolve hostnames → classify → optionally geolocate.</p>
+
+          <form id="traceback-form" autocomplete="off" novalidate>
+
+            <label class="field-label" for="tb-encoded">Encoded inputs <span class="field-hint">(one per line, optional)</span></label>
+            <textarea id="tb-encoded" rows="3" placeholder="OTMuMTg0LjIxNi4zNA==&#10;39322e3136382e312e31" spellcheck="false"></textarea>
+
+            <label class="field-label" for="tb-hostnames">Hostnames to resolve <span class="field-hint">(one per line, optional)</span></label>
+            <textarea id="tb-hostnames" rows="2" placeholder="example.com&#10;google.com" spellcheck="false"></textarea>
+
+            <label class="field-label" for="tb-urls">URLs to scrape for IPs <span class="field-hint">(one per line, optional)</span></label>
+            <textarea id="tb-urls" rows="2" placeholder="https://example.com" spellcheck="false"></textarea>
+
+            <div class="checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="tb-geolocate" checked />
+                <span>Geolocate destination IPs</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="tb-discover" />
+                <span>Also include my own public IP <span class="field-hint">(optional)</span></span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn-primary" id="traceback-btn">
+              <span class="btn-icon">&#127758;</span> Run Traceback
+            </button>
+          </form>
+        </div>
+
+        <div id="traceback-loading" class="loading hidden"><div class="spinner"></div><span id="traceback-loading-text">Running pipeline…</span></div>
+        <div id="traceback-error"   class="error-banner hidden" role="alert"></div>
+
+        <section id="traceback-results" class="card results-card hidden">
+          <h3 class="results-title"><span class="results-icon">&#127758;</span> Traceback Results</h3>
+          <p style="color: var(--accent2); margin-bottom: 1rem; font-size: 0.9rem;">
+            ✓ All results below are for <strong>destination IPs</strong> from your input (not your public IP).
+          </p>
+
+          <!-- Source IPs -->
+          <div id="tb-source-block" class="result-block hidden">
+            <h4 class="block-title">&#127919; Destination IPs Found</h4>
+            <div id="tb-source-list" class="tag-list"></div>
+          </div>
+
+          <!-- Own IP -->
+          <div id="tb-ownip-block" class="result-block hidden">
+            <h4 class="block-title" style="color:var(--muted)">&#128100; Your Public IP</h4>
+            <div id="tb-ownip-list" class="tag-list"></div>
+          </div>
+
+          <!-- Decoded IPs -->
+          <div id="tb-decoded-block" class="result-block hidden">
+            <h4 class="block-title">&#128274; Destination IPs Decoded</h4>
+            <div id="tb-decoded-list" class="decode-results-list"></div>
+          </div>
+
+          <!-- DNS -->
+          <div id="tb-dns-block" class="result-block hidden">
+            <h4 class="block-title">&#128225; DNS Results</h4>
+            <div id="tb-dns-list"></div>
+          </div>
+
+          <!-- Classifications -->
+          <div id="tb-classify-block" class="result-block hidden">
+            <h4 class="block-title">&#128202; Destination IP Classifications</h4>
+            <div id="tb-classify-list" class="classify-grid"></div>
+          </div>
+
+          <!-- Geolocations -->
+          <div id="tb-geo-block" class="result-block hidden">
+            <h4 class="block-title">&#128205; Destination Geolocation</h4>
+            <div id="tb-geo-list" class="geo-grid"></div>
+          </div>
+
+          <!-- Errors -->
+          <div id="tb-errors-block" class="result-block hidden">
+            <h4 class="block-title error-title">&#9888; Warnings / Errors</h4>
+            <ul id="tb-errors-list" class="errors-list"></ul>
+          </div>
+
+          <div class="results-footer">
+            <button id="traceback-export-btn" class="btn-secondary">&#128190; Export JSON</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ════════════════════════════ DNS ═════════════════════════════ -->
+      <section id="tab-dns" class="tab-pane" role="tabpanel">
+        <div class="card form-card">
+          <h2 class="section-title">&#128225; DNS Lookup</h2>
+          <p class="section-desc">Resolve A, MX, TXT, and NS records for any hostname.</p>
+
+          <form id="dns-form" autocomplete="off" novalidate>
+            <div class="input-row">
+              <input id="dns-input" type="text" placeholder="e.g.  example.com  •  microsoft.com" spellcheck="false" autocomplete="off" />
+              <button type="submit" class="btn-primary" id="dns-btn">
+                <span class="btn-icon">&#128269;</span> Lookup
+              </button>
+            </div>
+            <div class="examples">
+              <span class="examples-label">Try:</span>
+              <button type="button" class="example-chip" data-target="dns-input" data-value="example.com">example.com</button>
+              <button type="button" class="example-chip" data-target="dns-input" data-value="google.com">google.com</button>
+              <button type="button" class="example-chip" data-target="dns-input" data-value="cloudflare.com">cloudflare.com</button>
+              <button type="button" class="example-chip" data-target="dns-input" data-value="github.com">github.com</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="dns-loading" class="loading hidden"><div class="spinner"></div><span>Resolving…</span></div>
+        <div id="dns-error"   class="error-banner hidden" role="alert"></div>
+
+        <section id="dns-results" class="card results-card hidden">
+          <h3 class="results-title"><span class="results-icon">&#128225;</span> DNS Records for <span id="dns-hostname-label"></span></h3>
+
+          <div class="dns-grid">
+            <div id="dns-a-block"   class="dns-record-block hidden"><h4 class="dns-record-type">A Records</h4><div id="dns-a-list"   class="tag-list"></div></div>
+            <div id="dns-mx-block"  class="dns-record-block hidden"><h4 class="dns-record-type">MX Records</h4><table id="dns-mx-table"  class="dns-table"><tbody></tbody></table></div>
+            <div id="dns-txt-block" class="dns-record-block hidden"><h4 class="dns-record-type">TXT Records</h4><div id="dns-txt-list" class="txt-list"></div></div>
+            <div id="dns-ns-block"  class="dns-record-block hidden"><h4 class="dns-record-type">NS Records</h4><div id="dns-ns-list"  class="tag-list"></div></div>
+          </div>
+
+          <div id="dns-warn-block" class="dns-errors hidden"></div>
+          <div id="dns-cache-badge" class="cache-indicator hidden">&#9889; Cached</div>
+
+          <div class="results-footer">
+            <button id="dns-export-btn" class="btn-secondary">&#128190; Export JSON</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ════════════════════════════ CLASSIFY ════════════════════════ -->
+      <section id="tab-classify" class="tab-pane" role="tabpanel">
+        <div class="card form-card">
+          <h2 class="section-title">&#128202; IP Classification</h2>
+          <p class="section-desc">Classify destination IPs you've decoded or traced to see version, class, private/public status, numeric, hex, and binary representations.</p>
+
+          <form id="classify-form" autocomplete="off" novalidate>
+            <label class="field-label" for="classify-input">IP addresses <span class="field-hint">(one per line or comma-separated)</span></label>
+            <textarea id="classify-input" rows="4" placeholder="8.8.8.8&#10;192.168.1.1&#10;::1&#10;2001:db8::1" spellcheck="false"></textarea>
+            <button type="submit" class="btn-primary" id="classify-btn">
+              <span class="btn-icon">&#128202;</span> Classify
+            </button>
+            <div class="examples">
+              <span class="examples-label">Try:</span>
+              <button type="button" class="example-chip" data-target="classify-input" data-value="8.8.8.8">8.8.8.8</button>
+              <button type="button" class="example-chip" data-target="classify-input" data-value="192.168.1.1">192.168.1.1</button>
+              <button type="button" class="example-chip" data-target="classify-input" data-value="::1">::1</button>
+              <button type="button" class="example-chip" data-target="classify-input" data-value="2001:db8::1">2001:db8::1</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="classify-error" class="error-banner hidden" role="alert"></div>
+
+        <section id="classify-results" class="card results-card hidden">
+          <h3 class="results-title"><span class="results-icon">&#128202;</span> Classification Results</h3>
+          <div id="classify-grid" class="classify-grid"></div>
+          <div class="results-footer">
+            <button id="classify-export-btn" class="btn-secondary">&#128190; Export JSON</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ════════════════════════════ GEOLOCATE ═══════════════════════ -->
+      <section id="tab-geolocate" class="tab-pane" role="tabpanel">
+        <div class="card form-card">
+          <h2 class="section-title">&#128205; IP Geolocation</h2>
+          <p class="section-desc">Approximate geolocation for destination IP addresses you've traced or decoded (not your public location).</p>
+
+          <form id="geo-form" autocomplete="off" novalidate>
+            <div class="input-row">
+              <input id="geo-input" type="text" placeholder="e.g.  8.8.8.8  •  1.1.1.1" spellcheck="false" autocomplete="off" />
+              <button type="submit" class="btn-primary" id="geo-btn">
+                <span class="btn-icon">&#128205;</span> Locate
+              </button>
+            </div>
+            <div class="examples">
+              <span class="examples-label">Try:</span>
+              <button type="button" class="example-chip" data-target="geo-input" data-value="8.8.8.8">8.8.8.8</button>
+              <button type="button" class="example-chip" data-target="geo-input" data-value="1.1.1.1">1.1.1.1</button>
+              <button type="button" class="example-chip" data-target="geo-input" data-value="142.250.69.174">142.250.69.174</button>
+              <button type="button" class="example-chip" data-target="geo-input" data-value="104.20.23.154">104.20.23.154</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="geo-loading" class="loading hidden"><div class="spinner"></div><span>Locating…</span></div>
+        <div id="geo-error"   class="error-banner hidden" role="alert"></div>
+
+        <section id="geo-results" class="card results-card hidden">
+          <div class="results-header">
+            <div class="results-title-row">
+              <h3 class="results-title"><span class="results-icon">&#128205;</span> Location Results</h3>
+              <span id="geo-cache-badge" class="cache-indicator hidden">&#9889; Cached</span>
+            </div>
+            <span class="results-note">Results are approximate and do not represent an exact physical address.</span>
+          </div>
+
+          <div class="results-grid">
+            <div class="result-group">
+              <h4 class="group-title">Identity</h4>
+              <table class="result-table">
+                <tbody>
+                  <tr><th>IP Address</th>  <td id="geo-ip"      class="copyable" data-copy-value></td></tr>
+                  <tr><th>Reverse DNS</th> <td id="geo-rdns"    class="copyable" data-copy-value></td></tr>
+                  <tr><th>ISP</th>         <td id="geo-isp"     class="copyable" data-copy-value></td></tr>
+                  <tr><th>Org</th>         <td id="geo-org"     class="copyable" data-copy-value></td></tr>
+                  <tr><th>ASN</th>         <td id="geo-asn"     class="copyable" data-copy-value></td></tr>
+                  <tr><th>Proxy/VPN</th>   <td id="geo-proxy"></td></tr>
+                  <tr><th>Hosting</th>     <td id="geo-hosting"></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="result-group">
+              <h4 class="group-title">Location</h4>
+              <table class="result-table">
+                <tbody>
+                  <tr><th>Country</th>    <td id="geo-country"  class="copyable" data-copy-value></td></tr>
+                  <tr><th>Region</th>     <td id="geo-region"   class="copyable" data-copy-value></td></tr>
+                  <tr><th>City</th>       <td id="geo-city"     class="copyable" data-copy-value></td></tr>
+                  <tr><th>Postal</th>     <td id="geo-zip"      class="copyable" data-copy-value></td></tr>
+                  <tr><th>Latitude</th>   <td id="geo-lat"      class="copyable" data-copy-value></td></tr>
+                  <tr><th>Longitude</th>  <td id="geo-lon"      class="copyable" data-copy-value></td></tr>
+                  <tr><th>Timezone</th>   <td id="geo-tz"       class="copyable" data-copy-value></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="geo-map-row" class="map-link-row hidden">
+            <a id="geo-map-link" href="#" target="_blank" rel="noopener noreferrer" class="map-btn">
+              &#127760; View approximate location on map
+            </a>
+          </div>
+
+          <div class="results-footer">
+            <button id="geo-export-btn" class="btn-secondary">&#128190; Export JSON</button>
+          </div>
+        </section>
+      </section>
+
+    </main>
+
+    <footer>
+      <p>
+        IPTraceback Extended &mdash;
+        Geolocation by <a href="https://ip-api.com" target="_blank" rel="noopener noreferrer">ip-api.com</a>
+        &mdash; for informational purposes only.
+      </p>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
