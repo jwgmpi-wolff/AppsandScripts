@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Public Camera Intelligence</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
 
@@ -36,6 +37,9 @@
         <input id="keyword-input" type="text" placeholder="Optional keyword – e.g. mountain, traffic, beach, wildfire …" />
         <button id="search-btn" type="button">🔍 Search</button>
       </div>
+      <div id="search-suggestions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <span style="font-size:.82rem;color:var(--muted);align-self:center">Popular searches:</span>
+      </div>
       <div id="search-status" class="status" style="margin-top:10px">Ready – click Search to discover cameras.</div>
       <div id="search-meta" style="font-size:.82rem;color:var(--muted);margin-top:4px"></div>
     </div>
@@ -52,6 +56,11 @@
       <option value="hls">HLS/M3U8</option>
       <option value="embed">Embed</option>
     </select>
+    <div id="media-filter-container" style="display:flex;gap:4px">
+      <button class="media-filter-btn active" data-filter="all" style="padding:6px 12px;background:var(--panel-border);border:1px solid var(--panel-border);border-radius:4px;cursor:pointer;font-size:.85rem">🎬 All</button>
+      <button class="media-filter-btn" data-filter="images" style="padding:6px 12px;background:var(--panel-border);border:1px solid var(--panel-border);border-radius:4px;cursor:pointer;font-size:.85rem">📷 Images</button>
+      <button class="media-filter-btn" data-filter="streams" style="padding:6px 12px;background:var(--panel-border);border:1px solid var(--panel-border);border-radius:4px;cursor:pointer;font-size:.85rem">🟢 Streams</button>
+    </div>
     <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
       Show
       <select id="db-limit">
@@ -70,7 +79,7 @@
     <button id="filter-btn" type="button">Filter DB</button>
     <span id="db-total" style="color:var(--muted);font-size:.85rem"></span>
     <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
-      <input id="show-offline" type="checkbox" /> Show unverified/offline
+      <input id="show-offline" type="checkbox" checked /> Show offline &amp; unverified
     </label>
     <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem">
       <input id="auto-refresh" type="checkbox" /> Auto-refresh images (30 s)
@@ -144,15 +153,24 @@
     </div>
   </div>
 
-  <!-- ── Full-screen image modal ──────────────────────────────────── -->
+  <!-- ── Full-screen image/stream modal ──────────────────────────────── -->
   <div id="modal" class="modal" style="display:none" onclick="closeModal()">
     <div class="modal-inner" onclick="event.stopPropagation()">
       <button class="modal-close" onclick="closeModal()">✕</button>
-      <img id="modal-img" src="" alt="Camera" style="max-width:100%;max-height:80vh;display:block;margin:0 auto" />
+      
+      <!-- Media container: supports image, video, MJPEG, and YouTube iframe -->
+      <div id="modal-media-container" style="position:relative;max-width:100%;max-height:80vh;margin:0 auto;background:#000">
+        <img id="modal-img" src="" alt="Camera" style="max-width:100%;max-height:80vh;display:none;margin:0 auto" />
+        <video id="modal-video" style="max-width:100%;max-height:80vh;display:none;margin:0 auto" controls></video>
+        <img id="modal-mjpeg" src="" alt="MJPEG Stream" style="max-width:100%;max-height:80vh;display:none;margin:0 auto" />
+        <iframe id="modal-youtube" src="" allow="autoplay; encrypted-media" allowfullscreen
+          style="width:100%;aspect-ratio:16/9;max-height:70vh;display:none;border:none;background:#000"></iframe>
+      </div>
+      
       <div id="modal-meta" style="margin-top:10px;font-size:.9rem;color:var(--muted)"></div>
-      <div style="margin-top:8px;display:flex;gap:8px">
-        <button onclick="refreshModal()">↺ Refresh</button>
-        <a id="modal-link" href="#" target="_blank"><button>↗ Open feed</button></a>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="modal-refresh-toggle" onclick="toggleModalAutoRefresh()">↺ Refresh</button>
+        <a id="modal-link" href="#" target="_blank" onclick="if(!this.href||this.href.endsWith('#'))return false;"><button id="modal-open-btn">↗ Open</button></a>
       </div>
     </div>
   </div>

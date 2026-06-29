@@ -16,7 +16,9 @@ import httpx
 
 from .db import upsert_cameras, log_search
 from .validator import validate_cameras
-from .sources import alertwildfire, caltrans, dotcams, aggregators, faa
+from .stream_detector import detect_stream_url
+from .sources import alertwildfire, caltrans, dotcams, aggregators, faa, surveillance, web_search, youtube
+from .sources import browser as browser_crawler
 from .sources.seeds import get_seeds
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,15 @@ def _normalize_camera(cam: dict) -> dict | None:
     normalized = dict(cam)
     normalized["image_url"] = direct
     normalized["url"] = direct
+    
+    # Detect stream URLs (HLS, MJPEG, MP4, etc.)
+    stream_info = detect_stream_url(normalized)
+    if stream_info.get("stream_url"):
+        normalized["stream_url"] = stream_info["stream_url"]
+        # Update feed_type if a recognized stream was detected
+        if stream_info.get("stream_type"):
+            normalized["feed_type"] = stream_info["stream_type"]
+    
     return normalized
 
 
@@ -92,19 +103,45 @@ def _apply_keyword_filter(cameras: list[dict], keyword: str) -> list[dict]:
     tokens = [token for token in re.split(r"\s+", keyword.strip().lower()) if token]
     if not tokens:
         return cameras
-    return [
-        c for c in cameras
-        if all(
-            token in " ".join(
-                str(c.get(field) or "")
-                for field in (
-                    "title", "url", "image_url", "location", "city", "state",
-                    "country", "site_name", "description", "tags", "source", "keywords",
-                )
-            ).lower()
-            for token in tokens
-        )
-    ]
+    
+    # Synonym map for security/camera terms
+    _SYNONYMS = {
+        "security": ["security", "surveillance", "monitor", "cctv"],
+        "surveillance": ["surveillance", "security", "monitor", "cctv"],
+        "monitor": ["monitor", "surveillance", "camera", "cctv"],
+        "cctv": ["cctv", "surveillance", "security", "camera"],
+        "traffic": ["traffic", "road", "highway", "street", "dot", "transportation"],
+        "wildfire": ["wildfire", "fire", "smoke", "burn"],
+        "volcano": ["volcano", "volcanic", "lava", "crater"],
+    }
+    
+    # url and image_url are intentionally excluded
+    _MATCH_FIELDS = (
+        "title", "location", "city", "state",
+        "country", "site_name", "description", "tags", "source", "keywords",
+    )
+    
+    result = []
+    for camera in cameras:
+        metadata = " ".join(str(camera.get(f) or "") for f in _MATCH_FIELDS).lower()
+        
+        # For each token, check if it or its synonyms appear in metadata
+        all_match = True
+        for token in tokens:
+            synonyms = _SYNONYMS.get(token, [token])
+            # Check if any synonym appears as a word boundary match
+            token_found = any(
+                re.search(r'\b' + re.escape(syn) + r'\b', metadata)
+                for syn in synonyms
+            )
+            if not token_found:
+                all_match = False
+                break
+        
+        if all_match:
+            result.append(camera)
+    
+    return result
 
 
 async def _run_all_sources(client: httpx.AsyncClient) -> dict[str, list[dict]]:
@@ -115,9 +152,23 @@ async def _run_all_sources(client: httpx.AsyncClient) -> dict[str, list[dict]]:
         "dotcams":       dotcams.fetch_cameras(client),
         "faa":           faa.fetch_cameras(client),
         "aggregators":   aggregators.fetch_cameras(client),
+        "surveillance":  surveillance.fetch_cameras(client),
+        "web_search":    web_search.fetch_cameras(client),
+        "youtube":       youtube.fetch_cameras(client),
     }
     gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    return {name: (r if isinstance(r, list) else []) for name, r in zip(tasks, gathered)}
+    results = {name: (r if isinstance(r, list) else []) for name, r in zip(tasks, gathered)}
+
+    # Browser crawler disabled by default (can be slow/fragile)
+    # Uncomment below to enable Playwright-based consent-gate bypassing
+    # try:
+    #     browser_cams = await browser_crawler.fetch_cameras_browser()
+    #     results["browser"] = browser_cams
+    # except Exception as exc:
+    #     logger.debug("Browser crawler skipped: %s", exc)
+    #     results["browser"] = []
+
+    return results
 
 
 def run_search(keyword: str = "") -> dict[str, Any]:

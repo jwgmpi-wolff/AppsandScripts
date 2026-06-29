@@ -112,6 +112,42 @@ button {
 }
 button:hover { opacity: .85; }
 
+button.suggestion-label {
+  background: rgba(46,118,179,0.25);
+  color: var(--accent2);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: .85rem;
+  transition: all .2s;
+}
+button.suggestion-label:hover {
+  background: rgba(46,118,179,0.45);
+  color: #fff;
+  opacity: 1;
+}
+
+.media-filter-btn {
+  background: rgba(46,118,179,0.15) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--panel-border) !important;
+  padding: 6px 12px !important;
+  font-weight: 500 !important;
+  transition: all .2s !important;
+}
+.media-filter-btn:hover {
+  background: rgba(46,118,179,0.35) !important;
+  border-color: var(--accent) !important;
+}
+.media-filter-btn.active {
+  background: var(--accent) !important;
+  color: #08121b !important;
+  border-color: var(--accent) !important;
+  font-weight: 700 !important;
+}
+
 .status  { color: var(--muted); font-size: .9rem; }
 
 /* ── Panel ── */
@@ -295,6 +331,25 @@ button:hover { opacity: .85; }
 }
 .stat-list li span { color: var(--accent2); font-weight: 600; }
 
+button.stat-filter-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: .85rem;
+  font-weight: 400;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: color .15s;
+}
+button.stat-filter-btn:hover {
+  color: var(--accent2);
+  opacity: 1;
+}
+button.stat-filter-btn span { color: var(--accent2); font-weight: 600; }
+
 /* ── Modal ── */
 .modal {
   position: fixed;
@@ -327,6 +382,50 @@ button:hover { opacity: .85; }
   padding: 4px 8px;
 }
 .modal-close:hover { color: var(--text); }
+
+/* ── Status overlay pill (on camera thumbnails) ── */
+.status-pill {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  z-index: 5;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.status-pill--online  {
+  background: rgba(10,157,121,0.82);
+  color: #e0fff7;
+  border: 1px solid rgba(15,217,168,0.55);
+}
+.status-pill--offline {
+  background: rgba(160,30,30,0.82);
+  color: #ffd8d8;
+  border: 1px solid rgba(220,80,80,0.5);
+}
+.status-pill--unknown {
+  background: rgba(20,40,70,0.82);
+  color: var(--muted);
+  border: 1px solid rgba(46,118,179,0.4);
+}
+
+/* ── Offline card – dim thumbnail, muted border ── */
+.cam-card--offline {
+  border-color: rgba(160,30,30,0.3);
+}
+.cam-card--offline .cam-thumb-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.38);
+  pointer-events: none;
+  z-index: 4;
+}
 
 /* ── Misc ── */
 .empty-state { color: var(--muted); padding: 24px; text-align: center; font-size: .9rem; }

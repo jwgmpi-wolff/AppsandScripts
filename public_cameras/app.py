@@ -87,7 +87,7 @@ def api_cameras():
     state     = request.args.get("state", "").strip()
     source    = request.args.get("source", "").strip()
 
-    include_offline = request.args.get("include_offline", "0") == "1"
+    include_offline = request.args.get("include_offline", "1") == "1"
 
     rows, total = search_cameras(
         query=q, page=page, per_page=per_page,
@@ -145,6 +145,72 @@ def api_camera_media(camera_id: int):
     except Exception as exc:
         logger.debug("Proxy failed for camera_id=%s url=%s: %s", camera_id, target_url, exc)
         return jsonify({"ok": False, "error": "proxy_exception"}), 502
+
+
+@app.route("/api/camera/<int:camera_id>/refresh-youtube", methods=["POST"])
+def api_refresh_youtube(camera_id: int):
+    """Refresh YouTube stream URL (they expire quickly).
+    
+    YouTube HLS manifest URLs are time-limited. This endpoint re-extracts
+    a fresh stream URL for the given YouTube camera.
+    """
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT url, title, stream_url FROM cameras WHERE id = ? AND source = 'youtube'",
+        (camera_id,),
+    ).fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({"ok": False, "error": "youtube_camera_not_found"}), 404
+    
+    # Extract video ID from stream_url if available (usually has /id/VIDEO_ID/)
+    video_id = None
+    stream_url = row["stream_url"]
+    if stream_url and "/id/" in stream_url:
+        try:
+            # Extract from URL like .../id/EO_1LWqsCNE.28/...
+            parts = stream_url.split("/id/")
+            if len(parts) > 1:
+                video_id = parts[1].split(".")[0]
+        except:
+            pass
+    
+    # If no video ID found in stream URL, try to extract from url field
+    if not video_id:
+        url = row["url"]
+        if "youtube.com/watch?v=" in url:
+            try:
+                video_id = url.split("?v=")[1].split("&")[0]
+            except:
+                pass
+    
+    if not video_id:
+        return jsonify({"ok": False, "error": "no_video_id"}), 400
+    
+    try:
+        from agent.sources.youtube import _extract_youtube_url
+        
+        # Construct YouTube URL and extract fresh stream URL
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        new_stream_url = _extract_youtube_url(youtube_url)
+        
+        if new_stream_url:
+            # Update DB with fresh URL
+            conn = get_conn()
+            conn.execute(
+                "UPDATE cameras SET stream_url = ? WHERE id = ?",
+                (new_stream_url, camera_id),
+            )
+            conn.commit()
+            conn.close()
+            
+            return jsonify({"ok": True, "stream_url": new_stream_url})
+        else:
+            return jsonify({"ok": False, "error": "extraction_failed"}), 500
+    except Exception as exc:
+        logger.exception("YouTube refresh failed for camera_id=%s", camera_id)
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/searches")

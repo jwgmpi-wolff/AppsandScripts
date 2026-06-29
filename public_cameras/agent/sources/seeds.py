@@ -907,8 +907,278 @@ def _wsdot_cam(cam_id: str, loc: str, city: str, lat: float, lon: float, route: 
 
 _WSDOT_SEEDS = [_wsdot_cam(*args) for args in _WSDOT_CAMS]
 
-# Combine everything
-ALL_SEEDS = SEEDS + _FAA_SEEDS + _WSDOT_SEEDS
+# -----------------------------------------------------------------------
+# Street surveillance, city traffic & international public cameras
+# -----------------------------------------------------------------------
+def _surv(title, image_url, location, state, city, lat, lon,
+          site_name, description, tags, source, keywords,
+          country="USA", feed_type="image") -> dict:
+    return {
+        "title": title, "url": image_url, "image_url": image_url,
+        "feed_type": feed_type, "location": location,
+        "country": country, "state": state, "city": city,
+        "latitude": lat, "longitude": lon,
+        "site_name": site_name, "description": description,
+        "tags": tags, "source": source, "keywords": keywords,
+    }
+
+
+_SURVEILLANCE_SEEDS: list[dict] = [
+    # --- NOAA NDBC buoy cams (additional) ---
+    _surv(
+        "NOAA Buoy Cam – Gulf of Mexico Z14",
+        "https://www.ndbc.noaa.gov/images/buoycam/Z14_latest.jpg",
+        "Gulf of Mexico", "", "", None, None,
+        "NOAA NDBC", "NOAA buoy webcam – Gulf of Mexico.",
+        "noaa,weather,buoy,ocean,gulf,public", "ndbc.noaa.gov",
+        "noaa buoy camera gulf mexico weather ocean",
+    ),
+    _surv(
+        "NOAA Buoy Cam – Atlantic Z13",
+        "https://www.ndbc.noaa.gov/images/buoycam/Z13_latest.jpg",
+        "Atlantic Ocean", "", "", None, None,
+        "NOAA NDBC", "NOAA buoy webcam – Atlantic Ocean.",
+        "noaa,weather,buoy,ocean,atlantic,public", "ndbc.noaa.gov",
+        "noaa buoy camera atlantic ocean weather",
+    ),
+    # --- NYC public street cams ---
+    _surv(
+        "NYC – Times Square Live (EarthCam)",
+        "https://static.earthcam.com/tools/wl/timessquarelive_thumb.jpg",
+        "Times Square, Manhattan, NY", "NY", "New York City",
+        40.7580, -73.9855,
+        "EarthCam", "Live Times Square street surveillance webcam.",
+        "nyc,new york,times square,street,surveillance,tourism,public,earthcam",
+        "earthcam.com",
+        "nyc new york times square street surveillance camera live tourism",
+    ),
+    _surv(
+        "NYC – Brooklyn Bridge Live",
+        "https://static.earthcam.com/tools/wl/brooklynbridge_thumb.jpg",
+        "Brooklyn Bridge, NY", "NY", "New York City",
+        40.7061, -73.9969,
+        "EarthCam", "Live Brooklyn Bridge webcam – street and river view.",
+        "nyc,new york,brooklyn bridge,street,surveillance,public,earthcam",
+        "earthcam.com",
+        "nyc new york brooklyn bridge street surveillance camera live",
+    ),
+    # --- Chicago public street cams ---
+    _surv(
+        "Chicago – Millennium Park Live",
+        "https://static.earthcam.com/tools/wl/millenniumpark_thumb.jpg",
+        "Millennium Park, Chicago, IL", "IL", "Chicago",
+        41.8827, -87.6233,
+        "EarthCam", "Live Millennium Park street and surveillance webcam.",
+        "chicago,illinois,millennium park,street,surveillance,tourism,public",
+        "earthcam.com",
+        "chicago illinois millennium park street surveillance camera live tourism",
+    ),
+    # --- Washington DC ---
+    _surv(
+        "Washington DC – National Mall Live",
+        "https://static.earthcam.com/tools/wl/nationalmall_thumb.jpg",
+        "National Mall, Washington DC", "DC", "Washington DC",
+        38.8895, -77.0353,
+        "EarthCam", "Live National Mall webcam – Washington DC.",
+        "washington dc,national mall,street,surveillance,public,earthcam",
+        "earthcam.com",
+        "washington dc national mall street surveillance camera live public",
+    ),
+    # --- Las Vegas Strip ---
+    _surv(
+        "Las Vegas – Strip Live (EarthCam)",
+        "https://static.earthcam.com/tools/wl/lasvegas_thumb.jpg",
+        "Las Vegas Strip, NV", "NV", "Las Vegas",
+        36.1147, -115.1728,
+        "EarthCam", "Live Las Vegas Strip street surveillance webcam.",
+        "las vegas,nevada,strip,street,surveillance,tourism,public,earthcam",
+        "earthcam.com",
+        "las vegas nevada strip street surveillance camera live tourism",
+    ),
+    # --- New Orleans ---
+    _surv(
+        "New Orleans – Bourbon Street Live",
+        "https://static.earthcam.com/tools/wl/bourbonstreet_thumb.jpg",
+        "Bourbon Street, New Orleans, LA", "LA", "New Orleans",
+        29.9584, -90.0649,
+        "EarthCam", "Live Bourbon Street surveillance webcam.",
+        "new orleans,louisiana,bourbon street,street,surveillance,tourism,public",
+        "earthcam.com",
+        "new orleans louisiana bourbon street surveillance camera live tourism",
+    ),
+    # --- Boston ---
+    _surv(
+        "Boston – Faneuil Hall Live",
+        "https://static.earthcam.com/tools/wl/faneuilhall_thumb.jpg",
+        "Faneuil Hall, Boston, MA", "MA", "Boston",
+        42.3601, -71.0549,
+        "EarthCam", "Live Faneuil Hall street surveillance webcam.",
+        "boston,massachusetts,faneuil hall,street,surveillance,tourism,public",
+        "earthcam.com",
+        "boston massachusetts faneuil hall street surveillance camera live",
+    ),
+    # --- San Francisco ---
+    _surv(
+        "San Francisco – Fisherman's Wharf Live",
+        "https://static.earthcam.com/tools/wl/fishermanswharf_thumb.jpg",
+        "Fisherman's Wharf, San Francisco, CA", "CA", "San Francisco",
+        37.8080, -122.4177,
+        "EarthCam", "Live Fisherman's Wharf street surveillance webcam.",
+        "san francisco,california,fishermans wharf,street,surveillance,tourism,public",
+        "earthcam.com",
+        "san francisco california fishermans wharf street surveillance camera",
+    ),
+    # --- Traffic cams: additional WSDOT Seattle area ---
+    _surv(
+        "WSDOT – I-5 NB at Seattle (Seneca)",
+        "https://images.wsdot.wa.gov/nw/005vc22680.jpg",
+        "I-5 NB at Seneca St, Seattle, WA", "WA", "Seattle",
+        47.6062, -122.3321,
+        "WSDOT", "Washington State DOT traffic camera – I-5 NB at Seneca St, Seattle.",
+        "traffic,wsdot,washington,i5,seattle,dot,public,street,surveillance",
+        "wsdot.wa.gov",
+        "wsdot washington i5 seattle seneca street traffic surveillance camera",
+    ),
+    _surv(
+        "WSDOT – I-90 at Mercer Island",
+        "https://images.wsdot.wa.gov/se/090vc00745.jpg",
+        "I-90 at Mercer Island, WA", "WA", "Mercer Island",
+        47.5665, -122.2337,
+        "WSDOT", "Washington State DOT traffic camera – I-90 at Mercer Island.",
+        "traffic,wsdot,washington,i90,mercer island,dot,public,surveillance",
+        "wsdot.wa.gov",
+        "wsdot washington i90 mercer island traffic surveillance camera",
+    ),
+    _surv(
+        "WSDOT – I-405 at Bellevue",
+        "https://images.wsdot.wa.gov/nw/405vc02690.jpg",
+        "I-405 at Bellevue, WA", "WA", "Bellevue",
+        47.6101, -122.1985,
+        "WSDOT", "Washington State DOT traffic camera – I-405 at Bellevue.",
+        "traffic,wsdot,washington,i405,bellevue,dot,public,surveillance",
+        "wsdot.wa.gov",
+        "wsdot washington i405 bellevue traffic surveillance camera",
+    ),
+    _surv(
+        "WSDOT – SR-520 at Montlake",
+        "https://images.wsdot.wa.gov/nw/520vc02420.jpg",
+        "SR-520 at Montlake, Seattle, WA", "WA", "Seattle",
+        47.6425, -122.3049,
+        "WSDOT", "Washington State DOT traffic camera – SR-520 at Montlake.",
+        "traffic,wsdot,washington,sr520,seattle,montlake,dot,public,surveillance",
+        "wsdot.wa.gov",
+        "wsdot washington sr520 seattle montlake traffic surveillance camera",
+    ),
+    _surv(
+        "WSDOT – I-5 SB at Olympia",
+        "https://images.wsdot.wa.gov/sw/005vc10135.jpg",
+        "I-5 SB at Olympia, WA", "WA", "Olympia",
+        47.0379, -122.9007,
+        "WSDOT", "Washington State DOT traffic camera – I-5 at Olympia.",
+        "traffic,wsdot,washington,i5,olympia,dot,public,surveillance",
+        "wsdot.wa.gov",
+        "wsdot washington i5 olympia traffic surveillance camera",
+    ),
+    # --- International public street cams ---
+    _surv(
+        "London – Tower Bridge Live",
+        "https://static.earthcam.com/tools/wl/towerbridge_thumb.jpg",
+        "Tower Bridge, London, UK", "", "London",
+        51.5055, -0.0754,
+        "EarthCam", "Live Tower Bridge street surveillance webcam.",
+        "london,uk,tower bridge,street,surveillance,tourism,public,international",
+        "earthcam.com",
+        "london uk tower bridge street surveillance camera live international",
+        country="UK",
+    ),
+    _surv(
+        "Paris – Eiffel Tower Street View",
+        "https://static.earthcam.com/tools/wl/eiffeltower_thumb.jpg",
+        "Eiffel Tower, Paris, France", "", "Paris",
+        48.8584, 2.2945,
+        "EarthCam", "Live Eiffel Tower street and public space webcam.",
+        "paris,france,eiffel tower,street,surveillance,tourism,public,international",
+        "earthcam.com",
+        "paris france eiffel tower street surveillance camera live international",
+        country="France",
+    ),
+    _surv(
+        "Tokyo – Shibuya Crossing Live",
+        "https://static.earthcam.com/tools/wl/shibuya_thumb.jpg",
+        "Shibuya Crossing, Tokyo, Japan", "", "Tokyo",
+        35.6595, 139.7004,
+        "EarthCam", "Live Shibuya Crossing street surveillance webcam.",
+        "tokyo,japan,shibuya,crossing,street,surveillance,tourism,public,international",
+        "earthcam.com",
+        "tokyo japan shibuya crossing street surveillance camera live international",
+        country="Japan",
+    ),
+    # --- USGS / Nature (additional) ---
+    _surv(
+        "USGS – Mount St. Helens Summit Cam",
+        "https://volcanoes.usgs.gov/vsc/captures/msh/hdr.jpg",
+        "Mount St. Helens, WA", "WA", "Cougar",
+        46.1912, -122.1944,
+        "USGS CVO", "USGS Cascades Volcano Observatory live summit webcam.",
+        "volcano,usgs,washington,mount st helens,nature,public",
+        "volcanoes.usgs.gov",
+        "usgs mount st helens volcano washington summit camera public nature",
+    ),
+    _surv(
+        "USGS – Mount Rainier Summit Webcam",
+        "https://volcanoes.usgs.gov/vsc/captures/msh/rainier.jpg",
+        "Mount Rainier, WA", "WA", "Ashford",
+        46.8523, -121.7603,
+        "USGS CVO", "USGS Cascades Volcano Observatory – Mount Rainier webcam.",
+        "volcano,usgs,washington,mount rainier,nature,public",
+        "volcanoes.usgs.gov",
+        "usgs mount rainier volcano washington summit camera public nature",
+    ),
+    # --- Beach / harbor cams ---
+    _surv(
+        "Santa Monica Pier – Beach Cam",
+        "https://www.santamonica.com/wp-content/uploads/pier-cam-latest.jpg",
+        "Santa Monica Pier, CA", "CA", "Santa Monica",
+        34.0095, -118.4975,
+        "Santa Monica Tourism", "Live Santa Monica Pier beach and street webcam.",
+        "beach,santa monica,california,pier,public,tourism",
+        "santamonica.com",
+        "santa monica california pier beach street camera live public",
+    ),
+    _surv(
+        "Portland OR – Steel Bridge Traffic Cam",
+        "https://images.wsdot.wa.gov/nc/014vc03870.jpg",
+        "Steel Bridge, Portland, OR", "OR", "Portland",
+        45.5285, -122.6713,
+        "ODOT", "Oregon DOT traffic camera – Steel Bridge, Portland.",
+        "traffic,oregon,portland,odot,bridge,dot,public,surveillance,street",
+        "wsdot.wa.gov",
+        "oregon portland steel bridge traffic surveillance camera odot dot",
+    ),
+    # --- Arizona DOT (ADOT) public feeds ---
+    _surv(
+        "ADOT – I-10 at Downtown Phoenix",
+        "https://az511.com/cameras/1010/latest.jpg",
+        "I-10 at Downtown Phoenix, AZ", "AZ", "Phoenix",
+        33.4484, -112.0740,
+        "Arizona DOT AZ511", "Arizona DOT traffic camera – I-10, Downtown Phoenix.",
+        "traffic,arizona,adot,i10,phoenix,dot,public,surveillance,street",
+        "az511.com",
+        "arizona phoenix i10 traffic surveillance street camera adot dot",
+    ),
+    _surv(
+        "ADOT – I-17 at Camelback Rd Phoenix",
+        "https://az511.com/cameras/1017/latest.jpg",
+        "I-17 at Camelback Rd, Phoenix, AZ", "AZ", "Phoenix",
+        33.5098, -112.0826,
+        "Arizona DOT AZ511", "Arizona DOT traffic camera – I-17, Camelback, Phoenix.",
+        "traffic,arizona,adot,i17,phoenix,camelback,dot,public,surveillance",
+        "az511.com",
+        "arizona phoenix i17 camelback traffic surveillance camera adot dot",
+    ),
+]
+
+ALL_SEEDS = SEEDS + _FAA_SEEDS + _WSDOT_SEEDS + _SURVEILLANCE_SEEDS
 
 
 def get_seeds() -> list[dict]:
