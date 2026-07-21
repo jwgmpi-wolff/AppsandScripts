@@ -559,13 +559,51 @@
                 <p style="color: #666; font-size: 13px; margin-top: 5px;">Resource-level details showing which assets benefited from Reservations and Savings Plans</p>
             </div>
 
-            <!-- Toggle buttons -->
-            <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+            <!-- Toggle buttons and Month Selector -->
+            <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
                 <button onclick="showDiscountDetails('reservation')" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">
                     🏛️ Reservation Details
                 </button>
                 <button onclick="showDiscountDetails('savingsplan')" style="padding: 10px 20px; background: #f9f9f9; color: #333; border: 2px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">
                     📊 Savings Plan Details
+                </button>
+                <div style="margin-left: auto;">
+                    <label for="discountMonthSelector" style="font-size: 13px; font-weight: 600; margin-right: 8px;">📅 Month:</label>
+                    <select id="discountMonthSelector" style="padding: 8px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px; cursor: pointer;" onchange="showDiscountDetails(currentResourcesType || 'reservation')">
+                        <option value="">Select Month</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Search and Filter Controls -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 15px; margin-bottom: 20px; align-items: end;">
+                <!-- Search Box -->
+                <div>
+                    <input type="text" id="resourceSearchBox" placeholder="🔍 Search resources by name..." 
+                        style="width: 100%; padding: 10px 15px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px;"
+                        oninput="filterResourcesDisplay()">
+                </div>
+                <!-- Resource Type Filter -->
+                <div>
+                    <select id="resourceTypeFilter" style="width: 100%; padding: 10px 15px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px; cursor: pointer;"
+                        onchange="filterResourcesDisplay()">
+                        <option value="">📁 All Resource Types</option>
+                    </select>
+                </div>
+                <!-- Show All Button -->
+                <button onclick="showAllResources()" style="padding: 10px 15px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap;">
+                    ✦ Show All
+                </button>
+                <!-- Wildcard Button -->
+                <button onclick="document.getElementById('resourceSearchBox').value = '*'; filterResourcesDisplay();" style="padding: 10px 15px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap;">
+                    🔷 Wildcard *
+                </button>
+            </div>
+
+            <!-- Export Button -->
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 15px;">
+                <button onclick="exportResourcesToCSV()" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">
+                    📥 Export to CSV
                 </button>
             </div>
 
@@ -574,13 +612,13 @@
                 <table class="breakdown-table" style="width: 100%; font-size: 13px;">
                     <thead>
                         <tr>
-                            <th>Resource Name</th>
-                            <th>Resource Type</th>
-                            <th>Region</th>
-                            <th>Actual Cost</th>
-                            <th>List Price</th>
-                            <th>Savings</th>
-                            <th>Qty</th>
+                            <th style="cursor: pointer;" onclick="sortResourcesBy('name')" title="Click to sort">📛 Resource Name ▼</th>
+                            <th style="cursor: pointer;" onclick="sortResourcesBy('type')" title="Click to sort">📁 Type ▼</th>
+                            <th>🌍 Region</th>
+                            <th style="cursor: pointer;" onclick="sortResourcesBy('actual')" title="Click to sort">💰 Actual Cost ▼</th>
+                            <th>📊 List Price</th>
+                            <th style="cursor: pointer;" onclick="sortResourcesBy('savings')" title="Click to sort">💸 Savings ▼</th>
+                            <th style="cursor: pointer;" onclick="sortResourcesBy('quantity')" title="Click to sort">📈 Qty ▼</th>
                         </tr>
                     </thead>
                     <tbody id="discountDetailsBody">
@@ -811,6 +849,7 @@
                 const data = await response.json();
                 renderDashboard(data);
                 updateTimestamp();
+                populateDiscountMonthSelector();
                 showLoading(false);
                 await fetchAdvisorRecommendations();
             } catch (error) {
@@ -1238,9 +1277,19 @@
         }
 
         async function showDiscountDetails(type) {
-            const today = new Date();
-            const year = today.getFullYear();
-            const month = today.getMonth() + 1;
+            const monthSelector = document.getElementById('discountMonthSelector');
+            const selectedMonth = monthSelector ? monthSelector.value : '';
+            
+            let year, month;
+            if (selectedMonth) {
+                const [y, m] = selectedMonth.split('-').map(Number);
+                year = y;
+                month = m;
+            } else {
+                const today = new Date();
+                year = today.getFullYear();
+                month = today.getMonth() + 1;
+            }
             
             const endpoint = type === 'reservation' 
                 ? `/api/reservation-details/${year}/${month}`
@@ -1265,6 +1314,53 @@
             }
         }
 
+        async function populateDiscountMonthSelector() {
+            const selector = document.getElementById('discountMonthSelector');
+            if (!selector) return;
+
+            try {
+                // Generate the last 12 months for selection
+                const today = new Date();
+                const months = [];
+                
+                for (let i = 11; i >= 0; i--) {
+                    const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+                    const year = date.getFullYear();
+                    const month = date.getMonth() + 1;
+                    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                    
+                    months.push({
+                        value: `${year}-${month}`,
+                        display: monthName
+                    });
+                }
+
+                // Populate selector with generated months
+                selector.innerHTML = '<option value="">📅 Select Month</option>';
+                months.forEach(({ value, display }) => {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = display;
+                    selector.appendChild(option);
+                });
+
+                // Set current month as default if available
+                const currentValue = `${today.getFullYear()}-${today.getMonth() + 1}`;
+                const currentOption = Array.from(selector.options).find(o => o.value === currentValue);
+                if (currentOption) {
+                    selector.value = currentValue;
+                }
+            } catch (error) {
+                console.warn('Could not populate month selector:', error);
+            }
+        }
+
+        // Store current data for filtering/sorting
+        let currentResourcesData = [];
+        let currentResourcesType = '';
+        let currentSortField = 'name';
+        let currentSortDirection = 1; // 1 for asc, -1 for desc
+
         function renderDiscountDetails(data, type) {
             const section = document.getElementById('discountDetailsSection');
             const table = document.getElementById('discountDetailsTable');
@@ -1275,6 +1371,10 @@
             section.style.display = 'block';
 
             const resources = data.resources || [];
+            currentResourcesData = resources;
+            currentResourcesType = type;
+            currentSortField = 'savings';
+            currentSortDirection = -1; // Default: highest savings first
 
             if (resources.length === 0) {
                 table.style.display = 'none';
@@ -1287,36 +1387,180 @@
             empty.style.display = 'none';
             summary.style.display = 'block';
 
-            // Render table rows
-            tbody.innerHTML = resources.map(r => `
-                <tr>
-                    <td>${r.resource_name}</td>
-                    <td>${r.resource_type}</td>
-                    <td>${r.region || 'N/A'}</td>
-                    <td>${formatCurrency(r.actual_cost)}</td>
-                    <td>${formatCurrency(r.list_price)}</td>
-                    <td style="color: #667eea; font-weight: 600;">${formatCurrency(r.savings)}</td>
-                    <td>${r.quantity}</td>
-                </tr>
-            `).join('');
+            // Build resource type filter options
+            const types = [...new Set(resources.map(r => r.resource_type))].sort();
+            const typeSelect = document.getElementById('resourceTypeFilter');
+            const currentValue = typeSelect.value;
+            typeSelect.innerHTML = '<option value="">📁 All Resource Types</option>';
+            types.forEach(t => {
+                const option = document.createElement('option');
+                option.value = t;
+                option.textContent = t;
+                typeSelect.appendChild(option);
+            });
+            typeSelect.value = currentValue;
 
-            // Update summary
-            document.getElementById('summaryCount').textContent = resources.length;
-            document.getElementById('summaryActualCost').textContent = formatCurrency(data.total_actual_cost);
-            document.getElementById('summarySavings').textContent = formatCurrency(data.total_savings);
+            // Clear search
+            document.getElementById('resourceSearchBox').value = '';
+
+            // Render and sort
+            filterResourcesDisplay();
 
             // Update button styling
             document.querySelectorAll('#discountDetailsSection button').forEach(btn => {
-                btn.style.background = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
-                    ? '#667eea' 
-                    : '#f9f9f9';
-                btn.style.color = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
-                    ? 'white' 
-                    : '#333';
-                btn.style.borderColor = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
-                    ? '#667eea' 
-                    : '#ddd';
+                if (btn.textContent.includes('Reservation') || btn.textContent.includes('Savings')) {
+                    btn.style.background = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                        ? '#667eea' 
+                        : '#f9f9f9';
+                    btn.style.color = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                        ? 'white' 
+                        : '#333';
+                    btn.style.borderColor = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                        ? '#667eea' 
+                        : '#ddd';
+                }
             });
+        }
+
+        function filterResourcesDisplay() {
+            const searchText = document.getElementById('resourceSearchBox').value.toLowerCase();
+            const typeFilter = document.getElementById('resourceTypeFilter').value;
+
+            let filtered = currentResourcesData.filter(r => {
+                // Handle wildcard "*" - shows all resources
+                let matchesSearch = true;
+                if (searchText && searchText !== '*') {
+                    matchesSearch = r.resource_name.toLowerCase().includes(searchText) || 
+                                    r.resource_id.toLowerCase().includes(searchText);
+                }
+                const matchesType = !typeFilter || r.resource_type === typeFilter;
+                return matchesSearch && matchesType;
+            });
+
+            // Sort
+            filtered.sort((a, b) => {
+                let aVal, bVal;
+                switch(currentSortField) {
+                    case 'name': aVal = a.resource_name.toLowerCase(); bVal = b.resource_name.toLowerCase(); break;
+                    case 'type': aVal = a.resource_type.toLowerCase(); bVal = b.resource_type.toLowerCase(); break;
+                    case 'actual': aVal = a.actual_cost; bVal = b.actual_cost; break;
+                    case 'savings': aVal = a.savings; bVal = b.savings; break;
+                    case 'quantity': aVal = a.quantity; bVal = b.quantity; break;
+                    default: aVal = a.resource_name; bVal = b.resource_name;
+                }
+
+                if (typeof aVal === 'string') {
+                    return currentSortDirection * aVal.localeCompare(bVal);
+                } else {
+                    return currentSortDirection * (aVal - bVal);
+                }
+            });
+
+            // Render table
+            const tbody = document.getElementById('discountDetailsBody');
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="no-data">No resources match your filters</td></tr>';
+            } else {
+                tbody.innerHTML = filtered.map(r => `
+                    <tr>
+                        <td>${r.resource_name}</td>
+                        <td>${r.resource_type}</td>
+                        <td>${r.region || 'N/A'}</td>
+                        <td>${formatCurrency(r.actual_cost)}</td>
+                        <td>${formatCurrency(r.list_price)}</td>
+                        <td style="color: #667eea; font-weight: 600;">${formatCurrency(r.savings)}</td>
+                        <td>${r.quantity}</td>
+                    </tr>
+                `).join('');
+            }
+
+            // Update summary
+            document.getElementById('summaryCount').textContent = filtered.length;
+            document.getElementById('summaryActualCost').textContent = formatCurrency(
+                filtered.reduce((sum, r) => sum + r.actual_cost, 0)
+            );
+            document.getElementById('summarySavings').textContent = formatCurrency(
+                filtered.reduce((sum, r) => sum + r.savings, 0)
+            );
+        }
+
+        function sortResourcesBy(field) {
+            if (currentSortField === field) {
+                currentSortDirection *= -1; // Toggle direction
+            } else {
+                currentSortField = field;
+                currentSortDirection = field === 'savings' ? -1 : 1; // Default sort direction
+            }
+            filterResourcesDisplay();
+        }
+
+        function showAllResources() {
+            // Clear search and filter to show all resources
+            document.getElementById('resourceSearchBox').value = '';
+            document.getElementById('resourceTypeFilter').value = '';
+            filterResourcesDisplay();
+        }
+
+        function exportResourcesToCSV() {
+            if (currentResourcesData.length === 0) {
+                alert('No data to export. Please load resource details first.');
+                return;
+            }
+
+            // Apply current filters
+            const searchText = document.getElementById('resourceSearchBox').value.toLowerCase();
+            const typeFilter = document.getElementById('resourceTypeFilter').value;
+
+            let filtered = currentResourcesData.filter(r => {
+                // Handle wildcard "*" - shows all resources
+                let matchesSearch = true;
+                if (searchText && searchText !== '*') {
+                    matchesSearch = r.resource_name.toLowerCase().includes(searchText) || 
+                                    r.resource_id.toLowerCase().includes(searchText);
+                }
+                const matchesType = !typeFilter || r.resource_type === typeFilter;
+                return matchesSearch && matchesType;
+            });
+
+            // Build CSV
+            const headers = ['Resource Name', 'Resource Type', 'Region', 'Resource Group', 'Actual Cost', 'List Price', 'Savings', 'Quantity', 'Effective Price'];
+            const rows = filtered.map(r => [
+                r.resource_name,
+                r.resource_type,
+                r.region || 'N/A',
+                r.resource_group || 'N/A',
+                r.actual_cost.toFixed(2),
+                r.list_price.toFixed(2),
+                r.savings.toFixed(2),
+                r.quantity,
+                r.effective_price.toFixed(4)
+            ]);
+
+            // Add summary row
+            rows.push([]);
+            rows.push(['TOTAL', '', '', '', 
+                filtered.reduce((sum, r) => sum + r.actual_cost, 0).toFixed(2),
+                filtered.reduce((sum, r) => sum + r.list_price, 0).toFixed(2),
+                filtered.reduce((sum, r) => sum + r.savings, 0).toFixed(2),
+                filtered.length,
+                ''
+            ]);
+
+            const csv = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            // Download
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `discount-details-${currentResourcesType}-${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         document.addEventListener('DOMContentLoaded', () => {
