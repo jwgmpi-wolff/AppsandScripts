@@ -18,28 +18,39 @@ Professional real-time dashboard for Azure Reservation and Savings Plan savings 
 
 ## 📸 Screenshots
 
-### Main Dashboard
-The FinOps dashboard provides a comprehensive real-time view of your Azure cost savings:
+### Main Dashboard View
+![FinOps Dashboard Main](screenshots/dashboard-main.png)
 
-- **Header**: Dashboard title with Refresh button for manual data updates
-- **Authentication Panel**: Current subscription status with multi-subscription selector and OAuth2 login/logout
+The FinOps dashboard provides a comprehensive real-time view of your Azure cost savings with:
+- **Header**: Dashboard title with Refresh button for real-time data updates
+- **Authentication Panel**: Current subscription status with multi-subscription selector (90+ subscriptions) and OAuth2 login/logout controls
 - **Key Metrics Cards**:
-  - 📋 **List Price (Pay-As-You-Go)** - Total cost without discounts
-  - 💳 **Actual Cost Paid** - What was actually charged after Reservations & Savings Plans
-  - ✅ **Total Savings Generated** - Amount saved through commitment-based discounts
+  - 📋 **List Price (Pay-As-You-Go)** - Total cost without discounts (AmortizedCost baseline)
+  - 💳 **Actual Cost Paid** - What was actually charged after Reservations & Savings Plans (ActualCost)
+  - ✅ **Total Savings Generated** - Amount saved through commitment-based discounts (difference)
 
-### Cost Analysis Features
-- **Monthly Breakdown Table** - Detailed view of Reservation and Savings Plan savings by month
-- **Interactive Charts** - Visual trends of savings over time using Chart.js
-- **Resource-Level Details** - Filter and search for specific resources benefiting from discounts
-- **Advisor Recommendations** - Integrated cost optimization suggestions from Azure Advisor
+### Cost Breakdown & Analysis
+![Cost Metrics Detail](screenshots/cost-metrics.png)
+
+- **MTD Metrics** - Month-to-date Reservation and Savings Plan breakdowns
+- **YTD Summary** - Year-to-date cumulative savings with monthly trend
+- **Trailing 12-Month Analysis** - Rolling 12-month historical view
+- **Resource Details** - Expandable resource list showing which got Reservations vs Savings Plans
+
+### Interactive Features
+![Charts & Filters](screenshots/charts-filters.png)
+
+- **Monthly Breakdown Table** - Detailed CSV export of all months
+- **Interactive Charts** - Chart.js visualizations of savings trends over time
+- **Resource Filtering** - Search and filter by resource name or type
+- **Azure Advisor Integration** - Cost optimization recommendations with impact level and estimated savings
 
 ### Example Workflow
-1. **Login** → OAuth2 browser-based authentication
-2. **Select Subscription** → Switch between 90+ Azure subscriptions
-3. **View Metrics** → See current month, YTD, and trailing 12-month savings
-4. **Drill Down** → Click on resources to see which got Reservations vs Savings Plans
-5. **Export** → Download data to CSV for reporting
+1. **Login** → OAuth2 browser-based authentication with interactivebrowsercredential
+2. **Select Subscription** → Switch between available subscriptions in dropdown
+3. **View Metrics** → Dashboard auto-loads current month, YTD, and trailing 12-month data
+4. **Drill Down** → Click on resources or use filter to see which got Reservations vs Savings Plans
+5. **Export** → Download data to CSV for further analysis or reporting
 
 ## Architecture
 
