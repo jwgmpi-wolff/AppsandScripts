@@ -551,6 +551,69 @@
         </div>
     </div>
 
+    <!-- Where Discounts Were Applied Section -->
+    <div id="discountDetailsSection" style="max-width: 1400px; margin: 30px auto; display: none;">
+        <div style="background: white; border-radius: 12px; padding: 30px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);">
+            <div style="margin-bottom: 20px;">
+                <div class="metric-title">🎯 Where Discounts Were Applied</div>
+                <p style="color: #666; font-size: 13px; margin-top: 5px;">Resource-level details showing which assets benefited from Reservations and Savings Plans</p>
+            </div>
+
+            <!-- Toggle buttons -->
+            <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+                <button onclick="showDiscountDetails('reservation')" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">
+                    🏛️ Reservation Details
+                </button>
+                <button onclick="showDiscountDetails('savingsplan')" style="padding: 10px 20px; background: #f9f9f9; color: #333; border: 2px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">
+                    📊 Savings Plan Details
+                </button>
+            </div>
+
+            <!-- Details table -->
+            <div id="discountDetailsTable" style="overflow-x: auto;">
+                <table class="breakdown-table" style="width: 100%; font-size: 13px;">
+                    <thead>
+                        <tr>
+                            <th>Resource Name</th>
+                            <th>Resource Type</th>
+                            <th>Region</th>
+                            <th>Actual Cost</th>
+                            <th>List Price</th>
+                            <th>Savings</th>
+                            <th>Qty</th>
+                        </tr>
+                    </thead>
+                    <tbody id="discountDetailsBody">
+                        <tr><td colspan="7" class="no-data">Click a button to view details</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty state -->
+            <div id="discountDetailsEmpty" style="text-align: center; color: #999; padding: 40px; display: none;">
+                ℹ️ No discount details available for the current month.
+            </div>
+
+            <!-- Summary -->
+            <div id="discountDetailsSummary" style="margin-top: 20px; padding: 15px; background: #f9f9f9; border-radius: 6px; display: none;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                    <div>
+                        <div style="color: #999; font-size: 12px;">Resources Count</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #333;" id="summaryCount">0</div>
+                    </div>
+                    <div>
+                        <div style="color: #999; font-size: 12px;">Total Actual Cost</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #333;" id="summaryActualCost">$0.00</div>
+                    </div>
+                    <div>
+                        <div style="color: #999; font-size: 12px;">Total Savings</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #667eea;" id="summarySavings">$0.00</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Footnotes Section -->
     <div style="max-width: 1400px; margin: 30px auto 0; padding: 20px; background: #f8f9fa; border-radius: 12px; border-left: 4px solid #ddd;">
         <div style="font-size: 12px; color: #666; line-height: 1.8;">
@@ -1172,6 +1235,88 @@
             }
 
             displayFilteredRecommendations(filtered);
+        }
+
+        async function showDiscountDetails(type) {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = today.getMonth() + 1;
+            
+            const endpoint = type === 'reservation' 
+                ? `/api/reservation-details/${year}/${month}`
+                : `/api/savings-plan-details/${year}/${month}`;
+
+            try {
+                showLoading(true);
+                const response = await fetch(`${API_BASE}${endpoint}`);
+                
+                if (!response.ok) {
+                    throw new Error(`API returned ${response.status}`);
+                }
+
+                const data = await response.json();
+                renderDiscountDetails(data, type);
+                showLoading(false);
+
+            } catch (error) {
+                console.error('Error fetching discount details:', error);
+                showError(`Failed to load ${type} details: ${error.message}`);
+                showLoading(false);
+            }
+        }
+
+        function renderDiscountDetails(data, type) {
+            const section = document.getElementById('discountDetailsSection');
+            const table = document.getElementById('discountDetailsTable');
+            const tbody = document.getElementById('discountDetailsBody');
+            const empty = document.getElementById('discountDetailsEmpty');
+            const summary = document.getElementById('discountDetailsSummary');
+
+            section.style.display = 'block';
+
+            const resources = data.resources || [];
+
+            if (resources.length === 0) {
+                table.style.display = 'none';
+                summary.style.display = 'none';
+                empty.style.display = 'block';
+                return;
+            }
+
+            table.style.display = 'block';
+            empty.style.display = 'none';
+            summary.style.display = 'block';
+
+            // Render table rows
+            tbody.innerHTML = resources.map(r => `
+                <tr>
+                    <td>${r.resource_name}</td>
+                    <td>${r.resource_type}</td>
+                    <td>${r.region || 'N/A'}</td>
+                    <td>${formatCurrency(r.actual_cost)}</td>
+                    <td>${formatCurrency(r.list_price)}</td>
+                    <td style="color: #667eea; font-weight: 600;">${formatCurrency(r.savings)}</td>
+                    <td>${r.quantity}</td>
+                </tr>
+            `).join('');
+
+            // Update summary
+            document.getElementById('summaryCount').textContent = resources.length;
+            document.getElementById('summaryActualCost').textContent = formatCurrency(data.total_actual_cost);
+            document.getElementById('summarySavings').textContent = formatCurrency(data.total_savings);
+
+            // Update button styling
+            document.querySelectorAll('#discountDetailsSection button').forEach(btn => {
+                btn.style.background = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                    ? '#667eea' 
+                    : '#f9f9f9';
+                btn.style.color = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                    ? 'white' 
+                    : '#333';
+                btn.style.borderColor = btn.textContent.includes(type === 'reservation' ? 'Reservation' : 'Savings Plan') 
+                    ? '#667eea' 
+                    : '#ddd';
+            });
         }
 
         document.addEventListener('DOMContentLoaded', () => {
