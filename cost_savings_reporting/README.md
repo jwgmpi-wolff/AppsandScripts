@@ -6,6 +6,7 @@ Professional real-time dashboard for Azure Reservation and Savings Plan savings 
 
 - **Real-time Dashboard** – Live cost analysis with month-to-date, YTD, and trailing 12-month metrics
 - **Azure Advisor Integration** – Automatically fetch and display cost savings recommendations
+- **Resource-Level Breakdown** 🆕 – View detailed breakdown of where Reservations and Savings Plans were applied
 - **Multi-Subscription Support** – Switch between 90+ subscriptions with one click
 - **OAuth2 Authentication** – Secure browser-based login with Azure
 - **Cost Breakdown** – List price vs actual cost vs savings with detailed metrics

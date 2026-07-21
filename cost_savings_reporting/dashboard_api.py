@@ -462,6 +462,84 @@ async def get_advisor_recommendations():
         }
 
 
+@app.get("/api/reservation-details/{year}/{month}")
+async def get_reservation_details(year: int, month: int):
+    """Get resource-level details for Reservations in specific month."""
+    if not cost_client:
+        raise HTTPException(status_code=500, detail="Cost Management client not initialized")
+
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=400, detail="Month must be 1-12")
+
+    try:
+        details = cost_client.get_reservation_details(year, month)
+        return {
+            "month": f"{year}-{month:02d}",
+            "pricing_model": "Reservation",
+            "resources": [
+                {
+                    "resource_id": d.resource_id,
+                    "resource_name": d.resource_name,
+                    "resource_type": d.resource_type,
+                    "actual_cost": d.actual_cost,
+                    "list_price": d.list_price,
+                    "savings": d.savings,
+                    "quantity": d.quantity,
+                    "effective_price": d.effective_price,
+                    "region": d.region,
+                    "resource_group": d.resource_group,
+                }
+                for d in details
+            ],
+            "count": len(details),
+            "total_actual_cost": sum(d.actual_cost for d in details),
+            "total_savings": sum(d.savings for d in details),
+            "query_timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching reservation details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/savings-plan-details/{year}/{month}")
+async def get_savings_plan_details(year: int, month: int):
+    """Get resource-level details for Savings Plans in specific month."""
+    if not cost_client:
+        raise HTTPException(status_code=500, detail="Cost Management client not initialized")
+
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=400, detail="Month must be 1-12")
+
+    try:
+        details = cost_client.get_savings_plan_details(year, month)
+        return {
+            "month": f"{year}-{month:02d}",
+            "pricing_model": "SavingsPlan",
+            "resources": [
+                {
+                    "resource_id": d.resource_id,
+                    "resource_name": d.resource_name,
+                    "resource_type": d.resource_type,
+                    "actual_cost": d.actual_cost,
+                    "list_price": d.list_price,
+                    "savings": d.savings,
+                    "quantity": d.quantity,
+                    "effective_price": d.effective_price,
+                    "region": d.region,
+                    "resource_group": d.resource_group,
+                }
+                for d in details
+            ],
+            "count": len(details),
+            "total_actual_cost": sum(d.actual_cost for d in details),
+            "total_savings": sum(d.savings for d in details),
+            "query_timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching savings plan details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
 

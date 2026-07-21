@@ -40,6 +40,22 @@ class MonthlySavings:
     savings_plan_effective_price: float
 
 
+@dataclass
+class ResourceSavingsDetail:
+    """Resource-level savings details."""
+    resource_id: str
+    resource_name: str
+    resource_type: str
+    pricing_model: str  # "Reservation", "SavingsPlan", or "OnDemand"
+    actual_cost: float
+    list_price: float
+    savings: float
+    quantity: float
+    effective_price: float
+    region: str = ""
+    resource_group: str = ""
+
+
 class CostManagementClient:
     """
     Client for Azure Cost Management API.
@@ -400,7 +416,168 @@ class CostManagementClient:
                 savings_plan_effective_price=0.0,
             )
 
-    def get_ytd_savings(self) -> Dict[str, MonthlySavings]:
+    def _extract_resource_details(
+        self,
+        response: Dict[str, Any],
+        start_date: datetime,
+        end_date: datetime,
+        pricing_model_filter: Optional[str] = None,
+    ) -> List[ResourceSavingsDetail]:
+        """
+        Extract resource-level savings details from API response.
+        
+        Args:
+            response: API response JSON from ActualCost query
+            start_date: Query start date
+            end_date: Query end date
+            pricing_model_filter: Filter by specific pricing model ("Reservation", "SavingsPlan", "OnDemand")
+        
+        Returns:
+            List of ResourceSavingsDetail objects
+        """
+        details = []
+        
+        try:
+            properties = response.get("properties", {})
+            rows = properties.get("rows", [])
+            columns = properties.get("columns", [])
+
+            # Map column names to indices
+            col_map = {col.get("name"): idx for idx, col in enumerate(columns)}
+
+            # Resource aggregation dict to combine multiple rows per resource
+            resource_map = {}
+
+            for row in rows:
+                try:
+                    pricing_model = row[col_map.get("PricingModel", 1)] or "Unknown"
+                    
+                    # Filter if requested
+                    if pricing_model_filter and pricing_model != pricing_model_filter:
+                        continue
+                    
+                    cost = float(row[col_map.get("CostUSD", 0)] or 0)
+                    resource_id = row[col_map.get("ResourceId", 2)] or "Unknown"
+                    resource_type = row[col_map.get("ResourceType", 3)] or "Unknown"
+                    region = row[col_map.get("ResourceLocation", 4)] or ""
+                    
+                    # Extract resource name from ID
+                    resource_name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+                    resource_group = resource_id.split("/")[-5] if resource_id.count("/") >= 5 else ""
+
+                    key = (resource_id, pricing_model)
+                    
+                    if key not in resource_map:
+                        resource_map[key] = {
+                            "resource_id": resource_id,
+                            "resource_name": resource_name,
+                            "resource_type": resource_type,
+                            "pricing_model": pricing_model,
+                            "actual_cost": 0.0,
+                            "quantity": 0,
+                            "region": region,
+                            "resource_group": resource_group,
+                        }
+                    
+                    resource_map[key]["actual_cost"] += cost
+                    resource_map[key]["quantity"] += 1
+
+                except (ValueError, IndexError, TypeError) as e:
+                    logger.warning(f"Error parsing resource row {row}: {e}")
+                    continue
+
+            # Query amortized cost to get list price per resource
+            amortized_response = self.query_costs(
+                start_date,
+                end_date,
+                cost_type="AmortizedCost",
+                pricing_models=[pricing_model_filter] if pricing_model_filter else None,
+            )
+            
+            amort_list_prices = {}
+            try:
+                amort_props = amortized_response.get("properties", {})
+                amort_rows = amort_props.get("rows", [])
+                amort_columns = amort_props.get("columns", [])
+                amort_col_map = {col.get("name"): idx for idx, col in enumerate(amort_columns)}
+                
+                for row in amort_rows:
+                    try:
+                        resource_id = row[amort_col_map.get("ResourceId", 2)] or "Unknown"
+                        cost = float(row[amort_col_map.get("CostUSD", 0)] or 0)
+                        amort_list_prices[resource_id] = amort_list_prices.get(resource_id, 0) + cost
+                    except (ValueError, IndexError, TypeError):
+                        continue
+            except Exception as e:
+                logger.warning(f"Error parsing amortized costs for resources: {e}")
+
+            # Build resource details
+            for (resource_id, pricing_model), resource_data in resource_map.items():
+                list_price = amort_list_prices.get(resource_id, resource_data["actual_cost"])
+                savings = max(0, list_price - resource_data["actual_cost"])
+                
+                detail = ResourceSavingsDetail(
+                    resource_id=resource_data["resource_id"],
+                    resource_name=resource_data["resource_name"],
+                    resource_type=resource_data["resource_type"],
+                    pricing_model=resource_data["pricing_model"],
+                    actual_cost=round(resource_data["actual_cost"], 2),
+                    list_price=round(list_price, 2),
+                    savings=round(savings, 2),
+                    quantity=resource_data["quantity"],
+                    effective_price=round(
+                        resource_data["actual_cost"] / max(resource_data["quantity"], 1), 4
+                    ),
+                    region=resource_data["region"],
+                    resource_group=resource_data["resource_group"],
+                )
+                details.append(detail)
+
+            return sorted(details, key=lambda x: x.savings, reverse=True)
+
+        except Exception as e:
+            logger.error(f"Error extracting resource details: {e}")
+            return []
+
+    def get_reservation_details(
+        self, year: int, month: int
+    ) -> List[ResourceSavingsDetail]:
+        """Get resource-level details for Reservation pricing model."""
+        month_start = datetime(year, month, 1)
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1) - timedelta(seconds=1)
+        else:
+            month_end = datetime(year, month + 1, 1) - timedelta(seconds=1)
+
+        response = self.query_costs(
+            month_start,
+            month_end,
+            cost_type="ActualCost",
+            pricing_models=None,
+        )
+        return self._extract_resource_details(
+            response, month_start, month_end, pricing_model_filter="Reservation"
+        )
+
+    def get_savings_plan_details(
+        self, year: int, month: int
+    ) -> List[ResourceSavingsDetail]:
+        """Get resource-level details for Savings Plan pricing model."""
+        month_start = datetime(year, month, 1)
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1) - timedelta(seconds=1)
+        else:
+            month_end = datetime(year, month + 1, 1) - timedelta(seconds=1)
+
+        response = self.query_costs(
+            month_start,
+            month_end,
+            cost_type="ActualCost",
+            pricing_models=None,
+        )
+        return self._extract_resource_details(
+            response, month_start, month_end, pricing_model_filter="SavingsPlan"
+        )
         """
         Get savings for each month year-to-date.
         
