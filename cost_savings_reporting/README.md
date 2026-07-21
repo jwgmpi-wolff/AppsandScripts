@@ -16,6 +16,31 @@ Professional real-time dashboard for Azure Reservation and Savings Plan savings 
 - **Professional UI** – Responsive grid layout, mobile-friendly design
 - **5-Minute Caching** – Configurable dashboard cache with stale-data fallback
 
+## 📸 Screenshots
+
+### Main Dashboard
+The FinOps dashboard provides a comprehensive real-time view of your Azure cost savings:
+
+- **Header**: Dashboard title with Refresh button for manual data updates
+- **Authentication Panel**: Current subscription status with multi-subscription selector and OAuth2 login/logout
+- **Key Metrics Cards**:
+  - 📋 **List Price (Pay-As-You-Go)** - Total cost without discounts
+  - 💳 **Actual Cost Paid** - What was actually charged after Reservations & Savings Plans
+  - ✅ **Total Savings Generated** - Amount saved through commitment-based discounts
+
+### Cost Analysis Features
+- **Monthly Breakdown Table** - Detailed view of Reservation and Savings Plan savings by month
+- **Interactive Charts** - Visual trends of savings over time using Chart.js
+- **Resource-Level Details** - Filter and search for specific resources benefiting from discounts
+- **Advisor Recommendations** - Integrated cost optimization suggestions from Azure Advisor
+
+### Example Workflow
+1. **Login** → OAuth2 browser-based authentication
+2. **Select Subscription** → Switch between 90+ Azure subscriptions
+3. **View Metrics** → See current month, YTD, and trailing 12-month savings
+4. **Drill Down** → Click on resources to see which got Reservations vs Savings Plans
+5. **Export** → Download data to CSV for reporting
+
 ## Architecture
 
 ```
