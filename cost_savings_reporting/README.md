@@ -28,22 +28,11 @@ The FinOps dashboard provides a comprehensive real-time view of your Azure cost 
   - 📋 **List Price (Pay-As-You-Go)** - Total cost without discounts (AmortizedCost baseline)
   - 💳 **Actual Cost Paid** - What was actually charged after Reservations & Savings Plans (ActualCost)
   - ✅ **Total Savings Generated** - Amount saved through commitment-based discounts (difference)
-
-### Cost Breakdown & Analysis
-![Cost Metrics Detail](screenshots/cost-metrics.png)
-
-- **MTD Metrics** - Month-to-date Reservation and Savings Plan breakdowns
-- **YTD Summary** - Year-to-date cumulative savings with monthly trend
-- **Trailing 12-Month Analysis** - Rolling 12-month historical view
-- **Resource Details** - Expandable resource list showing which got Reservations vs Savings Plans
-
-### Interactive Features
-![Charts & Filters](screenshots/charts-filters.png)
-
-- **Monthly Breakdown Table** - Detailed CSV export of all months
-- **Interactive Charts** - Chart.js visualizations of savings trends over time
-- **Resource Filtering** - Search and filter by resource name or type
-- **Azure Advisor Integration** - Cost optimization recommendations with impact level and estimated savings
+- **Monthly Breakdown Table** - Detailed view of all months with savings metrics
+- **Azure Advisor Recommendations** - Cost optimization opportunities with impact levels and estimated savings
+- **Interactive Charts** - Chart.js visualizations of cost trends and savings analysis
+- **Resource Filtering** - Search and filter by resource name or type with wildcard support
+- **CSV Export** - Download detailed resource data for further analysis
 
 ### Example Workflow
 1. **Login** → OAuth2 browser-based authentication with interactivebrowsercredential
