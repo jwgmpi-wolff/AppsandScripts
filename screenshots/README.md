@@ -2,11 +2,25 @@
 
 This directory contains screenshot images for the FinOps Savings Dashboard README.
 
-## Required Screenshots
+## Included Screenshots
+
+### 1. dashboard-updated-main.png
+Full updated dashboard with the current card labels and methodology notes.
+
+### 2. cost-metrics-updated.png
+Updated metrics-focused dashboard view.
+
+### 3. dashboard-main.png
+Legacy main dashboard screenshot (kept for historical reference).
+
+### 4. cost-metrics.png
+Legacy metrics screenshot (kept for historical reference).
+
+## Optional Additional Screenshots
 
 Add the following PNG screenshots to this directory:
 
-### 1. dashboard-main.png
+### 5. dashboard-main.png (legacy)
 Full dashboard view showing:
 - Header with title and Refresh button
 - Azure Authentication panel with subscription selector
@@ -15,7 +29,7 @@ Full dashboard view showing:
 
 **Size recommendation**: 1200x800px or wider
 
-### 2. cost-metrics.png
+### 6. cost-metrics.png (legacy)
 Cost metrics detail view showing:
 - Current Month metrics cards
 - YTD Summary section
@@ -24,7 +38,7 @@ Cost metrics detail view showing:
 
 **Size recommendation**: 1200x600px
 
-### 3. charts-filters.png
+### 7. charts-filters.png
 Interactive features showing:
 - Filter controls (search box, resource type dropdown, Show All button, Wildcard button)
 - Cost trend charts
