@@ -368,7 +368,7 @@ This script will:
 
 Use this button to create the App Service infrastructure from the included ARM template:
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Fcost_savings_reporting%2Fmain%2Finfra%2Fazuredeploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Fcost_savings_reporting%2Fmain%2Fcost_savings_reporting%2Finfra%2Fazuredeploy.json)
 
 Template files included:
 - `infra/azuredeploy.json`
