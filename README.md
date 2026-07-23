@@ -1,77 +1,24 @@
-# Service Bus Queue Demo with Container Apps & KEDA
+# Azure FinOps Savings Reporting Dashboard
+
+Landing page for the `cost_savings_reporting` project.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Fcost_savings_reporting%2Fmain%2Fcost_savings_reporting%2Finfra%2Fazuredeploy.json)
 
-For the FinOps dashboard project and its full documentation, see [cost_savings_reporting/README.md](cost_savings_reporting/README.md).
+## Quick Start
 
-End-to-end demo showcasing:
-- Azure Service Bus messaging
-- Container Apps with KEDA autoscaling (0→10 replicas)
-- Managed identities (no API keys)
-- ACR Tasks for containerized builds
-- Application Insights monitoring
+1. Open the full project documentation: [cost_savings_reporting/README.md](cost_savings_reporting/README.md)
+2. Run locally (Windows PowerShell):
 
-## Architecture
-
-```
-Producer → Service Bus Queue → Container App (KEDA) → Blob Storage
-                                        ↓
-                                Application Insights
+```powershell
+cd cost_savings_reporting
+./scripts/deploy_local.ps1
 ```
 
-## Prerequisites
+3. Open: `http://127.0.0.1:8000`
 
-- Azure CLI (az) logged in
-- Azure Developer CLI (azd) logged in
-- No Docker installation needed (ACR Tasks builds on server)
+## What This Deploy Button Does
 
-## Deployment
+The Deploy to Azure button provisions the FinOps dashboard App Service resources using:
 
-```bash
-# 1. Create resource group
-az group create --name rg-sbqdemo --location eastus2
-
-# 2. Deploy infrastructure
-az deployment group create \
-  --resource-group rg-sbqdemo \
-  --template-file infra/main.bicep \
-  --parameters environmentName=sbqdemo location=eastus2
-
-# 3. Build container image (server-side via ACR)
-az acr build \
-  --registry <ACR_NAME> \
-  --image consumer:latest \
-  --file src/consumer/Dockerfile src/consumer
-
-# 4. Update container app with built image
-az containerapp update \
-  --resource-group rg-sbqdemo \
-  --name <CONTAINER_APP_NAME> \
-  --image <ACR_LOGIN_SERVER>/consumer:latest
-
-# 5. Grant current user permissions
-az role assignment create \
-  --role "Azure Service Bus Data Sender" \
-  --assignee <YOUR_USER_OBJECT_ID> \
-  --scope <SERVICE_BUS_NAMESPACE_ID>
-
-az role assignment create \
-  --role "Storage Blob Data Reader" \
-  --assignee <YOUR_USER_OBJECT_ID> \
-  --scope <STORAGE_ACCOUNT_ID>
-
-# 6. Run producer
-python src/producer/send_messages.py
-
-# 7. Verify results
-az storage blob list \
-  --account-name <STORAGE_ACCOUNT> \
-  --container-name processed-messages \
-  --auth-mode login -o table
-```
-
-## Files
-
-- `src/producer/` - Sends 10 messages to Service Bus
-- `src/consumer/` - Processes messages from queue, uploads to Blob Storage
-- `infra/` - Bicep infrastructure as code
+- `cost_savings_reporting/infra/azuredeploy.json`
+- `cost_savings_reporting/infra/azuredeploy.parameters.json`
