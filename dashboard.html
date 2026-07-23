@@ -398,13 +398,18 @@
                 </div>
             </div>
             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <select id="loginMethod" style="padding: 8px 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px; cursor: pointer;">
+                    <option value="interactive" selected>Interactive Browser</option>
+                    <option value="device_code">Device Code</option>
+                </select>
+                <input id="tenantIdInput" type="text" placeholder="Tenant ID (optional)" style="padding: 8px 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px; min-width: 220px;" />
                 <button class="login-btn" id="loginBtn" onclick="azureLogin()">🔐 Login</button>
                 <div class="subscription-selector" id="subscriptionSelectorDiv" style="display: none;">
                     <label for="subscriptionSelect" style="font-size: 13px; color: #666; font-weight: 600;">Subscription:</label>
                     <select id="subscriptionSelect" onchange="switchSubscription()">
                         <option value="">Loading...</option>
                     </select>
-                    <button class="refresh-subs-btn" onclick="loadSubscriptions()">🔄</button>
+                    <button class="refresh-subs-btn" id="refreshSubsBtn" onclick="loadSubscriptions()">🔄</button>
                 </div>
                 <button class="logout-btn" id="logoutBtn" onclick="azureLogout()" style="display: none;">Logout</button>
             </div>
@@ -700,21 +705,44 @@
         let isAuthenticated = false;
         let currentSubscription = null;
 
+        function getAuthLoginOptions() {
+            const method = document.getElementById('loginMethod')?.value || 'interactive';
+            const tenantRaw = document.getElementById('tenantIdInput')?.value || '';
+            const tenant = tenantRaw.trim();
+
+            return {
+                method,
+                tenant_id: tenant.length > 0 ? tenant : null,
+            };
+        }
+
         async function azureLogin() {
             try {
                 const btn = document.getElementById('loginBtn');
                 btn.classList.add('loading');
                 btn.textContent = '⏳ Logging in...';
 
-                const response = await fetch(`${API_BASE}/auth/login`, { method: 'POST' });
+                const loginOptions = getAuthLoginOptions();
+
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loginOptions)
+                });
                 
                 if (!response.ok) {
                     throw new Error(`Login failed: ${response.status}`);
                 }
 
+                const result = await response.json();
+
                 isAuthenticated = true;
                 updateAuthUI();
                 await loadSubscriptions();
+
+                if (result?.login_instructions) {
+                    showInfo(`Device Code Login: ${result.login_instructions}`);
+                }
                 
                 btn.classList.remove('loading');
                 btn.textContent = '🔐 Login';
@@ -729,7 +757,7 @@
 
         async function loadSubscriptions() {
             try {
-                const btn = document.getElementById('refreshSubs-Btn');
+                const btn = document.getElementById('refreshSubsBtn');
                 if (btn) btn.classList.add('loading');
 
                 const response = await fetch(`${API_BASE}/auth/subscriptions`);
@@ -754,6 +782,13 @@
                 if (status.current_subscription) {
                     select.value = status.current_subscription;
                     currentSubscription = status.current_subscription;
+                }
+
+                if (status.tenant_id) {
+                    const tenantInput = document.getElementById('tenantIdInput');
+                    if (tenantInput && !tenantInput.value) {
+                        tenantInput.value = status.tenant_id;
+                    }
                 }
 
                 if (btn) btn.classList.remove('loading');
@@ -820,7 +855,9 @@
                 if (currentSubscription) {
                     const select = document.getElementById('subscriptionSelect');
                     const selectedOption = select.options[select.selectedIndex];
-                    currentSubSpan.textContent = `Subscription: ${selectedOption?.text || currentSubscription}`;
+                    const tenant = document.getElementById('tenantIdInput')?.value?.trim();
+                    const tenantSuffix = tenant ? ` | Tenant: ${tenant}` : '';
+                    currentSubSpan.textContent = `Subscription: ${selectedOption?.text || currentSubscription}${tenantSuffix}`;
                 }
             } else {
                 loginBtn.style.display = 'block';
@@ -1150,6 +1187,15 @@
             `;
         }
 
+        function showInfo(msg) {
+            document.getElementById('errorContainer').innerHTML = `
+                <div class="error-state" style="background: #eef7ff; border-color: #74b9ff;">
+                    <h3>ℹ️ Login Guidance</h3>
+                    <p style="white-space: pre-wrap;">${msg}</p>
+                </div>
+            `;
+        }
+
         function refreshDashboard() {
             document.getElementById('errorContainer').innerHTML = '';
             fetchDashboardData();
@@ -1163,6 +1209,10 @@
                 if (status.authenticated) {
                     isAuthenticated = true;
                     currentSubscription = status.current_subscription;
+                    if (status.tenant_id) {
+                        const tenantInput = document.getElementById('tenantIdInput');
+                        if (tenantInput) tenantInput.value = status.tenant_id;
+                    }
                     updateAuthUI();
                     await loadSubscriptions();
                     await fetchDashboardData();
