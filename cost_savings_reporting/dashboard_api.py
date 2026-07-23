@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from cost_api import CostManagementClient, get_savings_summary
-from azure.identity import InteractiveBrowserCredential
+from azure.identity import InteractiveBrowserCredential, DeviceCodeCredential
 from azure.mgmt.subscription import SubscriptionClient
 import requests
 
@@ -106,6 +106,19 @@ current_subscription: str = os.getenv("AZURE_SUBSCRIPTION_ID", "")
 # Store credentials for subscription switching
 cached_credential = None
 
+# Track auth context for UI/status visibility
+auth_context: Dict[str, Any] = {
+    "tenant_id": None,
+    "method": None,
+    "last_login": None,
+}
+
+
+class LoginRequest(BaseModel):
+    """Login request options for tenant and auth method selection."""
+    method: str = "interactive"  # interactive | device_code
+    tenant_id: Optional[str] = None
+
 
 def is_cache_valid() -> bool:
     """Check if dashboard cache is still valid."""
@@ -152,23 +165,50 @@ async def health_check():
 
 
 @app.post("/auth/login")
-async def azure_login():
-    """Authenticate with Azure using interactive browser login."""
-    global cached_credential
+async def azure_login(payload: LoginRequest):
+    """Authenticate with Azure using selected auth method and tenant."""
+    global cached_credential, auth_context
     try:
-        # Use interactive browser login
-        credential = InteractiveBrowserCredential()
+        method = (payload.method or "interactive").strip().lower()
+        tenant_id = payload.tenant_id.strip() if payload.tenant_id else None
+
+        if method not in {"interactive", "device_code"}:
+            raise HTTPException(status_code=400, detail="method must be 'interactive' or 'device_code'")
+
+        if method == "device_code":
+            instructions = {"message": ""}
+
+            def _capture_prompt(message: str):
+                instructions["message"] = message
+                logger.info(f"Device code login prompt: {message}")
+
+            credential = DeviceCodeCredential(
+                tenant_id=tenant_id,
+                prompt_callback=_capture_prompt,
+            )
+        else:
+            credential = InteractiveBrowserCredential(tenant_id=tenant_id)
         
         # Get token to verify authentication works
         token = credential.get_token("https://management.azure.com/.default")
         cached_credential = credential
+        auth_context["tenant_id"] = tenant_id
+        auth_context["method"] = method
+        auth_context["last_login"] = datetime.now().isoformat()
         
         logger.info("Azure authentication successful")
-        return {
+        response = {
             "status": "authenticated",
             "message": "Successfully logged in to Azure",
+            "method": method,
+            "tenant_id": tenant_id,
             "timestamp": datetime.now().isoformat(),
         }
+
+        if method == "device_code":
+            response["login_instructions"] = instructions["message"]
+
+        return response
     except Exception as e:
         logger.error(f"Azure authentication failed: {e}")
         raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
@@ -249,6 +289,9 @@ async def auth_status():
         "authenticated": cached_credential is not None,
         "current_subscription": current_subscription,
         "subscription_name": os.getenv("AZURE_SUBSCRIPTION_NAME", "Unknown"),
+        "tenant_id": auth_context.get("tenant_id"),
+        "method": auth_context.get("method"),
+        "last_login": auth_context.get("last_login"),
         "timestamp": datetime.now().isoformat(),
     }
 

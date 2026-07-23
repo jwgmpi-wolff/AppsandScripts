@@ -36,14 +36,11 @@ Optional:
 
 ## 📸 Screenshots
 
-### Updated Dashboard View (Current UI)
+### Main Dashboard (Current UI)
 ![FinOps Dashboard Updated Main](screenshots/dashboard-updated-main.png)
 
-### Updated Cost Metrics View
+### Cost Metrics Detail
 ![FinOps Dashboard Updated Cost Metrics](screenshots/cost-metrics-updated.png)
-
-### Legacy Main Dashboard View
-![FinOps Dashboard Main](screenshots/dashboard-main.png)
 
 The FinOps dashboard provides a comprehensive real-time view of your Azure cost savings with:
 - **Header**: Dashboard title with Refresh button for real-time data updates
