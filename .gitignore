@@ -32,3 +32,4 @@ node_modules/
 # Sensitive files
 finops-agent/local.settings.json
 *.local.*
+cost_savings_reporting/
