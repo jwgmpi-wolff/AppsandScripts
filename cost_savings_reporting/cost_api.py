@@ -318,10 +318,12 @@ class CostManagementClient:
 
                     if pricing_model == "Reservation":
                         reservation_actual += cost
-                        reservation_qty += 1
+                        if cost > 0:
+                            reservation_qty += 1
                     elif pricing_model == "SavingsPlan":
                         savings_plan_actual += cost
-                        savings_plan_qty += 1
+                        if cost > 0:
+                            savings_plan_qty += 1
                     else:  # OnDemand or other
                         on_demand_actual += cost
                 except (ValueError, IndexError, TypeError) as e:

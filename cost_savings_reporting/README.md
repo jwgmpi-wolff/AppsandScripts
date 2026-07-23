@@ -2,6 +2,24 @@
 
 Professional real-time dashboard for Azure Reservation and Savings Plan savings analysis using the Azure Cost Management API, with Azure Advisor recommendations and OAuth2 authentication.
 
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](#optional-one-click-deploy-to-azure)
+[![Azure App Service Deploy](https://github.com/jerrywolff_microsoft/cost_savings_reporting/actions/workflows/deploy-appservice.yml/badge.svg)](https://github.com/jerrywolff_microsoft/cost_savings_reporting/actions/workflows/deploy-appservice.yml)
+
+## Local Deployment Quick Start
+
+Run locally in one command (Windows PowerShell):
+
+```powershell
+./scripts/deploy_local.ps1
+```
+
+Then open:
+- http://127.0.0.1:8000
+
+Optional:
+- `./scripts/deploy_local.ps1 -Port 8080`
+- `./scripts/deploy_local.ps1 -SkipAzureCheck`
+
 ## ✨ Features
 
 - **Real-time Dashboard** – Live cost analysis with month-to-date, YTD, and trailing 12-month metrics
@@ -18,7 +36,13 @@ Professional real-time dashboard for Azure Reservation and Savings Plan savings 
 
 ## 📸 Screenshots
 
-### Main Dashboard View
+### Updated Dashboard View (Current UI)
+![FinOps Dashboard Updated Main](screenshots/dashboard-updated-main.png)
+
+### Updated Cost Metrics View
+![FinOps Dashboard Updated Cost Metrics](screenshots/cost-metrics-updated.png)
+
+### Legacy Main Dashboard View
 ![FinOps Dashboard Main](screenshots/dashboard-main.png)
 
 The FinOps dashboard provides a comprehensive real-time view of your Azure cost savings with:
@@ -27,7 +51,7 @@ The FinOps dashboard provides a comprehensive real-time view of your Azure cost 
 - **Key Metrics Cards**:
   - 📋 **List Price (Pay-As-You-Go)** - Total cost without discounts (AmortizedCost baseline)
   - 💳 **Actual Cost Paid** - What was actually charged after Reservations & Savings Plans (ActualCost)
-  - ✅ **Total Savings Generated** - Amount saved through commitment-based discounts (difference)
+  - ✅ **Cost Delta (Amortized - Actual)** - Subscription-level delta between amortized and actual cost
 - **Monthly Breakdown Table** - Detailed view of all months with savings metrics
 - **Azure Advisor Recommendations** - Cost optimization opportunities with impact levels and estimated savings
 - **Interactive Charts** - Chart.js visualizations of cost trends and savings analysis
@@ -269,22 +293,24 @@ console.log('YTD Total:', data.ytd.total_savings);
 
 ## Calculation Methodology
 
-### Reservation Savings
+### Cost Delta
 ```
-Reservation Savings = (PayGPrice - EffectivePrice) × Quantity
-  Aggregated where: PricingModel = "Reservation" AND ChargeType = "Usage"
-```
-
-### Savings Plan Savings
-```
-Savings Plan Savings = (PayGPrice - EffectivePrice) × Quantity
-  Aggregated where: PricingModel = "SavingsPlan" AND ChargeType = "Usage"
+Cost Delta = AmortizedCost - ActualCost
 ```
 
-### Total Savings
+### Reservation-Priced Actual Cost
 ```
-Total Savings = Reservation Savings + Savings Plan Savings
+Reservation-Priced Actual Cost = Sum(ActualCost where PricingModel = "Reservation")
 ```
+
+### SavingsPlan-Priced Actual Cost
+```
+SavingsPlan-Priced Actual Cost = Sum(ActualCost where PricingModel = "SavingsPlan")
+```
+
+### Notes
+- Cost Delta is a subscription-level billing delta and is not always equivalent to confirmed RI/SP savings.
+- The UI now explicitly flags when cost delta exists without active Reservation/SavingsPlan-priced cost activity.
 
 ## Performance Notes
 
@@ -299,22 +325,77 @@ Total Savings = Reservation Savings + Savings Plan Savings
 
 ## Deployment Options
 
-### Option 1: Azure Container Apps
+### Option 1: Local Computer (No Azure Hosting Required)
+
+Use the included local deployment script:
+
+```powershell
+./scripts/deploy_local.ps1
+```
+
+Optional flags:
+
+```powershell
+# Use a different local port
+./scripts/deploy_local.ps1 -Port 8080
+
+# Skip Azure CLI login check
+./scripts/deploy_local.ps1 -SkipAzureCheck
+```
+
+This script will:
+- Create a virtual environment if missing
+- Install/update dependencies
+- Create `.env` from `.env.example` if needed
+- Check Azure CLI login status (optional)
+- Launch Uvicorn locally
+
+### Option 2: Azure App Service (Recommended for Cloud)
+
+Use the included deployment script:
+
+```powershell
+./scripts/deploy_appservice.ps1 -ResourceGroup rg-finops-dashboard -AppName finops-savings-dashboard
+```
+
+This script will:
+- Create/update the Resource Group
+- Provision App Service resources
+- Deploy this repository to Web App
+- Configure FastAPI startup command for Uvicorn
+
+### Optional One-Click Deploy to Azure
+
+Use this button to create the App Service infrastructure from the included ARM template:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Fcost_savings_reporting%2Fmain%2Finfra%2Fazuredeploy.json)
+
+Template files included:
+- `infra/azuredeploy.json`
+- `infra/azuredeploy.parameters.json`
+
+### Option 3: GitHub Actions to App Service (Manual Trigger)
+
+Workflow included:
+- `.github/workflows/deploy-appservice.yml`
+
+Required repository secrets:
+- `AZURE_WEBAPP_NAME`
+- `AZURE_WEBAPP_PUBLISH_PROFILE`
+
+Then run the workflow from GitHub Actions (supports optional test run before deploy).
+
+### Option 4: Azure Container Apps
 ```bash
 az containerapp up --name finops-api --source .
 ```
 
-### Option 2: Azure App Service
-```bash
-az webapp up --name finops-api --runtime PYTHON:3.10
-```
-
-### Option 3: Kubernetes
+### Option 5: Kubernetes
 ```bash
 kubectl apply -f k8s-deployment.yaml
 ```
 
-### Option 4: Docker
+### Option 6: Docker
 ```bash
 docker build -t finops-api .
 docker run -p 8000:8000 -e AZURE_SUBSCRIPTION_ID=<id> finops-api

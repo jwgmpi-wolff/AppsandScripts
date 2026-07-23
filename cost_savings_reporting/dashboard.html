@@ -436,9 +436,9 @@
                         </div>
 
                         <div class="cost-item savings">
-                            <div class="cost-item-label">💎 Total Savings Generated</div>
+                            <div class="cost-item-label">💎 Cost Delta (Amortized − Actual)</div>
                             <div class="cost-item-value" id="discountAmount">$0.00</div>
-                            <div class="cost-item-detail">List Price − Actual Cost</div>
+                            <div class="cost-item-detail">Subscription-level delta (not RI/SP-only)</div>
                         </div>
                     </div>
                 </div>
@@ -453,15 +453,15 @@
                 </div>
 
                 <div class="summary-card">
-                    <div class="summary-label">🏛️ Reservation Savings (MTD)</div>
+                    <div class="summary-label">🏛️ Reservation-Priced Actual Cost (MTD)</div>
                     <div style="font-size: 32px; font-weight: 700; color: #667eea; margin-bottom: 5px;" id="reservationTotal">$0.00</div>
-                    <div style="color: #bbb; font-size: 12px;">From Azure Reserved Instances</div>
+                    <div style="color: #bbb; font-size: 12px;">ActualCost tagged with Reservation pricing model</div>
                 </div>
 
                 <div class="summary-card">
-                    <div class="summary-label">📈 Savings Plan Savings (MTD)</div>
+                    <div class="summary-label">📈 SavingsPlan-Priced Actual Cost (MTD)</div>
                     <div style="font-size: 32px; font-weight: 700; color: #764ba2; margin-bottom: 5px;" id="savingsPlanTotal">$0.00</div>
-                    <div style="color: #bbb; font-size: 12px;">From Azure Savings Plans</div>
+                    <div style="color: #bbb; font-size: 12px;">ActualCost tagged with SavingsPlan pricing model</div>
                 </div>
             </div>
 
@@ -666,9 +666,9 @@
                 <ul style="margin-left: 20px; color: #555;">
                     <li><strong>List Price (Pay-As-You-Go):</strong> AmortizedCost dataset without Reservation/Savings Plan pricing model filters</li>
                     <li><strong>Actual Cost Paid:</strong> ActualCost dataset showing amounts after all discounts applied</li>
-                    <li><strong>Total Savings Generated:</strong> List Price − Actual Cost (calculates savings from both Reservations and Savings Plans combined)</li>
-                    <li><strong>Reservation Savings:</strong> Filtered ActualCost for items using Reservation pricing model</li>
-                    <li><strong>Savings Plan Savings:</strong> Filtered ActualCost for items using Savings Plan pricing model</li>
+                    <li><strong>Cost Delta (Amortized − Actual):</strong> Subscription-level difference between amortized and actual costs</li>
+                    <li><strong>Reservation-Priced Actual Cost:</strong> Portion of ActualCost tagged with Reservation pricing model</li>
+                    <li><strong>SavingsPlan-Priced Actual Cost:</strong> Portion of ActualCost tagged with SavingsPlan pricing model</li>
                 </ul>
                 <div style="margin-top: 10px; font-size: 11px; color: #999; font-style: italic;">
                     Based on Microsoft-recommended approach from Azure Cost Management documentation. Reference: <a href="https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/analyze-cost-data-azure-cost-management" target="_blank" style="color: #667eea;">Analyze costs with Azure Cost Management</a>
@@ -866,8 +866,8 @@
             // Check for actual data
             const hasListPrice = current.on_demand_list_price > 0;
             const hasActualCost = current.total_actual_cost > 0;
-            const hasReservationSavings = current.reservation_savings > 0;
-            const hasSavingsPlanSavings = current.savings_plan_savings > 0;
+            const hasReservationActivity = (current.reservation_actual_cost || 0) > 0;
+            const hasSavingsPlanActivity = (current.savings_plan_actual_cost || 0) > 0;
             const hasTotalSavings = current.total_savings > 0;
             
             // Data validation: Ensure savings doesn't exceed list price
@@ -897,7 +897,7 @@
             }
 
             // Current month summary - with footnotes for missing data
-            if (hasReservationSavings) {
+            if (hasReservationActivity) {
                 document.getElementById('reservationTotal').textContent = formatCurrency(current.reservation_actual_cost);
             } else {
                 document.getElementById('reservationTotal').textContent = '$0.00*';
@@ -907,7 +907,7 @@
                 });
             }
 
-            if (hasSavingsPlanSavings) {
+            if (hasSavingsPlanActivity) {
                 document.getElementById('savingsPlanTotal').textContent = formatCurrency(current.savings_plan_actual_cost);
             } else {
                 document.getElementById('savingsPlanTotal').textContent = '$0.00†';
@@ -917,6 +917,13 @@
                         text: '<strong>No Active Savings Plans:</strong> Your subscription doesn\'t have Azure Savings Plans generating savings this period. <a href="https://learn.microsoft.com/en-us/azure/cost-management-billing/savings-plan/savings-plan-compute-overview" target="_blank" style="color: #667eea;">Learn about Azure Savings Plans for Compute</a> | <a href="https://learn.microsoft.com/en-us/azure/cost-management-billing/savings-plan/buy-savings-plan" target="_blank" style="color: #667eea;">Purchase a Savings Plan</a>'
                     });
                 }
+            }
+
+            if (hasTotalSavings && !hasReservationActivity && !hasSavingsPlanActivity) {
+                footnotes.push({
+                    symbol: '‡',
+                    text: '<strong>Delta Without Confirmed RI/SP Activity:</strong> The month shows an Amortized − Actual delta, but no Reservation/SavingsPlan-priced usage was detected. This delta can include credits, adjustments, or other billing effects and should not be interpreted as confirmed RI/SP savings.'
+                });
             }
 
             // YTD
