@@ -1,5 +1,9 @@
 # Service Bus Queue Demo with Container Apps & KEDA
 
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Fcost_savings_reporting%2Fmain%2Fcost_savings_reporting%2Finfra%2Fazuredeploy.json)
+
+For the FinOps dashboard project and its full documentation, see [cost_savings_reporting/README.md](cost_savings_reporting/README.md).
+
 End-to-end demo showcasing:
 - Azure Service Bus messaging
 - Container Apps with KEDA autoscaling (0→10 replicas)
