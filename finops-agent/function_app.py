@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape
@@ -15,15 +16,6 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 import azure.functions as func
-from pptx import Presentation
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import landscape, letter
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -35,11 +27,29 @@ HTTP_ROUTE_AUTH_LEVEL = (
 
 _artifact_dir_override = (os.getenv("FINOPS_ARTIFACT_DIR") or "").strip()
 ARTIFACT_DIR = Path(_artifact_dir_override) if _artifact_dir_override else (Path(tempfile.gettempdir()) / "finops-artifacts")
-ARTIFACT_DIR.mkdir(exist_ok=True)
+try:
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Fall back to temp storage if the configured path is unavailable on the host.
+    ARTIFACT_DIR = Path(tempfile.gettempdir()) / "finops-artifacts"
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 HOURS_PER_YEAR = 24 * 365
 RETAIL_CACHE_TTL_HOURS = 24
-REPORT_DB_PATH = ARTIFACT_DIR / "finops_reports.db"
+_report_db_override = (os.getenv("FINOPS_REPORT_DB_PATH") or "").strip()
+REPORT_DB_PATH = Path(_report_db_override) if _report_db_override else (ARTIFACT_DIR / "finops_reports.db")
+REPORT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _CURRENT_SUBSCRIPTION_ID = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+MSAL_PUBLIC_CLIENT_ID = (os.getenv("FINOPS_MSAL_CLIENT_ID") or "04b07795-8ddb-461a-bbee-02f9e1bf7b46").strip()
+
+
+def _subscription_id_from_owner_name() -> str:
+    owner = (os.getenv("WEBSITE_OWNER_NAME") or "").strip()
+    if not owner:
+        return ""
+    candidate = owner.split("+", 1)[0].strip()
+    if len(candidate) == 36 and candidate.count("-") == 4:
+        return candidate
+    return ""
 
 
 def _resolve_az_executable() -> str:
@@ -63,11 +73,11 @@ def _resolve_az_executable() -> str:
     )
 
 
-def run_az(*args: str) -> Any:
+def run_az(*args: str, arm_access_token: str | None = None) -> Any:
     try:
         az_executable = _resolve_az_executable()
     except RuntimeError:
-        return _run_az_fallback(*args)
+        return _run_az_fallback(*args, arm_access_token=arm_access_token)
 
     completed = subprocess.run([az_executable, *args], capture_output=True, text=True)
     if completed.returncode != 0:
@@ -81,28 +91,63 @@ def run_az(*args: str) -> Any:
         return output
 
 
-def _get_arm_access_token() -> str:
+def _get_arm_access_token(override_token: str | None = None) -> str:
+    if override_token:
+        return override_token
+
     resource = "https://management.azure.com/"
     identity_endpoint = os.getenv("IDENTITY_ENDPOINT")
     identity_header = os.getenv("IDENTITY_HEADER")
+    token_error: Exception | None = None
+    max_retries = 3
 
-    if identity_endpoint and identity_header:
-        token_url = f"{identity_endpoint}?api-version=2019-08-01&resource={quote(resource, safe='')}"
-        request = Request(token_url, headers={"X-IDENTITY-HEADER": identity_header, "Metadata": "true"})
-    else:
-        token_url = f"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource={quote(resource, safe='')}"
-        request = Request(token_url, headers={"Metadata": "true"})
+    for attempt in range(max_retries):
+        try:
+            if identity_endpoint and identity_header:
+                token_url = f"{identity_endpoint}?api-version=2019-08-01&resource={quote(resource, safe='')}"
+                request = Request(token_url, headers={"X-IDENTITY-HEADER": identity_header, "Metadata": "true"})
+            else:
+                token_url = f"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource={quote(resource, safe='')}"
+                request = Request(token_url, headers={"Metadata": "true"})
 
-    with urlopen(request, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    token = payload.get("access_token")
-    if not token:
-        raise RuntimeError("Managed identity token acquisition failed")
-    return str(token)
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            token = payload.get("access_token")
+            if token:
+                return str(token)
+            raise RuntimeError("Managed identity token response did not include access_token")
+        except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+            token_error = exc
+            if attempt < max_retries - 1:
+                backoff_seconds = 2 ** attempt
+                logging.warning(
+                    "Managed identity token fetch failed (attempt %d/%d). Retrying in %ds: %s",
+                    attempt + 1,
+                    max_retries,
+                    backoff_seconds,
+                    exc,
+                )
+                time.sleep(backoff_seconds)
+
+    raise RuntimeError(f"Managed identity token acquisition failed after {max_retries} attempts: {token_error}")
 
 
-def _arm_get_paged(path: str, params: dict[str, str]) -> list[dict[str, Any]]:
-    token = _get_arm_access_token()
+def _cleanup_old_artifacts(max_age_hours: int = 168) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    for artifact in ARTIFACT_DIR.glob("finops_*"):
+        try:
+            if not artifact.is_file():
+                continue
+            mtime = datetime.fromtimestamp(artifact.stat().st_mtime, tz=timezone.utc)
+            if mtime < cutoff:
+                artifact.unlink()
+                logging.info("Cleaned up old artifact: %s", artifact.name)
+        except Exception as exc:
+            logging.warning("Failed to clean up artifact %s: %s", artifact.name, exc)
+
+
+def _arm_get_paged(path: str, params: dict[str, str], arm_access_token: str | None = None) -> list[dict[str, Any]]:
+    token = _get_arm_access_token(override_token=arm_access_token)
     base = "https://management.azure.com"
     next_url = f"{base}{path}?{urlencode(params)}"
     items: list[dict[str, Any]] = []
@@ -120,8 +165,8 @@ def _arm_get_paged(path: str, params: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
-def _arm_get(path: str, api_version: str) -> dict[str, Any]:
-    token = _get_arm_access_token()
+def _arm_get(path: str, api_version: str, arm_access_token: str | None = None) -> dict[str, Any]:
+    token = _get_arm_access_token(override_token=arm_access_token)
     url = f"https://management.azure.com{path}?api-version={quote(api_version, safe='')}"
     request = Request(url, headers={"Authorization": f"Bearer {token}"})
     with urlopen(request, timeout=60) as response:
@@ -129,11 +174,18 @@ def _arm_get(path: str, api_version: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _run_az_fallback(*args: str) -> Any:
+def _run_az_fallback(*args: str, arm_access_token: str | None = None) -> Any:
     global _CURRENT_SUBSCRIPTION_ID
     if len(args) >= 2 and args[0] == "account" and args[1] == "list":
-        subscriptions = _arm_get_paged("/subscriptions", {"api-version": "2020-01-01"})
-        return [{"id": item.get("subscriptionId"), "name": item.get("displayName")} for item in subscriptions]
+        subscriptions = _arm_get_paged("/subscriptions", {"api-version": "2020-01-01"}, arm_access_token=arm_access_token)
+        return [
+            {
+                "id": item.get("subscriptionId"),
+                "name": item.get("displayName"),
+                "tenantId": item.get("tenantId"),
+            }
+            for item in subscriptions
+        ]
 
     if len(args) >= 4 and args[0] == "account" and args[1] == "set" and args[2] == "--subscription":
         _CURRENT_SUBSCRIPTION_ID = args[3]
@@ -144,7 +196,7 @@ def _run_az_fallback(*args: str) -> Any:
         raise RuntimeError("No subscription id is available for non-CLI execution")
 
     if len(args) >= 2 and args[0] == "resource" and args[1] == "list":
-        resources = _arm_get_paged(f"/subscriptions/{sub_id}/resources", {"api-version": "2021-04-01"})
+        resources = _arm_get_paged(f"/subscriptions/{sub_id}/resources", {"api-version": "2021-04-01"}, arm_access_token=arm_access_token)
         output: list[dict[str, Any]] = []
         for item in resources:
             output.append(
@@ -167,6 +219,7 @@ def _run_az_fallback(*args: str) -> Any:
         recommendations = _arm_get_paged(
             f"/subscriptions/{sub_id}/providers/Microsoft.Advisor/recommendations",
             {"api-version": "2023-01-01"},
+            arm_access_token=arm_access_token,
         )
         output = []
         for item in recommendations:
@@ -191,7 +244,7 @@ def _run_az_fallback(*args: str) -> Any:
 
     if len(args) >= 5 and args[0] == "vm" and args[1] == "show" and args[2] == "--ids":
         vm_id = args[3]
-        vm = _arm_get(vm_id, "2023-09-01")
+        vm = _arm_get(vm_id, "2023-09-01", arm_access_token=arm_access_token)
         hardware = vm.get("properties", {}).get("hardwareProfile") if isinstance(vm.get("properties"), dict) else {}
         return hardware.get("vmSize")
 
@@ -702,9 +755,92 @@ def _add_pricing_based_commitment_savings(
     return True
 
 
-def collect_report_data() -> dict[str, Any]:
+def _normalize_subscriptions(raw_subscriptions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in raw_subscriptions:
+        if not isinstance(item, dict):
+            continue
+        sub_id = str(item.get("id") or item.get("subscriptionId") or "").strip()
+        if not sub_id:
+            continue
+        managed_tenants: list[str] = []
+        raw_managed = item.get("managedByTenants")
+        if isinstance(raw_managed, list):
+            for managed in raw_managed:
+                if isinstance(managed, dict):
+                    tenant_id = str(managed.get("tenantId") or "").strip()
+                    if tenant_id:
+                        managed_tenants.append(tenant_id)
+        normalized.append(
+            {
+                "id": sub_id,
+                "name": str(item.get("name") or item.get("displayName") or sub_id).strip(),
+                "tenantId": str(item.get("tenantId") or item.get("homeTenantId") or "").strip(),
+                "homeTenantId": str(item.get("homeTenantId") or "").strip(),
+                "managedTenantIds": managed_tenants,
+            }
+        )
+    return normalized
+
+
+def collect_report_data(
+    target_tenant_id: str | None = None,
+    target_subscription_id: str | None = None,
+    arm_access_token: str | None = None,
+) -> dict[str, Any]:
     start_date, end_date = _month_range()
-    subscriptions = run_az("account", "list", "--query", "[].{id:id, name:name}")
+    try:
+        subscriptions = run_az("account", "list", arm_access_token=arm_access_token)
+    except Exception as exc:
+        logging.warning("Subscription discovery via account list failed: %s", exc)
+        subscriptions = []
+
+    if not isinstance(subscriptions, list):
+        raise RuntimeError("Unable to enumerate Azure subscriptions. Verify Azure CLI authentication and account access.")
+
+    normalized_subscriptions = _normalize_subscriptions(subscriptions)
+
+    if not normalized_subscriptions:
+        fallback_sub_id = _CURRENT_SUBSCRIPTION_ID or _subscription_id_from_owner_name()
+        if fallback_sub_id:
+            normalized_subscriptions = [{"id": fallback_sub_id, "name": "Current subscription", "tenantId": ""}]
+
+    all_visible_subscription_ids = {
+        str(sub.get("id") or "").strip().lower() for sub in normalized_subscriptions if str(sub.get("id") or "").strip()
+    }
+
+    tenant_filter = (target_tenant_id or "").strip().lower()
+    subscription_filter = (target_subscription_id or "").strip().lower()
+
+    if tenant_filter:
+        filtered_subscriptions: list[dict[str, Any]] = []
+        for sub in normalized_subscriptions:
+            candidate_tenants = {
+                str(sub.get("tenantId") or "").strip().lower(),
+                str(sub.get("homeTenantId") or "").strip().lower(),
+            }
+            managed_tenants = sub.get("managedTenantIds")
+            if isinstance(managed_tenants, list):
+                candidate_tenants.update(str(tenant_id).strip().lower() for tenant_id in managed_tenants)
+            if tenant_filter in candidate_tenants:
+                filtered_subscriptions.append(sub)
+        normalized_subscriptions = filtered_subscriptions
+
+    if subscription_filter:
+        normalized_subscriptions = [
+            sub for sub in normalized_subscriptions if str(sub.get("id") or "").strip().lower() == subscription_filter
+        ]
+
+    if not normalized_subscriptions:
+        if subscription_filter and subscription_filter not in all_visible_subscription_ids:
+            raise RuntimeError(
+                "The requested subscription is not visible to the current identity. Run `az login` with an account that has access to that subscription, then retry."
+            )
+        raise RuntimeError(
+            "No matching Azure subscriptions found for the requested tenant/subscription. Authenticate to that tenant and ensure the identity has access."
+        )
+
+    logging.info("Collecting FinOps report data across %d subscriptions", len(normalized_subscriptions))
     resources: list[dict[str, Any]] = []
     costs: list[dict[str, Any]] = []
     recommendations: list[dict[str, Any]] = []
@@ -712,7 +848,7 @@ def collect_report_data() -> dict[str, Any]:
     rates_cache: dict[tuple[str, str], dict[str, Any]] = {}
     fx_config = _load_fx_configuration()
 
-    for subscription in subscriptions:
+    for subscription in normalized_subscriptions:
         try:
             run_az("account", "set", "--subscription", subscription["id"])
         except Exception as exc:
@@ -724,6 +860,7 @@ def collect_report_data() -> dict[str, Any]:
                 "resource", "list",
                 "--query",
                 "[].{id:id, name:name, type:type, location:location, resourceGroup:resourceGroup, subscriptionId:subscriptionId}",
+                arm_access_token=arm_access_token,
             )
             if isinstance(current_resources, list):
                 resources.extend(current_resources)
@@ -738,6 +875,7 @@ def collect_report_data() -> dict[str, Any]:
                 "--end-date", end_date,
                 "--query",
                 "[].{resourceId:instanceId, resourceName:instanceName, cost:pretaxCost, usageQuantity:usageQuantity, date:date, meterCategory:meterCategory, resourceGroup:resourceGroup, billingCurrency:billingCurrency, currency:currency}",
+                arm_access_token=arm_access_token,
             )
             if isinstance(current_costs, list):
                 for item in current_costs:
@@ -749,7 +887,8 @@ def collect_report_data() -> dict[str, Any]:
             current_recs = run_az(
                 "advisor", "recommendation", "list",
                 "--query",
-                "[].{id:id, name:name, category:category, impact:impact, severity:severity, description:shortDescription.problem, solution:shortDescription.solution, resourceId:resourceMetadata.resourceId, annualSavingsAmount:annualSavingsAmount, savingsAmount:savingsAmount, extendedProperties:extendedProperties}"
+                "[].{id:id, name:name, category:category, impact:impact, severity:severity, description:shortDescription.problem, solution:shortDescription.solution, resourceId:resourceMetadata.resourceId, annualSavingsAmount:annualSavingsAmount, savingsAmount:savingsAmount, extendedProperties:extendedProperties}",
+                arm_access_token=arm_access_token,
             )
             if isinstance(current_recs, list):
                 recommendations.extend(current_recs)
@@ -762,8 +901,9 @@ def collect_report_data() -> dict[str, Any]:
     resource_lookup = {resource["id"].lower(): resource for resource in resources if resource.get("id")}
     for recommendation in recommendations:
         resource = resource_lookup.get(str(recommendation.get("resourceId", "")).lower(), {})
-        recommendation["resourceName"] = resource.get("name", "Unknown resource")
-        recommendation["resourceType"] = resource.get("type", "Unknown")
+        fallback_name, fallback_type = _resource_fallback_from_id(recommendation.get("resourceId"))
+        recommendation["resourceName"] = resource.get("name") or fallback_name
+        recommendation["resourceType"] = resource.get("type") or fallback_type
         if not _add_pricing_based_commitment_savings(
             recommendation,
             resource,
@@ -779,6 +919,8 @@ def collect_report_data() -> dict[str, Any]:
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "startDate": start_date,
         "endDate": end_date,
+        "tenantId": target_tenant_id,
+        "subscriptionId": target_subscription_id,
         "resources": resources,
         "costs": costs,
         "recommendations": recommendations,
@@ -843,6 +985,15 @@ def write_sqlite(snapshot: dict[str, Any]) -> Path:
 
 
 def make_pdf(snapshot: dict[str, Any]) -> Path:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import landscape, letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except Exception as exc:
+        raise RuntimeError("PDF generation dependencies are unavailable") from exc
+
     pdf_path = ARTIFACT_DIR / "finops_summary.pdf"
     styles = getSampleStyleSheet()
     body_style = styles["BodyText"].clone("FinOpsBody")
@@ -986,6 +1137,14 @@ def make_pdf(snapshot: dict[str, Any]) -> Path:
 
 
 def make_powerpoint(snapshot: dict[str, Any]) -> Path:
+    try:
+        from pptx import Presentation
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches, Pt
+    except Exception as exc:
+        raise RuntimeError("PowerPoint generation dependencies are unavailable") from exc
+
     deck = Presentation()
     deck.slide_width = Inches(13.333)
     deck.slide_height = Inches(7.5)
@@ -1212,6 +1371,7 @@ def make_powerpoint(snapshot: dict[str, Any]) -> Path:
 
 
 def generate_artifacts(snapshot: dict[str, Any]) -> dict[str, str]:
+    _cleanup_old_artifacts()
     db_path = write_sqlite(snapshot)
     pdf_path = make_pdf(snapshot)
     pptx_path = make_powerpoint(snapshot)
@@ -1259,6 +1419,86 @@ def _impact_rank(impact: Any) -> int:
     return mapping.get(str(impact), 3)
 
 
+def _looks_like_opaque_identifier(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+
+    # Typical GUID shape.
+    if len(text) == 36 and text.count("-") == 4:
+        parts = text.split("-")
+        part_lengths = [8, 4, 4, 4, 12]
+        if len(parts) == 5 and all(len(part) == expected for part, expected in zip(parts, part_lengths)):
+            return True
+
+    # Advisor often emits opaque hash-like recommendation names.
+    if len(text) in (32, 40, 64):
+        lowered = text.lower()
+        if all(ch in "0123456789abcdef" for ch in lowered):
+            return True
+
+    return False
+
+
+def _recommendation_display_name(rec: dict[str, Any]) -> str:
+    resource_name = str(rec.get("resourceName") or "").strip()
+    rec_name = str(rec.get("name") or "").strip()
+    if _looks_like_opaque_identifier(rec_name):
+        if resource_name and resource_name.lower() != "unknown resource":
+            return resource_name
+
+        resource_id = str(rec.get("resourceId") or "").strip()
+        if resource_id:
+            segments = [segment for segment in resource_id.split("/") if segment]
+            if len(segments) >= 8:
+                return segments[-1]
+            if len(segments) == 2 and segments[0].lower() == "subscriptions":
+                return f"Subscription {segments[1][:8]}"
+
+        description = str(rec.get("description") or "").strip()
+        if description:
+            return description
+
+    return rec_name or resource_name or "-"
+
+
+def _resource_fallback_from_id(resource_id: Any) -> tuple[str, str]:
+    rid = str(resource_id or "").strip()
+    if not rid:
+        return ("Not specified", "Unknown")
+
+    segments = [segment for segment in rid.split("/") if segment]
+    lowered = [segment.lower() for segment in segments]
+
+    if len(segments) == 2 and lowered[0] == "subscriptions":
+        sub_id = segments[1]
+        return (f"Subscription {sub_id[:8]}", "Microsoft.Resources/subscriptions")
+
+    if len(segments) >= 8:
+        provider_namespace = segments[5]
+        resource_type = segments[6]
+        resource_name = segments[-1]
+        return (resource_name, f"{provider_namespace}/{resource_type}")
+
+    leaf = segments[-1] if segments else rid
+    return (leaf, "Unknown")
+
+
+def _format_usd(value: Any) -> str | None:
+    amount = _to_float(value)
+    if amount is None:
+        return None
+    return f"${amount:,.2f}"
+
+
+def _resource_type_parts(resource_type: Any) -> tuple[str, str]:
+    value = str(resource_type or "").strip()
+    if not value or "/" not in value:
+        return ("Unknown", "Unknown")
+    category, sub_category = value.split("/", 1)
+    return (category or "Unknown", sub_category or "Unknown")
+
+
 def _paginate(items: list[dict[str, Any]], page: int, page_size: int) -> tuple[list[dict[str, Any]], int, int]:
     total_rows = len(items)
     start = (page - 1) * page_size
@@ -1278,11 +1518,19 @@ def build_tabular_output(
     resource_columns = ["name", "type", "location", "resourceGroup", "subscriptionId"]
     recommendation_columns = [
         "name",
+        "description",
+        "reservationSavings1Year",
+        "reservationSavings2Year",
+        "reservationSavings3Year",
+        "savingsPlanSavings1Year",
+        "savingsPlanSavings2Year",
+        "savingsPlanSavings3Year",
+        "savingsCurrency",
         "category",
         "impact",
-        "description",
         "solution",
-        "resourceName",
+        "resourceCategory",
+        "resourceSubCategory",
         "resourceType",
         "resourceId",
         "resourceVmSize",
@@ -1290,18 +1538,12 @@ def build_tabular_output(
         "pricingCurrency",
         "billingCurrency",
         "currencyMatch",
-        "savingsCurrency",
         "fxApplied",
         "fxRateApplied",
         "fxSource",
         "estimatedAverageInstanceCount",
         "observedUsageHoursInPeriod",
-        "reservationSavings1Year",
-        "reservationSavings2Year",
-        "reservationSavings3Year",
-        "savingsPlanSavings1Year",
-        "savingsPlanSavings2Year",
-        "savingsPlanSavings3Year",
+        "recommendationName",
     ]
 
     resources = sorted(
@@ -1311,17 +1553,38 @@ def build_tabular_output(
             str(r.get("type") or "").lower(),
         ),
     )
+    recommendations_raw = snapshot.get("recommendations", [])
     recommendations = sorted(
-        snapshot.get("recommendations", []),
+        recommendations_raw,
         key=lambda r: (
             _impact_rank(r.get("impact")),
             str(r.get("category") or "").lower(),
             str(r.get("name") or "").lower(),
         ),
     )
+    recommendations_for_table = []
+    money_columns = {
+        "reservationSavings1Year",
+        "reservationSavings2Year",
+        "reservationSavings3Year",
+        "savingsPlanSavings1Year",
+        "savingsPlanSavings2Year",
+        "savingsPlanSavings3Year",
+    }
+    for rec in recommendations:
+        row = dict(rec)
+        row["recommendationName"] = rec.get("name")
+        row["name"] = _recommendation_display_name(rec)
+        row["savingsCurrency"] = "USD"
+        resource_category, resource_sub_category = _resource_type_parts(row.get("resourceType"))
+        row["resourceCategory"] = resource_category
+        row["resourceSubCategory"] = resource_sub_category
+        for column in money_columns:
+            row[column] = _format_usd(row.get(column))
+        recommendations_for_table.append(row)
 
     paged_resources, total_resource_rows, resource_offset = _paginate(resources, page, page_size)
-    paged_recommendations, total_recommendation_rows, recommendation_offset = _paginate(recommendations, page, page_size)
+    paged_recommendations, total_recommendation_rows, recommendation_offset = _paginate(recommendations_for_table, page, page_size)
 
     return {
         "status": "ok",
@@ -1329,6 +1592,10 @@ def build_tabular_output(
         "period": {
             "startDate": snapshot.get("startDate"),
             "endDate": snapshot.get("endDate"),
+        },
+        "scope": {
+            "tenantId": snapshot.get("tenantId") or "auto",
+            "subscriptionId": snapshot.get("subscriptionId") or "auto",
         },
         "artifacts": artifacts,
         "artifactUrls": artifact_urls,
@@ -1409,35 +1676,165 @@ def render_tabular_html(response: dict[str, Any]) -> str:
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1' />
     <title>FinOps Report</title>
+    <script src='https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js'></script>
     <style>
         :root {{
-            --bg: #f5f7fb;
+            --bg: #eef2ff;
+            --bg-alt: #dbeafe;
             --panel: #ffffff;
-            --line: #d8dee9;
-            --text: #132033;
-            --muted: #5a6a80;
-            --accent: #0a66c2;
+            --panel-strong: #f8fafc;
+            --line: #cbd5e1;
+            --text: #0f172a;
+            --muted: #475569;
+            --accent: #0f766e;
+            --accent-strong: #0b5f5a;
+            --accent-soft: #ccfbf1;
+            --head-bg: #082f49;
+            --head-text: #e0f2fe;
+            --shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
         }}
-        body {{ margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; background: var(--bg); color: var(--text); }}
+        body {{
+            margin: 0;
+            font-family: "Aptos", "Segoe UI", "Trebuchet MS", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 10% -20%, var(--bg-alt), transparent 45%),
+                radial-gradient(circle at 90% 0%, #fef9c3, transparent 30%),
+                linear-gradient(180deg, var(--bg) 0%, #f8fafc 100%);
+        }}
         .container {{ max-width: 1400px; margin: 24px auto; padding: 0 16px; }}
-        h1 {{ margin: 0 0 8px; font-size: 28px; }}
-        a {{ text-decoration: none; color: #464feb; }}
+        h1 {{ margin: 0 0 8px; font-size: 30px; letter-spacing: 0.2px; }}
+        a {{ text-decoration: none; color: #155e75; }}
         .sub {{ color: var(--muted); margin-bottom: 16px; }}
         .artifacts {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }}
-        .artifact-link {{ border: 1px solid var(--line); background: var(--panel); padding: 7px 10px; border-radius: 8px; }}
+        .artifact-link {{
+            border: 1px solid #99f6e4;
+            background: linear-gradient(180deg, #ffffff 0%, var(--accent-soft) 100%);
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-weight: 600;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }}
+        .artifact-link:hover {{ transform: translateY(-1px); box-shadow: 0 6px 16px rgba(15, 118, 110, 0.2); }}
         .tabs-nav {{ display: flex; gap: 8px; margin: 12px 0 16px; flex-wrap: wrap; }}
-        .tab-btn {{ border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; border-radius: 8px; cursor: pointer; }}
-        .tab-btn.active {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
-        .tab {{ background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }}
+        .scope-actions {{ display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; flex-wrap: wrap; }}
+        .scope-btn {{
+            border: 1px solid var(--line);
+            background: #ffffff;
+            color: var(--text);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .scope-btn:hover {{ background: #f1f5f9; border-color: #94a3b8; }}
+        .scope-help {{ color: var(--muted); font-size: 12px; }}
+        .scope-login {{
+            border: 1px solid #7dd3fc;
+            background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%);
+            color: #0c4a6e;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+        .scope-login:hover {{ background: linear-gradient(180deg, #e0f2fe 0%, #bae6fd 100%); }}
+        .scope-logout {{
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            color: #334155;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .scope-status {{
+            color: #0f172a;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            max-width: min(60ch, 100%);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .tab-btn {{
+            border: 1px solid var(--line);
+            background: var(--panel);
+            color: var(--text);
+            padding: 8px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.16s ease;
+        }}
+        .tab-btn:hover {{ border-color: #94a3b8; background: #f8fafc; }}
+        .tab-btn.active {{
+            background: linear-gradient(145deg, var(--accent) 0%, var(--accent-strong) 100%);
+            border-color: var(--accent-strong);
+            color: #ecfeff;
+            box-shadow: 0 6px 14px rgba(15, 118, 110, 0.26);
+        }}
+        .tab {{
+            background: linear-gradient(180deg, var(--panel) 0%, var(--panel-strong) 100%);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            box-shadow: var(--shadow);
+        }}
         .hidden {{ display: none; }}
         .meta {{ color: var(--muted); font-size: 13px; margin-bottom: 10px; }}
         .top-scroll {{ overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin-bottom: 8px; }}
         .top-scroll-inner {{ height: 1px; }}
-        .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 8px; }}
+        .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }}
         table {{ width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }}
-        tr th, tr td {{ border: 1px solid #e6e6e6; padding: 8px 10px; text-align: left; vertical-align: top; min-width: clamp(120px, 14vw, 260px); white-space: normal; overflow-wrap: anywhere; }}
-        tr th {{ background-color: #f5f5f5; position: sticky; top: 0; z-index: 1; }}
-        tbody tr:nth-child(even) {{ background: #fafcff; }}
+        tr th, tr td {{ border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; min-width: clamp(120px, 14vw, 260px); white-space: normal; overflow-wrap: anywhere; }}
+        tr th {{
+            background: linear-gradient(180deg, var(--head-bg) 0%, #0c4a6e 100%);
+            color: var(--head-text);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            font-weight: 700;
+        }}
+        tbody tr:nth-child(even) {{ background: #f8fafc; }}
+        tbody tr:hover {{ background: #ecfeff; }}
+        dialog.scope-dialog {{
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            box-shadow: 0 24px 50px rgba(15, 23, 42, 0.28);
+            width: min(560px, 94vw);
+            padding: 16px;
+            font-family: "Aptos", "Segoe UI", "Trebuchet MS", sans-serif;
+        }}
+        dialog.scope-dialog::backdrop {{ background: rgba(2, 6, 23, 0.45); }}
+        .scope-grid {{ display: grid; gap: 10px; margin: 10px 0 12px; }}
+        .scope-grid label {{ font-size: 12px; color: var(--muted); font-weight: 600; }}
+        .scope-grid input {{
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 4px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+        }}
+        .scope-dialog-actions {{ display: flex; justify-content: flex-end; gap: 8px; }}
+        .scope-dialog-actions button {{
+            border: 1px solid var(--line);
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 7px 11px;
+            cursor: pointer;
+            font-weight: 600;
+        }}
+        .scope-dialog-actions .apply {{
+            background: var(--accent);
+            border-color: var(--accent-strong);
+            color: #ecfeff;
+        }}
         @media (max-width: 900px) {{
             table {{ font-size: 12px; }}
             tr th, tr td {{ padding: 7px 8px; min-width: clamp(100px, 24vw, 220px); }}
@@ -1453,11 +1850,35 @@ def render_tabular_html(response: dict[str, Any]) -> str:
     <div class='container'>
         <h1>Azure FinOps Report</h1>
         <div class='sub'>Generated {escape(str(response.get("generatedAt")))} | Period {escape(str(response.get("period", {}).get("startDate")))} to {escape(str(response.get("period", {}).get("endDate")))}</div>
+        <div class='sub'>Scope: Tenant {escape(str(response.get("scope", {}).get("tenantId", "auto")))} | Subscription {escape(str(response.get("scope", {}).get("subscriptionId", "auto")))}</div>
+        <div class='scope-actions'>
+            <button id='scope-switch-btn' class='scope-btn' type='button'>Switch Tenant / Subscription</button>
+            <button id='scope-login-btn' class='scope-login' type='button'>Sign in with Microsoft</button>
+            <button id='scope-logout-btn' class='scope-logout' type='button'>Sign out</button>
+            <span id='scope-login-status' class='scope-status'>Not signed in</span>
+            <span class='scope-help'>Uses your selected scope for this report request.</span>
+        </div>
         <div class='artifacts'>
             <a class='artifact-link' href='{escape(str(response.get("artifactUrls", {}).get("pdf", "#")))}' target='_blank' rel='noopener'>Download PDF</a>
             <a class='artifact-link' href='{escape(str(response.get("artifactUrls", {}).get("powerpoint", "#")))}' target='_blank' rel='noopener'>Download PPTX</a>
             <a class='artifact-link' href='{escape(str(response.get("artifactUrls", {}).get("database", "#")))}' target='_blank' rel='noopener'>Download SQLite</a>
         </div>
+        <dialog id='scope-dialog' class='scope-dialog'>
+            <h3 style='margin:0;'>Run Against Another Tenant</h3>
+            <p class='scope-help' style='margin:8px 0 0;'>Enter target tenant and subscription IDs, then click Sign in with Microsoft. Apply Scope uses that signed-in token.</p>
+            <div class='scope-grid'>
+                <label>Tenant ID
+                    <input id='scope-tenant-id' type='text' value='{escape(str("" if response.get("scope", {}).get("tenantId") == "auto" else response.get("scope", {}).get("tenantId", "")))}' placeholder='e.g. e594a530-1ec9-4192-a8d4-a9111f8cffa7' />
+                </label>
+                <label>Subscription ID
+                    <input id='scope-subscription-id' type='text' value='{escape(str("" if response.get("scope", {}).get("subscriptionId") == "auto" else response.get("scope", {}).get("subscriptionId", "")))}' placeholder='e.g. 5755893a-8056-4ba8-9916-1133c80a80f3' />
+                </label>
+            </div>
+            <div class='scope-dialog-actions'>
+                <button id='scope-cancel-btn' type='button'>Cancel</button>
+                <button id='scope-apply-btn' class='apply' type='button'>Apply Scope</button>
+            </div>
+        </dialog>
         <div class='tabs-nav'>{''.join(nav_buttons)}</div>
         {''.join(sections)}
     </div>
@@ -1504,6 +1925,156 @@ def render_tabular_html(response: dict[str, Any]) -> str:
         }});
         window.addEventListener('resize', syncTableScrollbars);
         syncTableScrollbars();
+
+        const scopeDialog = document.getElementById('scope-dialog');
+        const switchBtn = document.getElementById('scope-switch-btn');
+        const loginBtn = document.getElementById('scope-login-btn');
+        const logoutBtn = document.getElementById('scope-logout-btn');
+        const loginStatus = document.getElementById('scope-login-status');
+        const cancelBtn = document.getElementById('scope-cancel-btn');
+        const applyBtn = document.getElementById('scope-apply-btn');
+        const tenantInput = document.getElementById('scope-tenant-id');
+        const subscriptionInput = document.getElementById('scope-subscription-id');
+        const tokenStorageKey = 'finopsArmToken';
+        const accountStorageKey = 'finopsArmAccount';
+        const clientId = {json.dumps(MSAL_PUBLIC_CLIENT_ID)};
+
+        function renderLoginStatus() {{
+            const account = sessionStorage.getItem(accountStorageKey);
+            if (account) {{
+                loginStatus.textContent = `Signed in as ${{account}}`;
+            }} else {{
+                loginStatus.textContent = 'Not signed in';
+            }}
+        }}
+
+        async function signInForArm() {{
+            if (!window.msal) {{
+                alert('Microsoft login library did not load. Refresh and try again.');
+                return;
+            }}
+
+            const rawTenant = (tenantInput?.value || '').trim();
+            const authorityTenant = rawTenant || 'organizations';
+            const msalConfig = {{
+                auth: {{
+                    clientId,
+                    authority: `https://login.microsoftonline.com/${{authorityTenant}}`,
+                    redirectUri: window.location.origin + window.location.pathname,
+                }}
+            }};
+
+            const app = new msal.PublicClientApplication(msalConfig);
+            if (typeof app.initialize === 'function') {{
+                await app.initialize();
+            }}
+
+            const loginRequest = {{
+                scopes: ['https://management.azure.com/user_impersonation', 'openid', 'profile'],
+                prompt: 'select_account',
+            }};
+
+            const loginResult = await app.loginPopup(loginRequest);
+            const account = loginResult.account;
+            if (!account) {{
+                throw new Error('No account returned from Microsoft login');
+            }}
+
+            const tokenResult = await app.acquireTokenSilent({{
+                account,
+                scopes: ['https://management.azure.com/user_impersonation'],
+            }});
+
+            sessionStorage.setItem(tokenStorageKey, tokenResult.accessToken || '');
+            sessionStorage.setItem(accountStorageKey, account.username || account.homeAccountId || 'signed-in user');
+            renderLoginStatus();
+        }}
+
+        function signOutArm() {{
+            sessionStorage.removeItem(tokenStorageKey);
+            sessionStorage.removeItem(accountStorageKey);
+            renderLoginStatus();
+        }}
+
+        renderLoginStatus();
+
+        if (switchBtn && scopeDialog) {{
+            switchBtn.addEventListener('click', () => {{
+                if (typeof scopeDialog.showModal === 'function') {{
+                    scopeDialog.showModal();
+                }} else {{
+                    scopeDialog.setAttribute('open', 'open');
+                }}
+            }});
+        }}
+
+        if (cancelBtn && scopeDialog) {{
+            cancelBtn.addEventListener('click', () => {{
+                if (typeof scopeDialog.close === 'function') {{
+                    scopeDialog.close();
+                }} else {{
+                    scopeDialog.removeAttribute('open');
+                }}
+            }});
+        }}
+
+        if (loginBtn) {{
+            loginBtn.addEventListener('click', async () => {{
+                try {{
+                    await signInForArm();
+                }} catch (err) {{
+                    const message = err && err.message ? err.message : String(err);
+                    alert(`Sign-in failed: ${{message}}`);
+                }}
+            }});
+        }}
+
+        if (logoutBtn) {{
+            logoutBtn.addEventListener('click', () => {{
+                signOutArm();
+            }});
+        }}
+
+        if (applyBtn) {{
+            applyBtn.addEventListener('click', async () => {{
+                const url = new URL(window.location.href);
+                const tenantId = (tenantInput?.value || '').trim();
+                const subscriptionId = (subscriptionInput?.value || '').trim();
+
+                if (tenantId) {{
+                    url.searchParams.set('tenantId', tenantId);
+                }} else {{
+                    url.searchParams.delete('tenantId');
+                }}
+
+                if (subscriptionId) {{
+                    url.searchParams.set('subscriptionId', subscriptionId);
+                }} else {{
+                    url.searchParams.delete('subscriptionId');
+                }}
+
+                url.searchParams.set('format', 'html');
+                const armToken = sessionStorage.getItem(tokenStorageKey) || '';
+
+                if (!armToken) {{
+                    alert('Sign in first so the report can run with your tenant/subscription access.');
+                    return;
+                }}
+
+                const response = await fetch(url.toString(), {{
+                    method: 'GET',
+                    headers: {{
+                        'Accept': 'text/html',
+                        'Authorization': `Bearer ${{armToken}}`,
+                    }}
+                }});
+
+                const html = await response.text();
+                document.open();
+                document.write(html);
+                document.close();
+            }});
+        }}
     </script>
 </body>
 </html>
@@ -1515,7 +2086,20 @@ def _run_finops_report_request(req: func.HttpRequest) -> func.HttpResponse:
         page = _parse_positive_int(req.params.get("page"), 1)
         # Enforce capped payload size for faster responses.
         page_size = min(_parse_positive_int(req.params.get("pageSize"), 100), 250)
-        snapshot = collect_report_data()
+        target_tenant_id = (req.params.get("tenantId") or "").strip() or None
+        target_subscription_id = (req.params.get("subscriptionId") or "").strip() or None
+        auth_header = (req.headers.get("Authorization") or "").strip()
+        provided_arm_token = None
+        if auth_header.lower().startswith("bearer "):
+            provided_arm_token = auth_header[7:].strip() or None
+        if not provided_arm_token:
+            provided_arm_token = (req.headers.get("x-arm-access-token") or "").strip() or None
+
+        snapshot = collect_report_data(
+            target_tenant_id=target_tenant_id,
+            target_subscription_id=target_subscription_id,
+            arm_access_token=provided_arm_token,
+        )
         artifacts = generate_artifacts(snapshot)
         artifact_urls = _build_artifact_urls(req)
         response = build_tabular_output(snapshot, artifacts, artifact_urls, page, page_size)
@@ -1536,10 +2120,44 @@ def run_finops_report(req: func.HttpRequest) -> func.HttpResponse:
     return _run_finops_report_request(req)
 
 
+@app.function_name(name="finops_health")
+@app.route(route="finops_health", methods=["GET"], auth_level=HTTP_ROUTE_AUTH_LEVEL)
+def finops_health(req: func.HttpRequest) -> func.HttpResponse:
+    payload = {
+        "status": "ok",
+        "azureCli": "unavailable",
+        "managedIdentity": {
+            "status": "unknown",
+            "tokenAcquired": False,
+        },
+        "subscriptionHint": _CURRENT_SUBSCRIPTION_ID or _subscription_id_from_owner_name() or "",
+        "artifactDir": str(ARTIFACT_DIR),
+        "reportDbPath": str(REPORT_DB_PATH),
+    }
+
+    try:
+        _get_arm_access_token()
+        payload["managedIdentity"]["status"] = "ok"
+        payload["managedIdentity"]["tokenAcquired"] = True
+    except Exception as exc:
+        payload["status"] = "degraded"
+        payload["managedIdentity"]["status"] = "error"
+        payload["managedIdentity"]["error"] = str(exc)
+
+    try:
+        az_path = _resolve_az_executable()
+        payload["azureCli"] = "available"
+        payload["azureCliPath"] = az_path
+    except RuntimeError as exc:
+        payload["message"] = str(exc)
+
+    return func.HttpResponse(json.dumps(payload), mimetype="application/json")
+
+
 @app.function_name(name="finops_artifact")
 @app.route(route="finops_artifact", methods=["GET"], auth_level=HTTP_ROUTE_AUTH_LEVEL)
 def finops_artifact(req: func.HttpRequest) -> func.HttpResponse:
-    artifact_name = (req.params.get("name") or "").strip().lower()
+    artifact_name = (req.params.get("name") or req.params.get("type") or "").strip().lower()
     artifact_files = {
         "database": ARTIFACT_DIR / "finops_reports.db",
         "pdf": ARTIFACT_DIR / "finops_summary.pdf",

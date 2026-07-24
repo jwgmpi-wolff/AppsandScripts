@@ -1,7 +1,0 @@
-{
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;EndpointSuffix=core.windows.net;AccountName=wolffeventfunctionsa;AccountKey=YOUR_ACCOUNT_KEY_HERE;BlobEndpoint=https://wolffeventfunctionsa.blob.core.windows.net/;FileEndpoint=https://wolffeventfunctionsa.file.core.windows.net/;QueueEndpoint=https://wolffeventfunctionsa.queue.core.windows.net/;TableEndpoint=https://wolffeventfunctionsa.table.core.windows.net/",
-    "FUNCTIONS_WORKER_RUNTIME": "python"
-  }
-}

@@ -19,7 +19,7 @@ param functionAppName string
 @description('Storage account name (3-24 lowercase alphanumeric).')
 param storageName string
 
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${listKeys(storage.id, storage.apiVersion).keys[0].value}'
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storage.listKeys().keys[0].value}'
 var contentShareName = toLower(take(replace(functionAppName, '-', ''), 63))
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -112,6 +112,22 @@ resource functionApp 'Microsoft.Web/sites@2022-09-01' = {
         {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
+        }
+        {
+          name: 'FINOPS_ARTIFACT_DIR'
+          value: '/home/data/finops-artifacts'
+        }
+        {
+          name: 'FINOPS_REPORT_DB_PATH'
+          value: '/home/data/finops-artifacts/finops_reports.db'
+        }
+        {
+          name: 'FINOPS_FX_SOURCE'
+          value: 'env'
+        }
+        {
+          name: 'FINOPS_FX_RATES_JSON'
+          value: ''
         }
       ]
     }
