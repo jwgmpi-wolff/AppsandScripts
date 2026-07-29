@@ -1,0 +1,52 @@
+name: Release StockStream Local APK
+
+on:
+  push:
+    tags:
+      - 'stockstream-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stockstream-v* tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_DIR: devicehoste_stock_streamer
+  APK_NAME: StockStreamLocal-debug.apk
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK without embedded provider credentials
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Name release asset
+        run: cp "${PROJECT_DIR}/app/build/outputs/apk/debug/app-debug.apk" "${APK_NAME}"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --title "StockStream Local ${RELEASE_TAG#stockstream-v}" --generate-notes
+          gh release upload "$RELEASE_TAG" "$APK_NAME" --clobber

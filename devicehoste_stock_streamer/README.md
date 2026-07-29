@@ -2,6 +2,8 @@
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Ftokenpulse%2Fmain%2Fdevicehoste_stock_streamer%2Finfra%2Fazuredeploy.json)
 
+[Download the latest Android APK](https://github.com/jerrywolff_microsoft/tokenpulse/releases/latest/download/StockStreamLocal-debug.apk)
+
 StockStream Local is a private, device-first Android portfolio and quote tracker. It calls the selected market-data provider directly, stores portfolio data locally, and labels every displayed value as live, delayed, stale, imported, calculated, unavailable, or not provided.
 
 ![StockStream Local on Android](docs/screenshots/stock-stream-local.png)
@@ -61,6 +63,12 @@ The debug build may use `provider.apiKey` as a local default. A key entered in P
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Download APK
+
+[Download StockStreamLocal-debug.apk](https://github.com/jerrywolff_microsoft/tokenpulse/releases/latest/download/StockStreamLocal-debug.apk)
+
+This is a GitHub-built development APK for Android 8.0 and newer. It contains no market-provider API key. Android may ask you to allow installation from your browser or file manager; configure your provider in the app after installation.
 
 ## Deploy locally
 
@@ -124,6 +132,8 @@ Add scripts/deploy-local.ps1. It must locate adb from PATH or ANDROID_HOME, supp
 Add Azure distribution support without changing the app's local-only runtime architecture. Create infra/main.bicep that provisions a Standard_LRS StorageV2 account, HTTPS-only traffic, TLS 1.2 minimum, shared-key access disabled, and blob soft delete. Output the account name. Generate infra/azuredeploy.json from the Bicep file for a README Deploy to Azure button. Enable static website hosting in the authenticated deployment workflow because that setting uses the Storage data-plane API rather than the ARM resource schema, then query the storage account for its generated web endpoint.
 
 Add deployment/site/index.html as a responsive APK download page. Because this app is stored under devicehoste_stock_streamer in a monorepo, add the executable workflow at the repository root as .github/workflows/devicehoste-stockstream-deploy-azure.yml with separate build and deploy jobs and paths scoped to this project. Build on windows-latest with JDK 17, upload the APK/site/screenshot artifact, authenticate to Azure with azure/login@v2 and GitHub OIDC, deploy Bicep, then use az storage blob upload-batch --auth-mode login to publish index.html, app-debug.apk, and the screenshot to $web. Use a protected production GitHub environment and variables named AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, and AZURE_LOCATION. Never commit credentials. Add .azure/pipeline-setup.md explaining user-assigned managed identity federation and least-privilege RBAC.
+
+Add a repository-root .github/workflows/devicehoste-stockstream-release.yml workflow triggered by stockstream-v* tags. Build the debug APK in GitHub without local.properties, publish it to a GitHub Release as StockStreamLocal-debug.apk, and add a README link to https://github.com/jerrywolff_microsoft/tokenpulse/releases/latest/download/StockStreamLocal-debug.apk. The release APK must never contain a provider API key.
 
 Write README.md with architecture, features, screenshot, prerequisites, local.properties example with placeholders only, build/test commands, local deployment, Azure deployment, security notes, and this complete regeneration prompt. Add a .gitignore that excludes local.properties, keystore.properties, keystores, .gradle, .kotlin, build output, and IDE metadata.
 
