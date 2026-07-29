@@ -1,0 +1,10 @@
+.DS_Store
+.vscode/
+web/node_modules/
+web/.env
+infra/*.zip
+infra/.deploy-staging/
+infra/.secure-deployment-parameters.json
+infra/.secure-*
+infra/temp/
+infra/secrets/

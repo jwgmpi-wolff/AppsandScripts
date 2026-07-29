@@ -1,0 +1,127 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "2.0.0.0",
+  "parameters": {
+    "siteName": { "type": "string", "minLength": 2, "maxLength": 60, "metadata": { "description": "Globally unique App Service name." } },
+    "sku": { "type": "string", "defaultValue": "B1", "allowedValues": ["B1", "B2", "B3", "P0v3", "P1v3"], "metadata": { "description": "Linux App Service plan SKU. Charges apply." } },
+    "tenantId": { "type": "string", "metadata": { "description": "Microsoft Entra tenant allowed to authenticate." } },
+    "entraClientId": { "type": "string", "metadata": { "description": "Single-tenant Entra application client ID." } },
+    "entraClientSecret": { "type": "secureString", "metadata": { "description": "Generated Entra application credential; never commit this value." } },
+    "vnetName": { "type": "string", "defaultValue": "vnet-number-origin-desk" },
+    "vnetAddressPrefix": { "type": "string", "defaultValue": "10.42.0.0/16" },
+    "privateEndpointSubnetPrefix": { "type": "string", "defaultValue": "10.42.1.0/24" },
+    "publicNetworkAccess": { "type": "string", "defaultValue": "Disabled", "allowedValues": ["Enabled", "Disabled"], "metadata": { "description": "Temporarily enabled by the script for zip deployment, then disabled." } }
+  },
+  "variables": {
+    "planName": "[concat(parameters('siteName'), '-plan')]",
+    "privateEndpointName": "[concat(parameters('siteName'), '-pe')]",
+    "subnetName": "private-endpoints",
+    "privateDnsZoneName": "privatelink.azurewebsites.net",
+    "privateDnsLinkName": "[concat(parameters('siteName'), '-dns-link')]",
+    "authSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[parameters('vnetName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "addressSpace": { "addressPrefixes": ["[parameters('vnetAddressPrefix')]"] },
+        "subnets": [{ "name": "[variables('subnetName')]", "properties": { "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]", "privateEndpointNetworkPolicies": "Disabled" } }]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "[variables('privateDnsZoneName')]",
+      "location": "global"
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', variables('privateDnsZoneName'), variables('privateDnsLinkName'))]",
+      "location": "global",
+      "dependsOn": ["[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]", "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"],
+      "properties": { "registrationEnabled": false, "virtualNetwork": { "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]" } }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[variables('planName')]",
+      "location": "[resourceGroup().location]",
+      "sku": { "name": "[parameters('sku')]" },
+      "kind": "linux",
+      "properties": { "reserved": true }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-04-01",
+      "name": "[parameters('siteName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "app,linux",
+      "dependsOn": ["[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "httpsOnly": true,
+        "publicNetworkAccess": "[parameters('publicNetworkAccess')]",
+        "siteConfig": {
+          "linuxFxVersion": "NODE|24-lts",
+          "minTlsVersion": "1.2",
+          "ftpsState": "Disabled",
+          "http20Enabled": true,
+          "appSettings": [
+            { "name": "NODE_ENV", "value": "production" },
+            { "name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "true" },
+            { "name": "[variables('authSecretSettingName')]", "value": "[parameters('entraClientSecret')]" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2024-04-01",
+      "name": "[format('{0}/authsettingsV2', parameters('siteName'))]",
+      "dependsOn": ["[resourceId('Microsoft.Web/sites', parameters('siteName'))]"],
+      "properties": {
+        "platform": { "enabled": true, "runtimeVersion": "~1" },
+        "globalValidation": { "requireAuthentication": true, "unauthenticatedClientAction": "RedirectToLoginPage", "redirectToProvider": "azureactivedirectory" },
+        "identityProviders": {
+          "azureActiveDirectory": {
+            "enabled": true,
+            "registration": { "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('tenantId'))]", "clientId": "[parameters('entraClientId')]", "clientSecretSettingName": "[variables('authSecretSettingName')]" },
+            "validation": { "allowedAudiences": ["[format('api://{0}', parameters('entraClientId'))]", "[format('https://{0}.azurewebsites.net', parameters('siteName'))]"] }
+          }
+        },
+        "login": { "tokenStore": { "enabled": true }, "preserveUrlFragmentsForLogins": false },
+        "httpSettings": { "requireHttps": true, "routes": { "apiPrefix": "/.auth" } }
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-05-01",
+      "name": "[variables('privateEndpointName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": ["[resourceId('Microsoft.Web/sites', parameters('siteName'))]", "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"],
+      "properties": {
+        "subnet": { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), variables('subnetName'))]" },
+        "privateLinkServiceConnections": [{
+          "name": "[concat(parameters('siteName'), '-connection')]",
+          "properties": { "privateLinkServiceId": "[resourceId('Microsoft.Web/sites', parameters('siteName'))]", "groupIds": ["sites"], "privateLinkServiceConnectionState": { "status": "Approved", "description": "Approved by deployment" } }
+        }]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/default', variables('privateEndpointName'))]",
+      "dependsOn": ["[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointName'))]", "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"],
+      "properties": { "privateDnsZoneConfigs": [{ "name": "azurewebsites", "properties": { "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]" } }] }
+    }
+  ],
+  "outputs": {
+    "siteUrl": { "type": "string", "value": "[format('https://{0}.azurewebsites.net', parameters('siteName'))]" },
+    "privateEndpointId": { "type": "string", "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointName'))]" },
+    "entraClientId": { "type": "string", "value": "[parameters('entraClientId')]" }
+  }
+}

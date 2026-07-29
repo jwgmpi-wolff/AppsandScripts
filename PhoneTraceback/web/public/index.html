@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Inspect phone numbering-plan assignment and caller-ID risk evidence." />
+    <title>Number Origin Desk</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Number Origin Desk home">
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span>Number Origin Desk</span>
+      </a>
+      <span class="scope-badge">Public metadata only</span>
+    </header>
+
+    <main class="workspace">
+      <section class="lookup-panel" aria-labelledby="lookup-title">
+        <div class="panel-heading">
+          <p class="eyebrow">Number intelligence</p>
+          <h1 id="lookup-title">Inspect number assignment</h1>
+          <p>Validate an international number and inspect its numbering-plan assignment and spoofing caveats.</p>
+        </div>
+
+        <form id="lookup-form" novalidate>
+          <label for="phone-number">Phone number</label>
+          <div class="input-row">
+            <input id="phone-number" name="number" type="tel" inputmode="tel" autocomplete="tel" maxlength="64" placeholder="+1 202 555 0123" required />
+            <button id="lookup-button" type="submit">
+              <span>Inspect</span>
+              <span aria-hidden="true">&#8594;</span>
+            </button>
+          </div>
+          <p class="field-hint">Include the country calling code.</p>
+        </form>
+
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+
+        <section id="result" class="result" aria-labelledby="result-title" hidden>
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">Parsed result</p>
+              <h2 id="result-title"></h2>
+            </div>
+            <span id="country-code" class="country-code"></span>
+          </div>
+          <dl class="facts">
+            <div><dt>International</dt><dd id="formatted-number"></dd></div>
+            <div><dt>Calling code</dt><dd id="calling-code"></dd></div>
+            <div id="area-code-fact"><dt>Area code</dt><dd id="area-code"></dd></div>
+            <div><dt>Number type</dt><dd id="number-type"></dd></div>
+          </dl>
+          <div class="notice">
+            <span class="notice-icon" aria-hidden="true">!</span>
+            <p id="disclaimer"></p>
+          </div>
+          <div class="sources-block">
+            <h3>Live public checks</h3>
+            <p class="field-hint">Opens current external results. Reports are leads, not proof of caller identity or location.</p>
+            <ul id="live-searches"></ul>
+          </div>
+          <div class="sources-block">
+            <h3>Sources</h3>
+            <ul id="sources"></ul>
+          </div>
+        </section>
+      </section>
+
+      <section class="evidence-panel" aria-labelledby="evidence-title">
+        <div class="evidence-content">
+          <p class="eyebrow">Evidence boundary</p>
+          <h2 id="evidence-title">Assignment is not location</h2>
+          <p>A country calling code or NANP area code describes where a number range was assigned. It does not establish where a caller, device, SIM, or voice gateway is located.</p>
+          <dl class="evidence-list">
+            <div><dt>Can establish</dt><dd>Number format, calling code, area code, and assigned numbering country.</dd></div>
+            <div><dt>Cannot establish</dt><dd>Current location, subscriber identity, originating carrier route, or whether caller ID was spoofed.</dd></div>
+            <div><dt>Authoritative path</dt><dd>Preserve exact timestamps and request a provider-led traceback using carrier and STIR/SHAKEN records.</dd></div>
+          </dl>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
