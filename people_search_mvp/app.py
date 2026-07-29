@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sqlite3
 from pathlib import Path
 
@@ -241,9 +242,167 @@ def fetch_brave(query: str, max_results: int = 8):
     logger.info("[brave] Parsed results=%s", len(items))
     return {"results": items, "error": None, "source": "brave"}
 
+
+def fetch_wikipedia(query: str, max_results: int = 8):
+    resp, err = safe_request(
+        "https://en.wikipedia.org/w/api.php",
+        params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": max_results,
+            "format": "json",
+            "utf8": 1,
+        },
+        timeout=20,
+        source_name="wikipedia",
+    )
+    if err:
+        return {"results": [], "error": err, "source": "wikipedia"}
+
+    try:
+        payload = resp.json()
+    except ValueError as ex:
+        logger.exception("[wikipedia] JSON decode failed: %s", ex)
+        return {"results": [], "error": "Invalid JSON from Wikipedia", "source": "wikipedia"}
+
+    items = []
+    seen = set()
+    for entry in payload.get("query", {}).get("search", []):
+        title = (entry.get("title") or "").strip()
+        if not title:
+            continue
+
+        url = "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
+        if url in seen:
+            continue
+
+        snippet_html = entry.get("snippet") or ""
+        snippet_text = BeautifulSoup(snippet_html, "html.parser").get_text(" ", strip=True)
+
+        items.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": snippet_text or "Wikipedia result",
+                "source": "wikipedia",
+            }
+        )
+        seen.add(url)
+
+        if len(items) >= max_results:
+            break
+
+    logger.info("[wikipedia] Parsed results=%s", len(items))
+    return {"results": items, "error": None, "source": "wikipedia"}
+
 PROVIDERS = {
     "duckduckgo": fetch_duckduckgo,
     "brave": fetch_brave,
+    "wikipedia": fetch_wikipedia,
+}
+
+
+def resolve_provider_names(source: str):
+    normalized = (source or "all").strip().lower()
+
+    # UI-level source scopes currently map to the same public providers.
+    if normalized in {"all", "all_source_scopes", "web", "news"}:
+        return list(PROVIDERS.keys())
+
+    # Direct provider targeting is still supported for advanced callers.
+    if normalized in PROVIDERS:
+        return [normalized]
+
+    return []
+
+FICTIONAL_PROFILE_RESULTS = {
+    "avery stonebridge": [
+        {
+            "title": "Avery Stonebridge - Public Portfolio",
+            "url": "https://profiles.example.com/avery-stonebridge",
+            "snippet": "Fictional profile card for demo search behavior.",
+            "source": "local-fixture",
+        },
+        {
+            "title": "Avery Stonebridge - Conference Speaker Bio",
+            "url": "https://events.example.com/speakers/avery-stonebridge",
+            "snippet": "Speaker bio and session highlights.",
+            "source": "local-fixture",
+        },
+    ],
+    "milo hartwell": [
+        {
+            "title": "Milo Hartwell - Public Profile",
+            "url": "https://profiles.example.com/milo-hartwell",
+            "snippet": "Fictional profile used for local demo scenarios.",
+            "source": "local-fixture",
+        },
+    ],
+    "nora whitlock": [
+        {
+            "title": "Nora Whitlock - Portfolio",
+            "url": "https://profiles.example.com/nora-whitlock",
+            "snippet": "Portfolio and verified public links.",
+            "source": "local-fixture",
+        },
+    ],
+    "declan rivers": [
+        {
+            "title": "Declan Rivers - Public Activity",
+            "url": "https://profiles.example.com/declan-rivers",
+            "snippet": "Activity feed for demo testing.",
+            "source": "local-fixture",
+        },
+    ],
+    "lena marlowe": [
+        {
+            "title": "Lena Marlowe - Public Profile",
+            "url": "https://profiles.example.com/lena-marlowe",
+            "snippet": "Fictional person record for prototype demos.",
+            "source": "local-fixture",
+        },
+    ],
+    "theo blackwood": [
+        {
+            "title": "Theo Blackwood - Community Contributions",
+            "url": "https://profiles.example.com/theo-blackwood",
+            "snippet": "Public contributions and profile summary.",
+            "source": "local-fixture",
+        },
+    ],
+    "iris wrenford": [
+        {
+            "title": "Iris Wrenford - Public Directory Entry",
+            "url": "https://profiles.example.com/iris-wrenford",
+            "snippet": "Directory listing for fictional test identity.",
+            "source": "local-fixture",
+        },
+    ],
+    "jasper holloway": [
+        {
+            "title": "Jasper Holloway - Public Portfolio",
+            "url": "https://profiles.example.com/jasper-holloway",
+            "snippet": "Profile page used by local fixture fallback.",
+            "source": "local-fixture",
+        },
+    ],
+    "elara finch": [
+        {
+            "title": "Elara Finch - Public Bio",
+            "url": "https://profiles.example.com/elara-finch",
+            "snippet": "Bio page for fictional demo identity.",
+            "source": "local-fixture",
+        },
+    ],
+    "callum frost": [
+        {
+            "title": "Callum Frost - Public Records Overview",
+            "url": "https://profiles.example.com/callum-frost",
+            "snippet": "Overview of sample public records.",
+            "source": "local-fixture",
+        },
+    ],
 }
 
 def fetch_results(source: str, query: str, max_results: int):
@@ -252,7 +411,16 @@ def fetch_results(source: str, query: str, max_results: int):
     errors = []
     seen_urls = set()
 
-    provider_names = list(PROVIDERS.keys()) if source == "all" else [source]
+    provider_names = resolve_provider_names(source)
+
+    if not provider_names:
+        warning = {
+            "source": source,
+            "error": "Unknown source scope. Supported values: all_source_scopes, all, web, news, duckduckgo, brave",
+        }
+        logger.warning("[router] %s", warning["error"])
+        errors.append(warning)
+        return aggregated, errors
 
     for provider_name in provider_names:
         provider_func = PROVIDERS.get(provider_name)
@@ -281,6 +449,42 @@ def fetch_results(source: str, query: str, max_results: int):
 
     logger.info("[router] Aggregated unique results=%s errors=%s", len(aggregated), len(errors))
     return aggregated, errors
+
+
+def get_fictional_fallback_results(query: str, max_results: int):
+    key = (query or "").strip().lower()
+    seeded = FICTIONAL_PROFILE_RESULTS.get(key, [])
+    return seeded[:max_results]
+
+
+def get_generic_fallback_results(query: str, max_results: int):
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    q_plus = q.replace(" ", "+")
+    q_underscore = q.replace(" ", "_")
+    options = [
+        {
+            "title": f"Search '{q}' on Wikipedia",
+            "url": f"https://en.wikipedia.org/wiki/Special:Search?search={q_plus}",
+            "snippet": "Reliable fallback entry when live public providers return no direct results.",
+            "source": "fallback",
+        },
+        {
+            "title": f"Search '{q}' on DuckDuckGo",
+            "url": f"https://duckduckgo.com/?q={q_plus}",
+            "snippet": "Direct search URL for quick manual verification.",
+            "source": "fallback",
+        },
+        {
+            "title": f"Likely profile page for '{q}' on Wikipedia",
+            "url": f"https://en.wikipedia.org/wiki/{q_underscore}",
+            "snippet": "Generated profile candidate link.",
+            "source": "fallback",
+        },
+    ]
+    return options[:max_results]
 
 def score_result(result, query_terms, learning_weights):
     title = (result.get("title") or "").lower()
@@ -738,6 +942,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
 def display_title_for_url(u: str):
     try:
         p = urlparse(u)
@@ -788,15 +997,23 @@ def webcams_page():
 
 @app.route("/search", methods=["POST"])
 def search():
-    query = request.form.get("query", "").strip()
+    payload = request.get_json(silent=True) or {}
+
+    def _field(name: str, default=""):
+        form_val = request.form.get(name)
+        if form_val is not None:
+            return form_val
+        return payload.get(name, default)
+
+    query = str(_field("query", "")).strip()
     try:
-        max_results = int(request.form.get("max_results", 8) or 8)
+        max_results = int(_field("max_results", 8) or 8)
     except ValueError:
         max_results = 8
 
     filters = {
-        "entity": request.form.get("entity", "public"),
-        "source": request.form.get("source", "all").lower(),
+        "entity": str(_field("entity", _field("entity_type", "public")) or "public"),
+        "source": str(_field("source", "all") or "all").lower(),
         "max_results": max(1, min(max_results, 25)),
     }
 
@@ -812,6 +1029,16 @@ def search():
         query,
         filters["max_results"],
     )
+
+    if not candidate_results:
+        fallback_results = get_fictional_fallback_results(query, filters["max_results"])
+        if fallback_results:
+            logger.info("[search] Using local fictional fallback for query=%r", query)
+            candidate_results = fallback_results
+
+    if not candidate_results:
+        logger.info("[search] Using generic fallback links for query=%r", query)
+        candidate_results = get_generic_fallback_results(query, filters["max_results"])
 
     scored = []
     for item in candidate_results:
@@ -866,7 +1093,7 @@ def search():
         "learning_terms": load_learning_weights(),
         "fetch_errors": fetch_errors,
         "diagnostics": {
-            "provider_count": 2,
+            "provider_count": len(resolve_provider_names(filters["source"])),
             "requested_source": filters["source"],
             "result_count": result_count,
         },
@@ -881,7 +1108,28 @@ def history():
     return jsonify([dict(row) for row in searches])
 
 if __name__ == "__main__":
+    def _is_port_available(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            return sock.connect_ex(("127.0.0.1", port)) != 0
+
+    def _pick_available_port(preferred_port: int, max_offset: int = 50) -> int:
+        for candidate in range(preferred_port, preferred_port + max_offset + 1):
+            if _is_port_available(candidate):
+                return candidate
+        return preferred_port
+
     logger.info("Starting Search Intelligence app")
     # Default to non-debug for unattended runs (for example, startup tasks).
     debug_mode = os.getenv("APP_DEBUG", "0").strip().lower() in {"1", "true", "yes", "on"}
-    app.run(debug=debug_mode, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    preferred_port = int(os.getenv("PORT", 5000))
+    auto_port_enabled = os.getenv("APP_AUTO_PORT", "1").strip().lower() in {"1", "true", "yes", "on"}
+    # In Azure/App Service, keep the platform-provided port strict.
+    if os.getenv("WEBSITE_INSTANCE_ID"):
+        auto_port_enabled = False
+
+    selected_port = _pick_available_port(preferred_port) if auto_port_enabled else preferred_port
+    if selected_port != preferred_port:
+        logger.warning("Port %s is busy. Using next available port %s.", preferred_port, selected_port)
+
+    app.run(debug=debug_mode, host="0.0.0.0", port=selected_port)

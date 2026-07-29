@@ -51,6 +51,7 @@
               </label>
               <label>Source scope
                 <select name="source">
+                  <option value="all_source_scopes" selected>All source scopes</option>
                   <option value="all">All public sources</option>
                   <option value="web">Web</option>
                   <option value="news">News</option>
@@ -120,10 +121,12 @@
 
   <script>
     const form = document.getElementById('search-form');
+    const runSearchBtn = form ? form.querySelector('button[type="submit"]') : null;
     const resultList = document.getElementById('result-list');
     const status = document.getElementById('status');
     const learning = document.getElementById('learning');
     const historyList = document.getElementById('history-list');
+    let searchInFlight = false;
 
     function renderResults(data) {
       resultList.innerHTML = '';
@@ -162,12 +165,15 @@
     }
 
     async function performSearch() {
+      if (searchInFlight) return;
+      searchInFlight = true;
       // choose hero form or main search form
       const activeForm = document.getElementById('search-form') || document.getElementById('hero-search');
       if (!activeForm) return;
       // ensure HTML5 validity first
       if (!activeForm.checkValidity()) {
         activeForm.reportValidity();
+        searchInFlight = false;
         return;
       }
 
@@ -205,11 +211,18 @@
         console.error('search error', err);
         status.textContent = 'Search failed: ' + (err && err.message ? err.message : String(err));
       } finally {
+        searchInFlight = false;
         if (submitBtn) submitBtn.disabled = false;
       }
     }
 
     form.addEventListener('submit', (e) => { e.preventDefault(); performSearch(); });
+    if (runSearchBtn) {
+      runSearchBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        performSearch();
+      });
+    }
 
     loadHistory();
 

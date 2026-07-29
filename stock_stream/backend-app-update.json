@@ -1,0 +1,43 @@
+{
+  "appRoles": [
+    {
+      "id": "b4ab233c-f900-4fdd-a8d7-05ea9607882f",
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "origin": "Application",
+      "value": "Admin",
+      "description": "Administrators of StockStreamPortfolio.",
+      "displayName": "Admin",
+      "isEnabled": true
+    },
+    {
+      "id": "1ea7f104-ff02-4d0d-adc1-8a247671fb21",
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "origin": "Application",
+      "value": "User",
+      "description": "Standard users of StockStreamPortfolio.",
+      "displayName": "User",
+      "isEnabled": true
+    }
+  ],
+  "api": {
+    "oauth2PermissionScopes": [
+      {
+        "value": "access_as_user",
+        "isEnabled": true,
+        "adminConsentDescription": "Allow mobile app to access StockStreamPortfolio API as the signed-in user.",
+        "userConsentDescription": "Allow this app to access StockStreamPortfolio API on your behalf.",
+        "id": "decd7308-c1b2-4f50-9d0a-dfb1c1ef79f9",
+        "userConsentDisplayName": "Access StockStreamPortfolio API",
+        "adminConsentDisplayName": "Access StockStreamPortfolio API",
+        "type": "User"
+      }
+    ]
+  },
+  "identifierUris": [
+    "api://d4ba03d1-4866-461e-9ab7-65b5780e69fa"
+  ]
+}

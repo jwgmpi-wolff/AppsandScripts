@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# .NET
+**/bin/
+**/obj/
+**/publish/
+**/publish.zip
+
+# Android/Gradle
+**/.gradle/
+**/build/
+android-app/.idea/
+android-app/local.properties
+android-app/app/keystore/
+*.jks
+*.keystore
+
+# Logs
+*.log

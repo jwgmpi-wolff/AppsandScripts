@@ -56,6 +56,9 @@ nav a { color:var(--accent); text-decoration:none; margin-left: .8rem; }
 #tab-people .panel#search { width:50vw; max-width:900px; }
 @media (max-width: 980px) { #tab-people .panel#search { width:100%; max-width:100%; } }
 
+/* Keep the interactive search surface above decorative/background layers. */
+#tab-people .panel#search { position: relative; z-index: 20; }
+
 /* Apply same sizing to the history box so it matches the People Search panel */
 #history.panel { width:50vw; max-width:900px; margin-left:auto; }
 @media (max-width: 980px) { #history.panel { width:100%; max-width:100%; margin-left:0; } }

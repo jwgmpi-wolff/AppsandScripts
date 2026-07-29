@@ -31,5 +31,7 @@ venv/
 node_modules/
 # Sensitive files
 finops-agent/local.settings.json
+finops-agent/.azd-package
+public_cameras/*.err
 *.local.*
 cost_savings_reporting/

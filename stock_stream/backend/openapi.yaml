@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: StockStreamPortfolio API
+  version: 1.0.0
+servers:
+  - url: https://{api-host}
+    variables:
+      api-host:
+        default: api.stockstreamportfolio.example
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: Health endpoint
+      responses:
+        '200':
+          description: OK
+  /me:
+    get:
+      summary: Get current user claims summary
+      responses:
+        '200':
+          description: User info
+  /settings:
+    get:
+      summary: Get user settings and refresh bounds
+      responses:
+        '200':
+          description: Settings
+    put:
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSettingsRequest'
+      responses:
+        '200':
+          description: Updated settings
+  /watchlist:
+    get:
+      summary: Get user watchlist
+      responses:
+        '200':
+          description: Watchlist rows
+    post:
+      summary: Add or update watchlist item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddWatchlistItemRequest'
+      responses:
+        '200':
+          description: Added watchlist item
+  /watchlist/{symbol}:
+    delete:
+      summary: Remove symbol from watchlist
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+  /watchlist/validate:
+    post:
+      summary: Validate symbol format/provider support
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateWatchlistRequest'
+      responses:
+        '200':
+          description: Validation result
+  /quotes:
+    get:
+      summary: Get quotes for comma-delimited symbols
+      parameters:
+        - in: query
+          name: symbols
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Quote results
+  /market-status:
+    get:
+      summary: Get market open/closed/unavailable status
+      responses:
+        '200':
+          description: Status details
+  /columns:
+    get:
+      summary: Get user column layout
+      responses:
+        '200':
+          description: Layout
+  /columns/layout:
+    put:
+      summary: Update user column layout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateColumnLayoutRequest'
+      responses:
+        '200':
+          description: Layout updated
+  /views:
+    get:
+      summary: Get rotating views
+      responses:
+        '200':
+          description: View list
+    post:
+      summary: Create rotating view
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertViewRequest'
+      responses:
+        '200':
+          description: View created
+  /views/{id}:
+    put:
+      summary: Update rotating view
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertViewRequest'
+      responses:
+        '200':
+          description: View updated
+    delete:
+      summary: Delete rotating view
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: View deleted
+  /csv/validate:
+    post:
+      summary: Validate CSV against required schema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsvPayloadRequest'
+      responses:
+        '200':
+          description: Validation response
+  /csv/import:
+    post:
+      summary: Import CSV as baseline portfolio rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsvPayloadRequest'
+      responses:
+        '200':
+          description: Import result
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AddWatchlistItemRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required: [symbol]
+    ValidateWatchlistRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+      required: [symbol]
+    UpdateSettingsRequest:
+      type: object
+      properties:
+        refreshIntervalSeconds:
+          type: integer
+        aggregateDuplicateSymbols:
+          type: boolean
+        autoAddImportedSymbols:
+          type: boolean
+      required: [refreshIntervalSeconds, aggregateDuplicateSymbols, autoAddImportedSymbols]
+    UpdateColumnLayoutRequest:
+      type: object
+      properties:
+        orderedColumns:
+          type: array
+          items:
+            type: string
+        hiddenColumns:
+          type: array
+          items:
+            type: string
+        displayDensity:
+          type: string
+      required: [orderedColumns, hiddenColumns, displayDensity]
+    UpsertViewRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        name:
+          type: string
+        selectedColumns:
+          type: array
+          items:
+            type: string
+        sortBy:
+          type: string
+        sortDirection:
+          type: string
+        filter:
+          type: string
+          nullable: true
+        refreshIntervalSeconds:
+          type: integer
+        rotationIntervalSeconds:
+          type: integer
+        isPaused:
+          type: boolean
+      required:
+        - name
+        - selectedColumns
+        - sortBy
+        - sortDirection
+        - refreshIntervalSeconds
+        - rotationIntervalSeconds
+        - isPaused
+    CsvPayloadRequest:
+      type: object
+      properties:
+        csvText:
+          type: string
+        autoAddSymbolsToWatchlist:
+          type: boolean
+      required: [csvText, autoAddSymbolsToWatchlist]

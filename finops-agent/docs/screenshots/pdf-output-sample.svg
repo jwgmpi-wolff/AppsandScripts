@@ -1,0 +1,6 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='250'>
+  <rect width='1200' height='250' fill='#f8fafc'/>
+  <rect x='12' y='12' width='1176' height='226' rx='14' fill='#ffffff' stroke='#cbd5e1'/>
+  <text x='24' y='50' font-size='28' font-weight='700' fill='#0f172a' font-family='Segoe UI, Arial'>PDF Output Sample</text>
+  <text x='24' y='86' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>File: finops_summary.pdf</text><text x='24' y='112' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>Size: 160,343 bytes</text><text x='24' y='138' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>Approx pages: 1</text><text x='24' y='164' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>Contains generated FinOps summary + recommendation tables</text>
+</svg>

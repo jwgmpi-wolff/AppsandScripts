@@ -1,0 +1,6 @@
+# Copy to local.properties and replace placeholders.
+sdk.dir=C:\\Android\\Sdk
+STOCKSTREAM_BACKEND_BASE_URL=https://<replace-with-api-host>/
+STOCKSTREAM_ANDROID_CLIENT_ID=<replace-with-android-client-id>
+STOCKSTREAM_TENANT_ID=<replace-with-tenant-id>
+STOCKSTREAM_BACKEND_SCOPE=api://<replace-with-backend-api-client-id>/access_as_user

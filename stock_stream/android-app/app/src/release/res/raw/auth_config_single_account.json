@@ -1,0 +1,16 @@
+{
+  "client_id": "f72c0a02-b8d1-4ad2-9827-e56428051861",
+  "authorization_user_agent": "WEBVIEW",
+  "redirect_uri": "msauth://net.wolffentp.stockstreamportfolio/qWy33M8DAxbDTet_HGBPaLbJO8w",
+  "account_mode": "SINGLE",
+  "broker_redirect_uri_registered": false,
+  "authorities": [
+    {
+      "type": "AAD",
+      "audience": {
+        "type": "AzureADMyOrg",
+        "tenant_id": "7fcb095b-344f-4c1e-8e12-bc781eb03e72"
+      }
+    }
+  ]
+}

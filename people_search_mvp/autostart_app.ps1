@@ -20,6 +20,9 @@ if ($running) {
 }
 
 $env:APP_DEBUG = '0'
+if (-not $env:APP_AUTO_PORT) {
+    $env:APP_AUTO_PORT = '1'
+}
 if (-not $env:PORT) {
     $env:PORT = '5000'
 }

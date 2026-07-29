@@ -2,8 +2,27 @@
 
 Azure Functions-based FinOps reporting service that inventories Azure resources, pulls cost and Advisor data, and generates downloadable artifacts.
 
-![Dashboard Overview](docs/screenshots/dashboard-overview.png)
-![Scope Dialog](docs/screenshots/scope-dialog.png)
+## Screenshots
+
+### Resource Information
+
+![Resource Information](docs/screenshots/resource-information.png)
+
+### Advisor Recommendations
+
+![Advisor Recommendations](docs/screenshots/advisor-recommendations.png)
+
+### PDF Output Sample
+
+![PDF Output Sample](docs/screenshots/pdf-output-sample.svg)
+
+### PowerPoint Output Sample
+
+![PowerPoint Output Sample](docs/screenshots/pptx-output-sample.svg)
+
+### SQLite Output Sample
+
+![SQLite Output Sample](docs/screenshots/sqlite-output-sample.svg)
 
 ## What This Project Does
 
@@ -49,7 +68,11 @@ Then open:
 
 ### Deploy to Azure (one click)
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Ftokenpulse%2Fmain%2Ffinops-agent%2Finfra%2Fazuredeploy.json)
+One-click deployment button for this repository:
+
+`https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Ffinops-reporting%2Fmain%2Finfra%2Fazuredeploy.json`
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjerrywolff_microsoft%2Ffinops-reporting%2Fmain%2Finfra%2Fazuredeploy.json)
 
 This button deploys `infra/azuredeploy.json`.
 
@@ -236,4 +259,4 @@ Acceptance checks:
 ## Repo Notes
 
 - Build prompt archive remains in `docs/BUILD_PROMPTS.md`.
-- If this repository path changes in GitHub, update the Deploy to Azure button URL to match the new raw file location.
+- This repo is currently private. Deploy button template access requires a signed-in account that can read this repository.

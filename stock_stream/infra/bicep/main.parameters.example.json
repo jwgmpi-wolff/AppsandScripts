@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "eastus" },
+    "appName": { "value": "stockstreamportfolio" },
+    "backendRuntime": { "value": "DOTNETCORE|8.0" },
+    "marketProviderApiKeySecretName": { "value": "market-provider-api-key" },
+    "tenantId": { "value": "REPLACE_WITH_TENANT_ID" },
+    "backendApiClientId": { "value": "REPLACE_WITH_BACKEND_API_CLIENT_ID" },
+    "backendApiAudience": { "value": "api://REPLACE_WITH_BACKEND_API_CLIENT_ID" }
+  }
+}

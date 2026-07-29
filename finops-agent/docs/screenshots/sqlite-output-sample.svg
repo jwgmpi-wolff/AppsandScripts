@@ -1,0 +1,6 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='250'>
+  <rect width='1200' height='250' fill='#f8fafc'/>
+  <rect x='12' y='12' width='1176' height='226' rx='14' fill='#ffffff' stroke='#cbd5e1'/>
+  <text x='24' y='50' font-size='28' font-weight='700' fill='#0f172a' font-family='Segoe UI, Arial'>SQLite Output Sample</text>
+  <text x='24' y='86' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>File: finops_reports.db</text><text x='24' y='112' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>Size: 1,064,960 bytes</text><text x='24' y='138' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>resources: 864 rows</text><text x='24' y='164' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>resource_costs: 0 rows</text><text x='24' y='190' font-size='16' fill='#1f2937' font-family='Segoe UI, Arial'>recommendations: 955 rows</text>
+</svg>
