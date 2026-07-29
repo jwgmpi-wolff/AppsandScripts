@@ -1,0 +1,187 @@
+name: Deploy TokenPulse to Azure App Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Your Azure tenant ID (re-auth target tenant)"
+        required: true
+        type: string
+      subscription_id:
+        description: "Your Azure subscription ID in that tenant"
+        required: true
+        type: string
+      reauth_confirmation:
+        description: "Type REAUTH_OK after running a fresh tenant login"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: tokenpulse-azure-appservice
+  cancel-in-progress: true
+
+env:
+  APP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+  APP_SERVICE_PLAN: ${{ vars.AZURE_APP_SERVICE_PLAN_NAME }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  LOCATION: ${{ vars.AZURE_LOCATION }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Validate required Azure configuration
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          APP_SERVICE_PLAN: ${{ vars.AZURE_APP_SERVICE_PLAN_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ inputs.tenant_id }}
+          AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription_id }}
+          REAUTH_CONFIRMATION: ${{ inputs.reauth_confirmation }}
+          TOKENPULSE_UPSTREAM_BASE_URL: ${{ secrets.TOKENPULSE_UPSTREAM_BASE_URL }}
+          TOKENPULSE_UPSTREAM_BEARER_TOKEN: ${{ secrets.TOKENPULSE_UPSTREAM_BEARER_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+
+          [ -n "${APP_NAME:-}" ] || missing+=("vars.AZURE_WEBAPP_NAME")
+          [ -n "${RESOURCE_GROUP:-}" ] || missing+=("vars.AZURE_RESOURCE_GROUP")
+          [ -n "${LOCATION:-}" ] || missing+=("vars.AZURE_LOCATION")
+
+          [ -n "${AZURE_CLIENT_ID:-}" ] || missing+=("secrets.AZURE_CLIENT_ID")
+          [ -n "${AZURE_TENANT_ID:-}" ] || missing+=("workflow input: tenant_id")
+          [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] || missing+=("workflow input: subscription_id")
+          [ -n "${TOKENPULSE_UPSTREAM_BASE_URL:-}" ] || missing+=("secrets.TOKENPULSE_UPSTREAM_BASE_URL")
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            {
+              echo "## TokenPulse deploy preflight failed"
+              echo
+              echo "Missing required GitHub Actions variables/secrets:"
+              for item in "${missing[@]}"; do
+                echo "- $item"
+              done
+              echo
+              echo "Configure them under Settings > Secrets and variables > Actions."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            for item in "${missing[@]}"; do
+              echo "::error title=Missing config::$item"
+            done
+            exit 1
+          fi
+
+          if [ "${REAUTH_CONFIRMATION:-}" != "REAUTH_OK" ]; then
+            echo "::error title=Re-auth required::Set reauth_confirmation to REAUTH_OK after re-authenticating to your own tenant."
+            exit 1
+          fi
+
+          if [ -z "${APP_SERVICE_PLAN:-}" ]; then
+            echo "::warning title=AZURE_APP_SERVICE_PLAN_NAME not set::Workflow will default plan name to <AZURE_WEBAPP_NAME>-plan."
+          fi
+
+          if [ -z "${TOKENPULSE_UPSTREAM_BEARER_TOKEN:-}" ]; then
+            echo "::notice title=TOKENPULSE_UPSTREAM_BEARER_TOKEN not set::Continuing without bearer auth for upstream API."
+          fi
+
+          echo "Preflight checks passed."
+
+  deploy:
+    needs: preflight
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Stage deployment package
+        run: |
+          mkdir -p deploy
+          cp package.json deploy/package.json
+          cp package-lock.json deploy/package-lock.json
+          cp -R server deploy/server
+          cp -R dist deploy/dist
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ inputs.tenant_id }}
+          subscription-id: ${{ inputs.subscription_id }}
+
+      - name: Verify active tenant and subscription context
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            current_tenant="$(az account show --query tenantId -o tsv)"
+            current_subscription="$(az account show --query id -o tsv)"
+
+            if [ "$current_tenant" != "${{ inputs.tenant_id }}" ]; then
+              echo "::error title=Tenant mismatch::Active tenant $current_tenant does not match requested ${{ inputs.tenant_id }}"
+              exit 1
+            fi
+
+            if [ "$current_subscription" != "${{ inputs.subscription_id }}" ]; then
+              echo "::error title=Subscription mismatch::Active subscription $current_subscription does not match requested ${{ inputs.subscription_id }}"
+              exit 1
+            fi
+
+            echo "Deploy context verified: tenant and subscription match workflow inputs."
+
+      - name: Ensure resource group exists
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az group create \
+              --name "$RESOURCE_GROUP" \
+              --location "$LOCATION"
+
+      - name: Provision/update App Service target
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            plan_name="${APP_SERVICE_PLAN:-${APP_NAME}-plan}"
+            az deployment group create \
+              --resource-group "$RESOURCE_GROUP" \
+              --template-file infra/appservice.bicep \
+              --parameters \
+                appName="$APP_NAME" \
+                appServicePlanName="$plan_name" \
+                location="$LOCATION" \
+                upstreamBaseUrl="${{ secrets.TOKENPULSE_UPSTREAM_BASE_URL }}" \
+                upstreamBearerToken="${{ secrets.TOKENPULSE_UPSTREAM_BEARER_TOKEN }}"
+
+      - name: Deploy app package
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.APP_NAME }}
+          package: deploy
+
+      - name: Show app URL
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            url=$(az webapp show --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" --query defaultHostName -o tsv)
+            echo "Deployed: https://$url"
