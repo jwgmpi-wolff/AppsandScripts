@@ -45,13 +45,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
 import net.wolffentp.stockstreamportfolio.auth.AuthState
 import net.wolffentp.stockstreamportfolio.auth.MsalAuthManager
 import net.wolffentp.stockstreamportfolio.data.model.ColumnLayout
 import net.wolffentp.stockstreamportfolio.data.model.QuoteRow
 import net.wolffentp.stockstreamportfolio.ui.viewmodel.MainViewModel
-import net.wolffentp.stockstreamportfolio.ui.viewmodel.QuoteDisplayPolicy
 
 @Composable
 fun StockStreamApp(
@@ -270,28 +268,6 @@ private fun PortfolioScreen(viewModel: MainViewModel, accountId: String) {
                 onReset = viewModel::resetColumns,
                 onSave = viewModel::saveColumnLayout
             )
-
-            val totalGain = if (activeViewIndex == 0) {
-                QuoteDisplayPolicy.totalGain(quotes?.rows.orEmpty())
-            } else {
-                null
-            }
-            if (totalGain != null) {
-                Spacer(Modifier.height(10.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Total Gain", fontWeight = FontWeight.Bold)
-                        Text(
-                            text = NumberFormat.getCurrencyInstance().format(totalGain),
-                            color = if (totalGain >= 0) Color(0xFF087F5B) else Color(0xFFB00020),
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
 
             Spacer(Modifier.height(10.dp))
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
