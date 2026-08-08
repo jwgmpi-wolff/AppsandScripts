@@ -155,15 +155,34 @@
       </div>
       <div id="active-rtsp" style="font-size:.72rem;color:#a3e635;margin-top:6px;font-family:monospace;word-break:break-all"></div>
     </div>
+
+    <!-- Network Scan (last run) -->
+    <div class="section">
       <h3>Network Scan (last run)</h3>
-      <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">From detect-yhs3017.ps1 — 2026-08-08</div>
+      <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">From detect-yhs3017.ps1 — 2026-08-08 · click a row to target it</div>
       <table class="discovery-table">
-        <tr><th>IP</th><th>Ports</th><th>Signals</th></tr>
-        <tr><td>10.0.0.161</td><td>8000</td><td><span class="tag tag-on">ONVIF?</span></td></tr>
-        <tr><td>10.0.0.221</td><td>80</td><td><span class="tag tag-on">HTTP</span><span class="tag tag-on">ONVIF?</span></td></tr>
-        <tr><td>10.0.0.236</td><td>80</td><td><span class="tag tag-on">HTTP</span></td></tr>
-        <tr><td>10.0.0.28</td><td>80,443</td><td><span class="tag tag-on">HTTPS</span></td></tr>
-        <tr><td colspan="3" style="color:#64748b;padding-top:4px">Port 554 closed on all — no RTSP exposed in stock config</td></tr>
+        <tr><th>IP</th><th>Ports</th><th>Signals</th><th></th></tr>
+        <tr style="cursor:pointer" onclick="targetIp('10.0.0.161')">
+          <td>10.0.0.161</td><td>8000</td>
+          <td><span class="tag tag-on">ONVIF?</span></td>
+          <td><button class="btn-primary" style="padding:2px 8px;font-size:.7rem" onclick="event.stopPropagation();targetAndProbe('10.0.0.161')">▶</button></td>
+        </tr>
+        <tr style="cursor:pointer" onclick="targetIp('10.0.0.221')">
+          <td>10.0.0.221</td><td>80</td>
+          <td><span class="tag tag-on">HTTP</span><span class="tag tag-on">ONVIF?</span></td>
+          <td><button class="btn-primary" style="padding:2px 8px;font-size:.7rem" onclick="event.stopPropagation();targetAndProbe('10.0.0.221')">▶</button></td>
+        </tr>
+        <tr style="cursor:pointer" onclick="targetIp('10.0.0.236')">
+          <td>10.0.0.236</td><td>80</td>
+          <td><span class="tag tag-on">HTTP</span></td>
+          <td><button class="btn-primary" style="padding:2px 8px;font-size:.7rem" onclick="event.stopPropagation();targetAndProbe('10.0.0.236')">▶</button></td>
+        </tr>
+        <tr style="cursor:pointer" onclick="targetIp('10.0.0.188')">
+          <td>10.0.0.188</td><td>80,443</td>
+          <td><span class="tag tag-on">HTTPS</span></td>
+          <td><button class="btn-primary" style="padding:2px 8px;font-size:.7rem" onclick="event.stopPropagation();targetAndProbe('10.0.0.188')">▶</button></td>
+        </tr>
+        <tr><td colspan="4" style="color:#64748b;padding-top:4px">Port 554 closed on all — RTSP not in stock firmware</td></tr>
       </table>
     </div>
 
@@ -292,9 +311,28 @@ function toast(msg, err=false) {
   toast._t = setTimeout(()=> el.style.opacity='0', 3500);
 }
 
+function targetIp(ip) {
+  document.getElementById('cam-ip').value = ip;
+  document.getElementById('cam-ip').focus();
+  document.getElementById('cam-ip').scrollIntoView({behavior:'smooth'});
+  toast('IP set to ' + ip + ' — add credentials if needed, then click Probe Camera');
+}
+
 // YI camera common RTSP paths
 const YI_PATHS = ['/ch0_0.264', '/ch0_1.264', '/ch0_0.h264', '/live', '/stream1'];
 let confirmedRtspUrl = null;
+
+function targetIp(ip) {
+  document.getElementById('cam-ip').value = ip;
+  document.getElementById('cam-ip').scrollIntoView({behavior:'smooth'});
+  toast('IP set to ' + ip + ' — click Probe Camera');
+}
+
+function targetAndProbe(ip) {
+  document.getElementById('cam-ip').value = ip;
+  document.getElementById('cam-ip').scrollIntoView({behavior:'smooth'});
+  setTimeout(probeCamera, 200);
+}
 
 async function probeCamera() {
   const ip = document.getElementById('cam-ip').value.trim();
