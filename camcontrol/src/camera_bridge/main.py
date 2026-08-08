@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import signal
+import threading
 from typing import Any
 
 from .camera_capture import CameraCapture
@@ -39,6 +40,8 @@ class CameraBridge:
                 "captureSnapshot": self.capture_snapshot,
                 "getDeviceInfo": self.get_device_info,
                 "setStreamProfile": self.set_stream_profile,
+                "startRecording": self.start_recording,
+                "stopRecording": self.stop_recording,
             },
             self.apply_desired_properties,
         )
@@ -66,6 +69,20 @@ class CameraBridge:
 
     async def get_device_info(self, _payload: dict[str, Any]) -> dict[str, Any]:
         return self.device.to_dict()
+
+    async def start_recording(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        path = await asyncio.to_thread(
+            self.capture.start_recording, self.settings.snapshot_directory
+        )
+        result = {"recording": True, "path": str(path)}
+        await self.iot.send_telemetry({"event": "recordingStarted", **result})
+        return result
+
+    async def stop_recording(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        path = await asyncio.to_thread(self.capture.stop_recording)
+        result = {"recording": False, "path": str(path) if path else None}
+        await self.iot.send_telemetry({"event": "recordingStopped", **result})
+        return result
 
     async def set_stream_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -101,6 +118,8 @@ class CameraBridge:
         await self.iot.report_properties({"configurationStatus": status})
 
     async def run(self) -> None:
+        if self.settings.api_enabled:
+            _start_api_server(self, self.settings.api_host, self.settings.api_port)
         if self.iot.configured:
             await self.iot.connect()
             await self.iot.report_properties(
@@ -143,6 +162,32 @@ class CameraBridge:
             await self.iot.disconnect()
 
 
+def _start_api_server(
+    bridge: "CameraBridge", host: str, port: int
+) -> threading.Thread:
+    try:
+        import uvicorn
+
+        from .api import create_app
+
+        api_app = create_app(bridge)
+        config = uvicorn.Config(api_app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, name="api-server", daemon=True)
+        thread.start()
+        LOGGER.info(
+            "Management API listening",
+            extra={"event": "api_started", "port": port},
+        )
+        return thread
+    except ImportError:
+        LOGGER.warning(
+            "uvicorn not installed; management API disabled",
+            extra={"event": "api_disabled"},
+        )
+        return threading.Thread()  # no-op placeholder
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="USB/UVC camera Azure IoT bridge")
     parser.add_argument(
@@ -156,7 +201,7 @@ def main() -> int:
     settings = Settings.from_env()
     configure_logging(settings.log_level)
     discovery = CameraDiscovery()
-    devices = discovery.discover(settings.camera_device_path)
+    devices = discovery.discover(settings.effective_camera_source)
     if not devices:
         LOGGER.error(
             "No compatible UVC/OpenCV video interface was found; no vendor controls were modified",

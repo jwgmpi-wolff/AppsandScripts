@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,10 @@ class CameraCapture:
         self.device_path = device_path
         self._capture: cv2.VideoCapture | None = None
         self._lock = threading.RLock()
+        self._writer: cv2.VideoWriter | None = None
+        self._recording_path: Path | None = None
+        self._recording_stop = threading.Event()
+        self._recording_thread: threading.Thread | None = None
 
     def open(self) -> None:
         with self._lock:
@@ -41,6 +46,7 @@ class CameraCapture:
             self._capture = capture
 
     def close(self) -> None:
+        self.stop_recording()
         with self._lock:
             if self._capture:
                 self._capture.release()
@@ -83,6 +89,60 @@ class CameraCapture:
                     f"Requested profile is unsupported; device selected {actual}"
                 )
             return actual
+
+    def start_recording(self, directory: Path, prefix: str = "recording") -> Path:
+        with self._lock:
+            if self._writer is not None:
+                raise CameraCaptureError("Recording already in progress")
+            self.open()
+            assert self._capture is not None
+            width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = float(self._capture.get(cv2.CAP_PROP_FPS)) or 15.0
+            directory.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(UTC)
+            path = directory / f"{prefix}-{timestamp.strftime('%Y%m%dT%H%M%S%fZ')}.avi"
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            writer = cv2.VideoWriter(str(path), fourcc, fps, (width, height))
+            if not writer.isOpened():
+                raise CameraCaptureError(f"Failed to open video writer at {path}")
+            self._writer = writer
+            self._recording_path = path
+            self._recording_stop.clear()
+        self._recording_thread = threading.Thread(
+            target=self._recording_loop, name="recorder", daemon=True
+        )
+        self._recording_thread.start()
+        return path
+
+    def stop_recording(self) -> Path | None:
+        self._recording_stop.set()
+        if self._recording_thread:
+            self._recording_thread.join(timeout=5)
+            self._recording_thread = None
+        with self._lock:
+            if self._writer is None:
+                return None
+            self._writer.release()
+            path = self._recording_path
+            self._writer = None
+            self._recording_path = None
+            return path
+
+    @property
+    def recording(self) -> bool:
+        return self._writer is not None
+
+    def _recording_loop(self) -> None:
+        while not self._recording_stop.is_set():
+            with self._lock:
+                if self._writer is None:
+                    break
+                if self._capture and self._capture.isOpened():
+                    success, frame = self._capture.read()
+                    if success and frame is not None:
+                        self._writer.write(frame)
+            time.sleep(0.001)
 
     def __enter__(self) -> "CameraCapture":
         self.open()
