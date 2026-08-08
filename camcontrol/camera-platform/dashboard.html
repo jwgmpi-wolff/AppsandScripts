@@ -128,8 +128,33 @@
       <div id="device-info" class="device-info">–</div>
     </div>
 
-    <!-- Discovery results -->
-    <div class="section">
+    <!-- WiFi Camera Setup -->
+    <div class="section" style="background:#0f172a;border:1px solid #1e3a5f">
+      <h3 style="color:#60a5fa">📡 YI WiFi Camera Setup</h3>
+      <div style="font-size:.75rem;color:#94a3b8;margin-bottom:10px">
+        Find camera IP in your router DHCP table or YI app.
+        Enter credentials YOU configured on the device.
+      </div>
+      <label style="font-size:.75rem;color:#94a3b8">Camera IP</label>
+      <input id="cam-ip" type="text" placeholder="10.0.0.x" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;width:100%;font-size:.85rem;font-family:monospace;margin:4px 0 8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div>
+          <label style="font-size:.75rem;color:#94a3b8">Username (optional)</label>
+          <input id="cam-user" type="text" placeholder="leave blank if none" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 8px;border-radius:6px;width:100%;font-size:.8rem">
+        </div>
+        <div>
+          <label style="font-size:.75rem;color:#94a3b8">Password (optional)</label>
+          <input id="cam-pass" type="password" placeholder="leave blank if none" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 8px;border-radius:6px;width:100%;font-size:.8rem">
+        </div>
+      </div>
+      <div style="font-size:.75rem;color:#94a3b8;margin-bottom:4px">RTSP path (try each):</div>
+      <div id="probe-results" style="font-size:.75rem;font-family:monospace;margin-bottom:8px"></div>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="probeCamera()" id="probe-btn">🔍 Probe Camera</button>
+        <button class="btn-success" onclick="setActiveCamera()" id="set-cam-btn" disabled>✓ Use This URL</button>
+      </div>
+      <div id="active-rtsp" style="font-size:.72rem;color:#a3e635;margin-top:6px;font-family:monospace;word-break:break-all"></div>
+    </div>
       <h3>Network Scan (last run)</h3>
       <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">From detect-yhs3017.ps1 — 2026-08-08</div>
       <table class="discovery-table">
@@ -265,6 +290,63 @@ function toast(msg, err=false) {
   el.style.opacity = '1';
   clearTimeout(toast._t);
   toast._t = setTimeout(()=> el.style.opacity='0', 3500);
+}
+
+// YI camera common RTSP paths
+const YI_PATHS = ['/ch0_0.264', '/ch0_1.264', '/ch0_0.h264', '/live', '/stream1'];
+let confirmedRtspUrl = null;
+
+async function probeCamera() {
+  const ip = document.getElementById('cam-ip').value.trim();
+  if (!ip) { toast('Enter camera IP first', true); return; }
+  const user = document.getElementById('cam-user').value.trim();
+  const pass = document.getElementById('cam-pass').value.trim();
+  const btn = document.getElementById('probe-btn');
+  btn.disabled = true;
+  btn.textContent = 'Probing…';
+  const el = document.getElementById('probe-results');
+  el.innerHTML = '';
+  confirmedRtspUrl = null;
+  document.getElementById('set-cam-btn').disabled = true;
+
+  for (const path of YI_PATHS) {
+    const auth = (user && pass) ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
+    const url = `rtsp://${auth}${ip}:554${path}`;
+    const safeUrl = `rtsp://${user ? user+':**@' : ''}${ip}:554${path}`;
+    el.innerHTML += `<div style="color:#64748b">Testing ${safeUrl}…</div>`;
+    try {
+      const r = await fetch(`${gw()}/api/camera/rtsp-probe?ip=${encodeURIComponent(ip)}&path=${encodeURIComponent(path)}`, {signal: AbortSignal.timeout(6000)});
+      const d = await r.json();
+      if (d.reachable) {
+        el.innerHTML += `<div style="color:#a3e635">\u2713 REACHABLE: ${safeUrl}</div>`;
+        confirmedRtspUrl = url;
+        document.getElementById('set-cam-btn').disabled = false;
+        break;
+      } else {
+        el.innerHTML += `<div style="color:#ef4444">\u2717 ${safeUrl}</div>`;
+      }
+    } catch { el.innerHTML += `<div style="color:#ef4444">\u2717 ${safeUrl} (timeout)</div>`; }
+  }
+
+  if (!confirmedRtspUrl) {
+    el.innerHTML += `<div style="color:#f59e0b;margin-top:4px">No stream found. Confirm camera IP in router and check if RTSP is enabled in YI app settings.</div>`;
+  }
+  btn.disabled = false;
+  btn.textContent = '\ud83d\udd0d Probe Camera';
+}
+
+async function setActiveCamera() {
+  if (!confirmedRtspUrl) return;
+  const r = await fetch(`${gw()}/api/camera/rtsp-url`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url: confirmedRtspUrl})
+  });
+  const d = await r.json();
+  document.getElementById('active-rtsp').textContent = 'Active: ' + (d.rtspUrl || confirmedRtspUrl).replace(/:([^@]+)@/, ':***@');
+  toast('Camera URL applied \u2014 Live View will now poll from this stream');
+  confirmedRtspUrl = null;
+  document.getElementById('set-cam-btn').disabled = true;
 }
 
 // Boot

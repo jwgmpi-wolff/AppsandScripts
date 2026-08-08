@@ -38,7 +38,7 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         CORSMiddleware,
         # TODO: restrict allow_origins to known UI origins before public deployment
         allow_origins=["*"],
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["*"],
     )
 
@@ -48,7 +48,36 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             "status": "ok",
             "streaming": _bridge.stream.running if _bridge else False,
             "recording": _bridge.capture.recording if _bridge else False,
+            "rtspUrl": _bridge.settings.effective_camera_source if _bridge else None,
         }
+
+    @app.put("/api/camera/rtsp-url", dependencies=[Depends(_require_key)])
+    async def set_rtsp_url(body: dict[str, Any]) -> dict[str, Any]:
+        """Hot-swap the RTSP URL without restarting the process."""
+        if not _bridge:
+            raise HTTPException(503, "Bridge not initialised")
+        url = body.get("url", "").strip()
+        if not url.startswith(("rtsp://", "rtsps://", "0", "/dev/")):
+            raise HTTPException(400, "url must be an RTSP URL or device path")
+        _bridge.capture.close()
+        _bridge.capture.device_path = url
+        _bridge.stream.device_path = url
+        import os
+        os.environ["RTSP_URL"] = url
+        return {"rtspUrl": url, "status": "applied"}
+
+    @app.get("/api/camera/rtsp-probe")
+    async def rtsp_probe(ip: str, port: int = 554, path: str = "/ch0_0.264") -> dict[str, Any]:
+        """Quick reachability check for an RTSP URL — no auth bypass, no brute-force."""
+        import asyncio
+        url = f"rtsp://{ip}:{port}{path}"
+        try:
+            cap = await asyncio.to_thread(cv2.VideoCapture, url, cv2.CAP_ANY)
+            opened = cap.isOpened()
+            cap.release()
+            return {"url": url, "reachable": opened}
+        except Exception as exc:
+            return {"url": url, "reachable": False, "error": str(exc)}
 
     @app.get("/api/device", dependencies=[Depends(_require_key)])
     async def device_info() -> dict[str, Any]:
