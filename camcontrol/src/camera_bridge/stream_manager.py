@@ -17,6 +17,10 @@ LOGGER = logging.getLogger(__name__)
 _HLS_ROOT = Path(__file__).parent.parent.parent / "streams" / "hls"
 _HLS_ROOT.mkdir(parents=True, exist_ok=True)
 
+# go2rtc RTSP proxy — converts Kalay P2P to RTSP for ffmpeg ingestion
+_GO2RTC_RTSP_BASE = "rtsp://localhost:8554"
+_GO2RTC_API = "http://localhost:1984"
+
 _procs: dict[str, subprocess.Popen] = {}   # device_id → ffmpeg proc
 _lock = threading.Lock()
 _FFMPEG = shutil.which("ffmpeg")

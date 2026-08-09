@@ -99,18 +99,6 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             raise HTTPException(503, "Bridge not initialised")
         return _bridge.device.to_dict()
 
-    @app.post("/api/stream/start", dependencies=[Depends(_require_key)])
-    async def start_stream() -> dict[str, Any]:
-        if not _bridge:
-            raise HTTPException(503)
-        return await _bridge.start_stream({})
-
-    @app.post("/api/stream/stop", dependencies=[Depends(_require_key)])
-    async def stop_stream() -> dict[str, Any]:
-        if not _bridge:
-            raise HTTPException(503)
-        return await _bridge.stop_stream({})
-
     @app.post("/api/snapshot", dependencies=[Depends(_require_key)])
     async def snapshot() -> dict[str, Any]:
         if not _bridge:
@@ -475,17 +463,23 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
     @app.post("/api/stream/start")
     async def stream_start(body: dict[str, Any]) -> dict[str, Any]:
         from .yi_cloud import get_stream_url, status as yi_status
+        from . import stream_manager
         device_id = body.get("device_id", "")
         source_url = body.get("source_url", "")
         if not device_id:
             raise HTTPException(400, "device_id required")
         if not source_url:
-            if not yi_status().get("authenticated"):
-                raise HTTPException(401, "Not logged in and no source_url provided")
-            result = await asyncio.to_thread(get_stream_url, device_id)
-            source_url = result.get("url", "")
+            # Check if go2rtc has this camera as a named stream (Kalay -> RTSP)
+            cam = cam_registry.get_camera(device_id)
+            if cam and cam.get("kalay_did"):
+                # Stream name: use the camera name slug or device_id slug
+                slug = (cam.get("name") or device_id).lower().replace(" ", "_").replace("-", "_")
+                source_url = f"{stream_manager._GO2RTC_RTSP_BASE}/{slug}"
+            elif yi_status().get("authenticated"):
+                result = await asyncio.to_thread(get_stream_url, device_id)
+                source_url = result.get("url", "")
             if not source_url:
-                return {"ok": False, "error": "Could not get stream URL", "raw": result}
+                raise HTTPException(503, "No source_url and go2rtc/cloud auth not available")
         try:
             info = await asyncio.to_thread(stream_manager.start, device_id, source_url)
         except RuntimeError as exc:

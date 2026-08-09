@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CamControl — YI YHS.3017</title>
+<title>CamControl — Live Cameras</title>
 <!-- QR code generator: no server required, pure JS -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
@@ -48,7 +49,24 @@
   .tag{display:inline-block;font-size:.65rem;padding:1px 5px;border-radius:3px;margin-left:4px}
   .tag-on{background:#16a34a;color:#fff}
   .tag-off{background:#334155;color:#94a3b8}
-  @media(max-width:700px){main{grid-template-columns:1fr;grid-template-rows:50vh auto}}
+  @media(max-width:700px){main{grid-template-columns:1fr;grid-template-rows:auto auto}}
+  /* Multi-camera grid */
+  #cam-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;padding:8px;overflow-y:auto;background:#000;align-content:start}
+  .cam-tile{position:relative;background:#111;border-radius:6px;overflow:hidden;aspect-ratio:16/9;border:1px solid #1e293b}
+  .cam-tile.active{border-color:#22c55e}
+  .cam-tile.error{border-color:#ef4444}
+  .cam-tile video{width:100%;height:100%;object-fit:cover;display:block}
+  .cam-label{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.8));color:#fff;font-size:.7rem;font-weight:600;padding:16px 6px 4px;}
+  .cam-status{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:#334155}
+  .cam-status.live{background:#22c55e;box-shadow:0 0 6px #22c55e}
+  .cam-status.error{background:#ef4444}
+  .cam-status.loading{background:#f59e0b;animation:blink 1s infinite}
+  .cam-no-signal{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#334155;font-size:.8rem;gap:8px}
+  .cam-no-signal svg{opacity:.4}
+  #grid-toolbar{background:#0f172a;border-bottom:1px solid #1e293b;padding:6px 12px;display:flex;align-items:center;gap:8px;font-size:.78rem}
+  .grid-btn{background:#1e293b;border:none;color:#94a3b8;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:.75rem}
+  .grid-btn:hover{background:#334155;color:#e2e8f0}
+  .grid-btn.active-btn{background:#22c55e;color:#0f172a;font-weight:700}
 </style>
 </head>
 <body>
@@ -62,15 +80,23 @@
 </header>
 
 <main>
-  <!-- Live feed -->
-  <div id="live-panel">
-    <div id="no-stream">
-      <h2>No live frame yet</h2>
-      <p>Enter camera RTSP URL in Settings then click Start Stream</p>
+  <!-- Multi-camera live grid -->
+  <div style="display:flex;flex-direction:column;overflow:hidden">
+    <div id="grid-toolbar">
+      <span style="color:#60a5fa;font-weight:700">📹 Live Feeds</span>
+      <button class="grid-btn" onclick="startAllStreams()" title="Start all cameras">▶ Start All</button>
+      <button class="grid-btn" onclick="stopAllStreams()" title="Stop all cameras">⏹ Stop All</button>
+      <button class="grid-btn" onclick="refreshGrid()" title="Refresh grid">↺ Refresh</button>
+      <span id="live-count" style="color:#64748b;margin-left:auto">0 live</span>
     </div>
-    <img id="live-img" style="display:none" alt="Live feed">
-    <div id="fps-label" style="display:none">– fps</div>
-    <div id="rec-badge">● REC</div>
+    <div id="cam-grid">
+      <div class="cam-tile" id="cam-placeholder">
+        <div class="cam-no-signal">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.89L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+          <span>Click Start All to begin streaming</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Controls sidebar -->
@@ -469,6 +495,140 @@ async function probeOnvif() {
   btn.disabled = false; btn.textContent = '📡 ONVIF';
 }
 
+// ── Multi-camera live grid ──────────────────────────────────────────────────
+
+const _hlsPlayers = {};  // device_id → Hls instance
+
+function _makeTile(cam) {
+  const did = cam.device_id;
+  const name = cam.name || did;
+  const tile = document.createElement('div');
+  tile.className = 'cam-tile';
+  tile.id = `tile-${did}`;
+  tile.innerHTML = `
+    <div class="cam-no-signal" id="nosig-${did}">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.89L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+      <span id="nosig-msg-${did}">Idle — click ▶ Start</span>
+    </div>
+    <video id="vid-${did}" style="display:none" muted playsinline autoplay></video>
+    <div class="cam-label">${name}<span style="font-size:.6rem;opacity:.6;margin-left:6px">${did.slice(0,14)}</span></div>
+    <div class="cam-status" id="dot-${did}"></div>`;
+  return tile;
+}
+
+async function refreshGrid() {
+  try {
+    const r = await fetch(gw() + '/api/cameras');
+    const { cameras } = await r.json();
+    const grid = document.getElementById('cam-grid');
+    const placeholder = document.getElementById('cam-placeholder');
+    if (cameras.length) placeholder.style.display = 'none';
+
+    cameras.forEach(cam => {
+      const did = cam.device_id;
+      if (!document.getElementById(`tile-${did}`)) {
+        grid.appendChild(_makeTile(cam));
+      }
+      // Update stream status
+      const alive = cam.stream && cam.stream.alive;
+      const hlsReady = cam.stream && cam.stream.hls_ready;
+      const tile = document.getElementById(`tile-${did}`);
+      const dot = document.getElementById(`dot-${did}`);
+      if (tile) tile.className = `cam-tile${alive ? ' active' : ''}`;
+      if (dot) dot.className = `cam-status ${alive ? 'live' : ''}`;
+      if (alive && hlsReady && !_hlsPlayers[did]) {
+        _attachHls(did, cam.stream.hls_url);
+      }
+    });
+    const liveCount = cameras.filter(c => c.stream && c.stream.alive).length;
+    document.getElementById('live-count').textContent = `${liveCount} live`;
+  } catch(e) { console.error('refreshGrid', e); }
+}
+
+function _attachHls(did, hlsUrl) {
+  const vid = document.getElementById(`vid-${did}`);
+  const nosig = document.getElementById(`nosig-${did}`);
+  if (!vid) return;
+  if (Hls.isSupported()) {
+    const hls = new Hls({ lowLatencyMode: true });
+    hls.loadSource(hlsUrl);
+    hls.attachMedia(vid);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { vid.play(); vid.style.display='block'; nosig.style.display='none'; });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (d.fatal) { document.getElementById(`dot-${did}`).className='cam-status error'; }
+    });
+    _hlsPlayers[did] = hls;
+  } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    vid.src = hlsUrl; vid.play(); vid.style.display='block'; nosig.style.display='none';
+  }
+}
+
+function _detachHls(did) {
+  const hls = _hlsPlayers[did];
+  if (hls) { hls.destroy(); delete _hlsPlayers[did]; }
+  const vid = document.getElementById(`vid-${did}`);
+  const nosig = document.getElementById(`nosig-${did}`);
+  if (vid) { vid.pause(); vid.src = ''; vid.style.display = 'none'; }
+  if (nosig) { nosig.style.display = 'flex'; document.getElementById(`nosig-msg-${did}`).textContent = 'Stopped'; }
+  const dot = document.getElementById(`dot-${did}`);
+  if (dot) dot.className = 'cam-status';
+  const tile = document.getElementById(`tile-${did}`);
+  if (tile) tile.className = 'cam-tile';
+}
+
+async function startOneStream(did) {
+  const dot = document.getElementById(`dot-${did}`);
+  const msg = document.getElementById(`nosig-msg-${did}`);
+  if (dot) dot.className = 'cam-status loading';
+  if (msg) msg.textContent = 'Starting…';
+  try {
+    const r = await fetch(gw() + '/api/stream/start', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_id: did})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast(`Stream started: ${did.slice(0,14)}`);
+      // Poll until HLS ready
+      let tries = 0;
+      const poll = setInterval(async () => {
+        tries++;
+        const st = await (await fetch(gw() + '/api/stream/status')).json();
+        const info = st.active_streams && st.active_streams[did];
+        if (info && info.hls_ready) { clearInterval(poll); _attachHls(did, info.hls_url); }
+        if (tries > 15) { clearInterval(poll); if (msg) msg.textContent = 'HLS timeout'; }
+      }, 2000);
+    } else { if (msg) msg.textContent = d.error || 'Failed'; if (dot) dot.className='cam-status error'; toast('Start failed: ' + (d.error||'?'), true); }
+  } catch(e) { if (msg) msg.textContent = 'Error'; toast(e.message, true); }
+}
+
+async function stopOneStream(did) {
+  _detachHls(did);
+  await fetch(gw() + '/api/stream/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({device_id: did}) });
+}
+
+// Grid toolbar wrappers
+async function startAllStreams() {
+  toast('Starting all streams…');
+  try {
+    const r = await fetch(gw() + '/api/stream/start-all', {method:'POST'});
+    const d = await r.json();
+    toast(`Started ${d.started} stream(s)`);
+    setTimeout(refreshGrid, 3000);
+    setTimeout(refreshGrid, 8000);
+  } catch(e) { toast(e.message, true); }
+}
+
+async function stopAllStreams() {
+  Object.keys(_hlsPlayers).forEach(did => _detachHls(did));
+  await fetch(gw() + '/api/stream/stop-all', {method:'POST'});
+  toast('All streams stopped');
+  setTimeout(refreshGrid, 1000);
+}
+
+// Auto-refresh grid every 5s
+setInterval(refreshGrid, 5000);
+
 let _qrRegistration = null;
 let _cloudDeviceId = null;
 
@@ -790,6 +950,7 @@ async function setActiveCamera() {
 setInterval(pollHealth, 3000);
 pollHealth();
 pollFrame();
+refreshGrid();
 </script>
 </body>
 </html>
