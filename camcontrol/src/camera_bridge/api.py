@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import shutil
+import subprocess
+import threading
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import cv2
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 if TYPE_CHECKING:
     from .main import CameraBridge
@@ -382,6 +390,120 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             registration["rtspApplied"] = candidate
 
         return registration
+
+    # ── Stream rebroadcast + multi-camera registry ────────────────────────────
+
+    from . import stream_manager, registry as cam_registry
+
+    _streams_root = Path(__file__).parent.parent.parent / "streams"
+    _streams_root.mkdir(parents=True, exist_ok=True)
+    app.mount("/streams", StaticFiles(directory=str(_streams_root)), name="streams")
+
+    @app.get("/api/cameras")
+    async def list_cameras() -> dict[str, Any]:
+        cams = cam_registry.list_cameras()
+        st = stream_manager.status()
+        for c in cams:
+            c["stream"] = st.get(c.get("device_id", ""), {"alive": False, "hls_ready": False})
+        return {"cameras": cams, "count": len(cams)}
+
+    @app.post("/api/cameras/import")
+    async def import_cameras() -> dict[str, Any]:
+        """Pull all cameras from YI cloud and save to local registry."""
+        from .yi_cloud import get_devices, status as yi_status
+        if not yi_status().get("authenticated"):
+            raise HTTPException(401, "Not logged in — call POST /api/cloud/login first")
+        devices = await asyncio.to_thread(get_devices)
+        imported = cam_registry.import_from_yi_devices(devices)
+        return {"imported": len(imported), "cameras": imported}
+
+    @app.post("/api/cameras/add")
+    async def add_camera(body: dict[str, Any]) -> dict[str, Any]:
+        did = body.get("device_id", "").strip()
+        if not did:
+            raise HTTPException(400, "device_id required")
+        record = cam_registry.upsert_camera(did, {k: v for k, v in body.items() if k != "device_id"})
+        return {"ok": True, "camera": record}
+
+    @app.delete("/api/cameras/{device_id}")
+    async def delete_camera(device_id: str) -> dict[str, Any]:
+        stream_manager.stop(device_id)
+        removed = cam_registry.remove_camera(device_id)
+        return {"ok": removed, "device_id": device_id}
+
+    @app.post("/api/stream/start")
+    async def stream_start(body: dict[str, Any]) -> dict[str, Any]:
+        from .yi_cloud import get_stream_url, status as yi_status
+        device_id = body.get("device_id", "")
+        source_url = body.get("source_url", "")
+        if not device_id:
+            raise HTTPException(400, "device_id required")
+        if not source_url:
+            if not yi_status().get("authenticated"):
+                raise HTTPException(401, "Not logged in and no source_url provided")
+            result = await asyncio.to_thread(get_stream_url, device_id)
+            source_url = result.get("url", "")
+            if not source_url:
+                return {"ok": False, "error": "Could not get stream URL", "raw": result}
+        try:
+            info = await asyncio.to_thread(stream_manager.start, device_id, source_url)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        cam_registry.upsert_camera(device_id, {"last_source_url": source_url})
+        return {"ok": True, **info}
+
+    @app.post("/api/stream/start-all")
+    async def stream_start_all() -> dict[str, Any]:
+        """Start HLS for every registered camera."""
+        from .yi_cloud import get_stream_url, status as yi_status
+        cams = cam_registry.list_cameras()
+        results = []
+        for cam in cams:
+            did = cam.get("device_id", "")
+            source_url = cam.get("last_source_url", "")
+            if not source_url and yi_status().get("authenticated"):
+                r = await asyncio.to_thread(get_stream_url, did)
+                source_url = r.get("url", "")
+                if source_url:
+                    cam_registry.upsert_camera(did, {"last_source_url": source_url})
+            if source_url:
+                try:
+                    info = await asyncio.to_thread(stream_manager.start, did, source_url)
+                    results.append({"device_id": did, "ok": True, **info})
+                except Exception as exc:
+                    results.append({"device_id": did, "ok": False, "error": str(exc)})
+            else:
+                results.append({"device_id": did, "ok": False, "error": "no source URL"})
+        return {"started": sum(1 for r in results if r["ok"]), "results": results}
+
+    @app.post("/api/stream/stop")
+    async def stream_stop(body: dict[str, Any]) -> dict[str, Any]:
+        device_id = body.get("device_id", "")
+        ok = await asyncio.to_thread(stream_manager.stop, device_id)
+        return {"ok": ok, "stopped": device_id}
+
+    @app.post("/api/stream/stop-all")
+    async def stream_stop_all() -> dict[str, Any]:
+        stopped = await asyncio.to_thread(stream_manager.stop_all)
+        return {"stopped": stopped}
+
+    @app.get("/api/stream/status")
+    async def stream_status() -> dict[str, Any]:
+        st = stream_manager.status()
+        return {"active_streams": st, "count": len(st)}
+
+    @app.post("/api/stream/push-cdn")
+    async def stream_push_cdn(body: dict[str, Any]) -> dict[str, Any]:
+        """Push camera HLS to RTMP (Azure / Nginx / YouTube)."""
+        device_id = body.get("device_id", "")
+        rtmp_url = body.get("rtmp_url", "")
+        if not device_id or not rtmp_url:
+            raise HTTPException(400, "device_id and rtmp_url required")
+        try:
+            info = await asyncio.to_thread(stream_manager.push_to_rtmp, device_id, rtmp_url)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        return {"ok": True, **info}
 
     @app.post("/api/recording/start", dependencies=[Depends(_require_key)])
     async def start_recording() -> dict[str, Any]:

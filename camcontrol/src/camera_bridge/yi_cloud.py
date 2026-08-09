@@ -17,8 +17,9 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import subprocess
 import time
-import warnings
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
@@ -33,58 +34,56 @@ APP_ID = "com.yi.android"
 _session: dict[str, Any] = {}
 
 
-# ── Low-level HTTP helper (uses requests with SSL quirk handling) ─────────────
+# ── Low-level HTTP helper ─────────────────────────────────────────────────────
+# Python's ssl stack sends SNI which YI's AWS Global Accelerator rejects.
+# curl uses a different TLS stack and handles it correctly.
 
-def _get_session():
-    """Return a requests.Session configured to handle YI's TLS quirks."""
+_CURL = shutil.which("curl")
+
+_BASE_HEADERS = [
+    "Content-Type: application/json",
+    "Accept: application/json",
+    "User-Agent: YIHome/5.3 (Android; SDK 30)",
+]
+
+
+def _curl_request(method: str, url: str, body: dict | None = None,
+                  token: str | None = None) -> dict:
+    """HTTP via curl subprocess — bypasses Python TLS SNI issue entirely."""
+    if not _CURL:
+        return {"error": "curl not found on PATH"}
+    cmd = [_CURL, "-sk", "-X", method, "--max-time", "20"]
+    for h in _BASE_HEADERS:
+        cmd += ["-H", h]
+    if token:
+        cmd += ["-H", f"Authorization: Bearer {token}"]
+    if body:
+        cmd += ["-d", json.dumps(body, separators=(",", ":"))]
+    cmd.append(url)
     try:
-        import requests
-        from requests.adapters import HTTPAdapter
-        import urllib3
-        urllib3.disable_warnings()
-        s = requests.Session()
-        s.verify = False          # YI servers have SNI issues with standard TLS
-        s.headers.update({
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "YIHome/5.3 (Android; SDK 30)",
-        })
-        return s
-    except ImportError:
-        return None
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        raw = result.stdout.strip()
+        if not raw:
+            err = result.stderr.strip()[:300]
+            LOGGER.error("curl empty response: %s", err)
+            return {"error": f"curl: {err}"}
+        parsed = json.loads(raw)
+        # Normalise: treat non-zero YI error codes as errors
+        code = parsed.get("code", parsed.get("status", 0))
+        if code not in (0, 200, None, ""):
+            return {"error": code, "message": parsed.get("msg", parsed.get("message", raw[:200]))}
+        return parsed
+    except json.JSONDecodeError:
+        LOGGER.error("curl non-JSON: %s", result.stdout[:300])
+        return {"error": "non-json", "raw": result.stdout[:300]}
+    except Exception as exc:
+        LOGGER.error("curl request failed: %s", exc)
+        return {"error": str(exc)}
 
 
 def _request(method: str, path: str, body: dict | None = None,
              token: str | None = None, base_url: str = _ENDPOINTS[0]) -> dict:
-    sess = _get_session()
-    url = f"{base_url}{path}"
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        if sess:
-            fn = sess.post if method == "POST" else sess.get
-            r = fn(url, json=body, headers=headers, timeout=15)
-            if r.ok:
-                return r.json()
-            LOGGER.error("YI API %s %s → %d: %s", method, path, r.status_code, r.text[:500])
-            return {"error": r.status_code, "message": r.text[:300]}
-        # Fallback: urllib with SSL context
-        import urllib.request, ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        data = json.dumps(body).encode() if body else None
-        hdr = {"Content-Type": "application/json", "Accept": "application/json",
-               "User-Agent": "YIHome/5.3"}
-        if token:
-            hdr["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, data=data, headers=hdr, method=method)
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
-            return json.loads(r.read())
-    except Exception as exc:
-        LOGGER.error("YI API request failed: %s", exc)
-        return {"error": str(exc)}
+    return _curl_request(method, f"{base_url}{path}", body=body, token=token)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
