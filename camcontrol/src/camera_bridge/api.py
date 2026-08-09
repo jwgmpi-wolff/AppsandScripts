@@ -359,6 +359,43 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         result["ip"] = ip
         return result
 
+    @app.get("/api/camera/qr-bindkey")
+    async def qr_get_bindkey() -> dict[str, Any]:
+        """Get a fresh binding key from YI cloud for QR camera pairing."""
+        from .yi_cloud import _session, _curl_request, _base
+        uid = _session.get("user_id", "")
+        hmac_val = _session.get("hmac", "")
+        if not uid:
+            raise HTTPException(401, "Not logged in — inject session first")
+        import time, urllib.parse
+        ts = str(int(time.time() * 1000))
+        # Exact URL pattern from live capture: hmac + userid + seq + timestamp
+        hmac_enc = urllib.parse.quote(hmac_val, safe="") if hmac_val else ""
+        url = (f"{_base()}/v2/qrcode/get_bindkey"
+               f"?hmac={hmac_enc}&userid={uid}&seq=1&timestamp={ts}")
+        resp = _curl_request("GET", url)
+        if resp.get("code") == "20000":
+            return {"ok": True, "bindkey": resp["data"]["bindkey"]}
+        raise HTTPException(502, f"YI API error: {resp}")
+
+    @app.get("/api/camera/qr-check")
+    async def qr_check_bindkey(bindkey: str) -> dict[str, Any]:
+        """Poll YI cloud to check if camera scanned the QR (ret=1 = success)."""
+        from .yi_cloud import _session, _curl_request, _base
+        uid = _session.get("user_id", "")
+        hmac_val = _session.get("hmac", "")
+        import time, urllib.parse
+        ts = str(int(time.time() * 1000))
+        hmac_enc = urllib.parse.quote(hmac_val, safe="") if hmac_val else ""
+        url = (f"{_base()}/v2/qrcode/check_bindkey"
+               f"?hmac={hmac_enc}&seq=1&bindkey={bindkey}&timestamp={ts}&userid={uid}")
+        resp = _curl_request("GET", url)
+        if resp.get("code") == "20000":
+            data = resp.get("data", {})
+            return {"ok": True, "scanned": data.get("ret", 0) == 1,
+                    "uid": data.get("uid", ""), "raw": data}
+        return {"ok": False, "error": resp}
+
     @app.post("/api/camera/register-qr")
     async def register_qr(body: dict[str, Any]) -> dict[str, Any]:
         """Parse a YI camera QR string and locate the camera on the local subnet."""

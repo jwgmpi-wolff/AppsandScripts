@@ -223,6 +223,7 @@
       <label style="font-size:.72rem;color:#64748b;margin-bottom:6px;display:block">Binding token (leave blank = WiFi-only, no cloud)</label>
       <input id="qr-bind-token" type="text" placeholder="e.g. US5mBBkW4IYN2fol (from YI app capture)" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.75rem;font-family:monospace;margin-bottom:8px">
       <button class="btn-primary" onclick="generateWifiQR()" style="width:100%;margin-bottom:8px">🔲 Generate Camera WiFi QR</button>
+      <div id="wifi-qr-status" style="font-size:.7rem;color:#64748b;margin-bottom:4px;display:none"></div>
       <div id="wifi-qr-box" style="display:none;text-align:center;background:#fff;padding:12px;border-radius:8px;margin-bottom:6px">
         <div id="wifi-qr-canvas"></div>
         <div style="font-size:.65rem;color:#374151;margin-top:6px;word-break:break-all" id="wifi-qr-caption"></div>
@@ -819,36 +820,72 @@ async function cloudActivateStream() {
   btn.disabled = false; btn.textContent = 'Start Cloud Stream';
 }
 
-function generateWifiQR() {
+async function generateWifiQR() {
   const ssid = document.getElementById('qr-ssid').value.trim();
   const pass = document.getElementById('qr-wifi-pass').value;
-  const bindToken = document.getElementById('qr-bind-token').value.trim();
+  const manualToken = document.getElementById('qr-bind-token').value.trim();
   if (!ssid || !pass) { toast('Enter SSID and password first', true); return; }
 
-  // Correct YI camera WiFi QR format (confirmed from live capture 2026-08-08):
-  // b=<binding_token>&s=<btoa(ssid)>&p=<btoa(pass)>
-  // b is optional: omit or leave blank for WiFi-only (no cloud binding)
+  const statusEl = document.getElementById('wifi-qr-status');
+  statusEl.style.display = 'block';
+  statusEl.style.color = '#f59e0b';
+  statusEl.textContent = 'Getting fresh binding token from YI cloud…';
+
+  // Get live bindkey from server (/v2/qrcode/get_bindkey)
+  let bindkey = manualToken;
+  if (!bindkey) {
+    try {
+      const r = await fetch(gw() + '/api/camera/qr-bindkey');
+      if (r.ok) {
+        const d = await r.json();
+        bindkey = d.bindkey || '';
+        statusEl.textContent = bindkey ? `Bindkey: ${bindkey} — scanning…` : 'No bindkey (not logged in — using WiFi-only format)';
+      }
+    } catch { statusEl.textContent = 'Gateway offline — using WiFi-only format'; }
+  }
+
+  // YI camera QR format confirmed working 2026-08-08:
+  // b=<bindkey>&s=<btoa(ssid)>&p=<btoa(pass)>
   const s = btoa(ssid);
   const p = btoa(pass);
   const parts = [];
-  if (bindToken) parts.push(`b=${bindToken}`);
+  if (bindkey) parts.push(`b=${bindkey}`);
   parts.push(`s=${s}`, `p=${p}`);
   const yiStr = parts.join('&');
 
   const box = document.getElementById('wifi-qr-box');
   const canvas = document.getElementById('wifi-qr-canvas');
-  const tip = document.getElementById('wifi-qr-tip');
   canvas.innerHTML = '';
   new QRCode(canvas, {
-    text: yiStr,
-    width: 256, height: 256,
+    text: yiStr, width: 280, height: 280,
     colorDark: '#000000', colorLight: '#ffffff',
     correctLevel: QRCode.CorrectLevel.M
   });
   document.getElementById('wifi-qr-caption').textContent = yiStr;
   box.style.display = 'block';
-  tip.style.display = 'block';
-  toast('QR ready — hold screen 5-10cm from camera lens');
+  document.getElementById('wifi-qr-tip').style.display = 'block';
+  toast('QR ready — hold screen 5-10 cm from camera lens');
+
+  // Poll for camera scan confirmation
+  if (bindkey) {
+    statusEl.textContent = `⏳ Waiting for camera to scan… (bindkey: ${bindkey})`;
+    let polls = 0;
+    const interval = setInterval(async () => {
+      polls++;
+      try {
+        const r = await fetch(`${gw()}/api/camera/qr-check?bindkey=${encodeURIComponent(bindkey)}`);
+        const d = await r.json();
+        if (d.scanned) {
+          clearInterval(interval);
+          statusEl.style.color = '#22c55e';
+          statusEl.textContent = `✅ Camera scanned! UID: ${d.uid}`;
+          toast(`Camera registered: ${d.uid}`);
+          setTimeout(refreshGrid, 2000);
+        }
+      } catch {}
+      if (polls > 30) { clearInterval(interval); statusEl.textContent = 'Scan timeout — regenerate if needed'; }
+    }, 5000);
+  }
 }
 
 function refreshQR() {
