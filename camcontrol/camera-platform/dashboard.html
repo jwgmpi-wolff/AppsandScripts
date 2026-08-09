@@ -432,25 +432,28 @@ function generateWifiQR() {
   const pass = document.getElementById('qr-wifi-pass').value;
   if (!ssid || !pass) { toast('Enter SSID and password first', true); return; }
 
-  // Standard WiFi QR (works with most cameras and phones)
-  const wifiStr = `WIFI:T:WPA;S:${ssid};P:${pass};;`;
+  // YI camera format: b=[token]&s=base64(ssid)&p=base64(password)
+  // The 'b' field is a cloud binding token; leaving it empty allows WiFi-only setup on some firmware.
+  const s = btoa(ssid);
+  const p = btoa(pass);
+  const yiStr = `s=${s}&p=${p}`;
 
   const box = document.getElementById('wifi-qr-box');
   const canvas = document.getElementById('wifi-qr-canvas');
   const tip = document.getElementById('wifi-qr-tip');
   canvas.innerHTML = '';
   new QRCode(canvas, {
-    text: wifiStr,
-    width: 220,
-    height: 220,
+    text: yiStr,
+    width: 240,
+    height: 240,
     colorDark: '#000000',
     colorLight: '#ffffff',
     correctLevel: QRCode.CorrectLevel.M
   });
-  document.getElementById('wifi-qr-caption').textContent = ssid + ' · hold 15cm from camera lens';
+  document.getElementById('wifi-qr-caption').textContent = 'YI format · ' + ssid + ' · hold ~10cm from lens';
   box.style.display = 'block';
   tip.style.display = 'block';
-  toast('QR ready — hold screen up to camera lens');
+  toast('YI-format QR ready — hold screen directly at camera lens');
 }
 
 function refreshQR() {
