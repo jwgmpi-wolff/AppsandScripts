@@ -50,6 +50,14 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Serve dashboard at root so it loads from the same origin as the API (no CORS issues)
+    _dashboard = Path(__file__).parent.parent.parent / "camera-platform" / "dashboard.html"
+    if _dashboard.exists():
+        from fastapi.responses import FileResponse
+        @app.get("/")
+        async def dashboard() -> FileResponse:
+            return FileResponse(str(_dashboard), media_type="text/html")
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {
