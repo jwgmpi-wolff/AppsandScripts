@@ -5,9 +5,17 @@ rtsp:
   listen: ":8554"
 
 streams:
+  # Primary: Kalay P2P (requires TUTK SDK - may not work on standard build)
+  # Fallback: direct local RTSP on camera LAN IPs (camera must have RTSP enabled)
   camera:
     - "kalay://TNPUSAI-035961-DTFMK?password=D4B6EC06203F17D4CE63A54E25A9B0F2&license=MFNBDP:"
+    - "rtsp://10.0.0.248/ch0_0.h264"
+    - "rtsp://admin:D4B6EC06203F17D4CE63A54E25A9B0F2@10.0.0.248/ch0_0.h264"
   back_door:
     - "kalay://TNPUSAI-027828-ZWBLH?password=75AD4BE191C87A1D939741D275E23BEE&license=ULGHQQ:"
+    - "rtsp://10.0.0.252/ch0_0.h264"
+    - "rtsp://admin:75AD4BE191C87A1D939741D275E23BEE@10.0.0.252/ch0_0.h264"
   kitchen:
     - "kalay://TNPUSAD-064090-JEYND?password=867CED8517CDB81E8BD032C0E434FB38&license=AQHHST:"
+    - "rtsp://10.0.0.141/ch0_0.h264"
+    - "rtsp://admin:867CED8517CDB81E8BD032C0E434FB38@10.0.0.141/ch0_0.h264"

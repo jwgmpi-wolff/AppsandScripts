@@ -323,7 +323,12 @@ let frameCount = 0;
 let fpsWindowStart = Date.now();
 let currentFps = 0;
 
-function gw() { return document.getElementById('url-input').value.replace(/\/+$/,''); }
+function gw() {
+  const el = document.getElementById('url-input');
+  // When served from gateway itself, use same origin
+  if (el && el.value && el.value !== 'http://localhost:8080') return el.value.replace(/\/+$/,'');
+  return window.location.origin.includes('localhost:8080') ? '' : (el ? el.value.replace(/\/+$/,'') : 'http://localhost:8080');
+}
 
 async function api(method, path, body) {
   try {
