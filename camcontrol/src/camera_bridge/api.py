@@ -72,9 +72,15 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         import asyncio
         url = f"rtsp://{ip}:{port}{path}"
         try:
-            cap = await asyncio.to_thread(cv2.VideoCapture, url, cv2.CAP_ANY)
-            opened = cap.isOpened()
-            cap.release()
+            def _check() -> bool:
+                cap = cv2.VideoCapture(url, cv2.CAP_ANY)
+                # 5-second open timeout instead of the 30-second default
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                opened = cap.isOpened()
+                cap.release()
+                return opened
+            opened = await asyncio.wait_for(asyncio.to_thread(_check), timeout=7.0)
             return {"url": url, "reachable": opened}
         except Exception as exc:
             return {"url": url, "reachable": False, "error": str(exc)}

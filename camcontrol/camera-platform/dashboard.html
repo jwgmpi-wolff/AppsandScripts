@@ -323,8 +323,17 @@ function targetIp(ip) {
   toast('IP set to ' + ip + ' — add credentials if needed, then click Probe Camera');
 }
 
-// YI camera common RTSP paths
-const YI_PATHS = ['/ch0_0.264', '/ch0_1.264', '/ch0_0.h264', '/live', '/stream1'];
+// YI camera RTSP candidates — try port 554 then 8000 (some YI models use 8000)
+const YI_PATHS = [
+  {port:554, path:'/ch0_0.264'},
+  {port:554, path:'/ch0_1.264'},
+  {port:554, path:'/ch0_0.h264'},
+  {port:554, path:'/live'},
+  {port:554, path:'/stream1'},
+  {port:8000, path:'/ch0_0.264'},
+  {port:8000, path:'/ch0_0.h264'},
+  {port:8000, path:'/live'},
+];
 let confirmedRtspUrl = null;
 
 function targetIp(ip) {
@@ -379,13 +388,13 @@ async function probeCamera() {
   confirmedRtspUrl = null;
   document.getElementById('set-cam-btn').disabled = true;
 
-  for (const path of YI_PATHS) {
+  for (const c of YI_PATHS) {
     const auth = (user && pass) ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
-    const url = `rtsp://${auth}${ip}:554${path}`;
-    const safeUrl = `rtsp://${user ? user+':**@' : ''}${ip}:554${path}`;
+    const url = `rtsp://${auth}${ip}:${c.port}${c.path}`;
+    const safeUrl = `rtsp://${user ? user+':**@' : ''}${ip}:${c.port}${c.path}`;
     el.innerHTML += `<div style="color:#64748b">Testing ${safeUrl}…</div>`;
     try {
-      const r = await fetch(`${gw()}/api/camera/rtsp-probe?ip=${encodeURIComponent(ip)}&path=${encodeURIComponent(path)}`, {signal: AbortSignal.timeout(6000)});
+      const r = await fetch(`${gw()}/api/camera/rtsp-probe?ip=${encodeURIComponent(ip)}&port=${c.port}&path=${encodeURIComponent(c.path)}`, {signal: AbortSignal.timeout(9000)});
       const d = await r.json();
       if (d.reachable) {
         el.innerHTML += `<div style="color:#a3e635">\u2713 REACHABLE: ${safeUrl}</div>`;
@@ -395,14 +404,18 @@ async function probeCamera() {
       } else {
         el.innerHTML += `<div style="color:#ef4444">\u2717 ${safeUrl}</div>`;
       }
-    } catch { el.innerHTML += `<div style="color:#ef4444">\u2717 ${safeUrl} (timeout)</div>`; }
+    } catch { el.innerHTML += `<div style="color:#ef4444">\u2717 ${safeUrl} (no response)</div>`; }
   }
 
   if (!confirmedRtspUrl) {
-    el.innerHTML += `<div style="color:#f59e0b;margin-top:4px">No stream found. Confirm camera IP in router and check if RTSP is enabled in YI app settings.</div>`;
+    el.innerHTML += `<div style="color:#f59e0b;margin-top:6px;line-height:1.6">
+      <b>No stream found on this IP.</b><br>
+      The YI YHS.3017 stock firmware uses a proprietary protocol.<br>
+      <b>Try in the YI app:</b> Camera Settings → Local Stream / LAN Stream → Enable<br>
+      If no such toggle exists, the camera does not expose a standard local stream.</div>`;
   }
   btn.disabled = false;
-  btn.textContent = '\ud83d\udd0d Probe Camera';
+  btn.textContent = '\ud83d\udd0d Probe RTSP';
 }
 
 async function setActiveCamera() {
