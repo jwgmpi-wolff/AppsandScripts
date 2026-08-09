@@ -22,7 +22,7 @@ payload = json.dumps(
         "camera": "10.0.0.161",
         "cameraPort": 8000,
         "model": "YI-YHS3017",
-        "rtsp": "rtsp://10.0.0.161:554/ch0_0.264",
+        "rtsp": "rtsp://10.0.0.161/ch0_0.h264",
     }
 )
 print("Payload:", payload)

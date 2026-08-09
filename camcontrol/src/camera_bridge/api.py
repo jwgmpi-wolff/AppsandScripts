@@ -67,7 +67,7 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         return {"rtspUrl": url, "status": "applied"}
 
     @app.get("/api/camera/rtsp-probe")
-    async def rtsp_probe(ip: str, port: int = 554, path: str = "/ch0_0.264") -> dict[str, Any]:
+    async def rtsp_probe(ip: str, port: int = 554, path: str = "/ch0_0.h264") -> dict[str, Any]:
         """Quick reachability check for an RTSP URL — no auth bypass, no brute-force."""
         import asyncio
         url = f"rtsp://{ip}:{port}{path}"
@@ -177,7 +177,7 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
                 "camera": camera_ip,
                 "cameraPort": 8000,
                 "model": "YI-YHS3017",
-                "rtsp": f"rtsp://{camera_ip}:{rtsp_port}/ch0_0.264",
+                "rtsp": f"rtsp://{camera_ip}/ch0_0.h264",
             },
             separators=(",", ":"),
         )
@@ -243,9 +243,9 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             "port": 8000,
             "rtspCandidates": (
                 [
-                    f"rtsp://{found_ip}:554/ch0_0.264",
-                    f"rtsp://{found_ip}:554/stream0",
-                    f"rtsp://{found_ip}:8554/live",
+                    f"rtsp://{found_ip}/ch0_0.h264",
+                    f"rtsp://{found_ip}/ch0_1.h264",
+                    f"rtsp://{found_ip}/ch0_0.h264",  # alias
                 ]
                 if found_ip
                 else []
