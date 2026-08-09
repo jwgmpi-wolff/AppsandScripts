@@ -55,6 +55,11 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
     _static = Path(__file__).parent.parent.parent / "camera-platform" / "static"
     if _static.exists():
         app.mount("/static", StaticFiles(directory=str(_static)), name="static")
+        # SW must be served from root scope for PWA install on Android
+        from fastapi.responses import FileResponse as _FR
+        @app.get("/sw.js")
+        async def service_worker() -> _FR:
+            return _FR(str(_static / "sw.js"), media_type="application/javascript")
     if _dashboard.exists():
         from fastapi.responses import FileResponse
         @app.get("/")

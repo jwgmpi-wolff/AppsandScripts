@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CameraGateway")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+58e3dddc728bfe10bc030332a14ff12acd5cf885")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c9d2d8cd0ddda34fd575a9a3b754fa819fce4aef")]
 [assembly: System.Reflection.AssemblyProductAttribute("CameraGateway")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CameraGateway")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
