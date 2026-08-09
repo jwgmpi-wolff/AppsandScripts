@@ -7,7 +7,7 @@ import time
 import urllib.request
 import json
 
-CAMERA_IP = "10.0.0.161"
+CAMERA_IP = "10.0.0.248"
 CAMERA_PORT = 8000
 GATEWAY = "http://localhost:8080"
 POLL_INTERVAL = 3  # seconds

@@ -1,7 +1,7 @@
 """Experimental probe: try multiple YI protocol magic/format variants."""
 import socket, struct, time
 
-ip = "10.0.0.161"
+ip = "10.0.0.248"
 port = 8000
 
 def try_variant(name, send_bytes=None, wait_first=0):
