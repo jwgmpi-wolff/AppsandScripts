@@ -210,8 +210,69 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         except Exception as exc:
             return Response(content=str(exc).encode(), status_code=503)
 
+    # ── YI Cloud API endpoints (no YI app required after login) ─────────────
+
+    @app.post("/api/cloud/login")
+    async def cloud_login(body: dict[str, Any]) -> dict[str, Any]:
+        """Login to YI cloud with email+password. Credentials held in memory only — never stored."""
+        from .yi_cloud import login
+        import asyncio
+        email = body.get("email", "").strip()
+        password = body.get("password", "")
+        if not email or not password:
+            raise HTTPException(400, "email and password required")
+        result = await asyncio.to_thread(login, email, password)
+        if not result.get("ok"):
+            raise HTTPException(401, result.get("error", "Login failed"))
+        return {"ok": True, "user_id": result.get("user_id")}
+
+    @app.get("/api/cloud/status")
+    async def cloud_status() -> dict[str, Any]:
+        from .yi_cloud import status
+        return status()
+
+    @app.get("/api/cloud/devices")
+    async def cloud_devices() -> dict[str, Any]:
+        import asyncio
+        from .yi_cloud import get_devices, status
+        if not status().get("authenticated"):
+            raise HTTPException(401, "Not logged in. Call POST /api/cloud/login first.")
+        devices = await asyncio.to_thread(get_devices)
+        return {"devices": devices, "count": len(devices)}
+
+    @app.get("/api/cloud/stream")
+    async def cloud_stream(device_id: str) -> dict[str, Any]:
+        """Get live stream URL for a camera via YI cloud."""
+        import asyncio
+        from .yi_cloud import get_stream_url, status
+        if not status().get("authenticated"):
+            raise HTTPException(401, "Not logged in.")
+        result = await asyncio.to_thread(get_stream_url, device_id)
+        if result.get("ok") and result.get("url"):
+            # Hot-apply RTSP URL if it's RTSP
+            url = result["url"]
+            if url.startswith(("rtsp://", "rtsps://")):
+                if _bridge:
+                    _bridge.capture.device_path = url
+                    _bridge.stream.device_path = url
+                    import os; os.environ["RTSP_URL"] = url
+                result["applied"] = True
+        return result
+
+    @app.get("/api/cloud/snapshot")
+    async def cloud_snapshot(device_id: str) -> Response:
+        """Get a JPEG snapshot from camera via YI cloud."""
+        import asyncio
+        from .yi_cloud import get_snapshot, status
+        if not status().get("authenticated"):
+            raise HTTPException(401, "Not logged in.")
+        jpg = await asyncio.to_thread(get_snapshot, device_id)
+        if jpg:
+            return Response(content=jpg, media_type="image/jpeg")
+        raise HTTPException(503, "Snapshot unavailable")
+
     @app.get("/api/camera/yi-probe")
-    async def yi_probe(ip: str = "10.0.0.161") -> dict[str, Any]:
+    async def yi_probe(ip: str = "10.0.0.248") -> dict[str, Any]:
         """Test raw connection to YI camera port 8000 and attempt token exchange."""
         import asyncio, socket, struct
         MAGIC = 0x55AA55AA

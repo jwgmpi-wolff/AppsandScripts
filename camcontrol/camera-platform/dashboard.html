@@ -130,6 +130,27 @@
       <div id="device-info" class="device-info">–</div>
     </div>
 
+    <!-- YI Cloud — no app needed -->
+    <div class="section" style="background:#0f172a;border:2px solid #7c3aed">
+      <h3 style="color:#c4b5fd">☁ YI Cloud (no app required)</h3>
+      <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">
+        Login once → gateway streams directly via cloud API. YI app not needed after this.
+      </div>
+      <div id="cloud-status-bar" style="font-size:.72rem;margin-bottom:8px;padding:4px 8px;border-radius:4px;background:#1e293b;color:#94a3b8">
+        Not logged in
+      </div>
+      <input id="cloud-email" type="email" placeholder="YI account email"
+        style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.8rem;margin-bottom:6px">
+      <input id="cloud-pass" type="password" placeholder="YI account password"
+        style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.8rem;margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <button class="btn-purple" onclick="cloudLogin()" id="cloud-login-btn">🔑 Login</button>
+        <button class="btn-neutral" onclick="cloudDevices()" id="cloud-devices-btn" disabled>📷 Get Cameras</button>
+      </div>
+      <div id="cloud-devices-list" style="font-size:.75rem;font-family:monospace;display:none;margin-bottom:8px"></div>
+      <button class="btn-success" onclick="cloudActivateStream()" id="cloud-stream-btn" style="display:none;width:100%">▶ Start Cloud Stream</button>
+    </div>
+
     <!-- WiFi QR Generator — show this QR to the camera lens to configure WiFi -->
     <div class="section" style="background:#0f172a;border:2px solid #f59e0b">
       <h3 style="color:#fbbf24">📷 Camera WiFi Setup QR</h3>
@@ -427,6 +448,74 @@ async function probeOnvif() {
 
 let _qrRegistration = null;
 
+let _cloudDeviceId = null;
+
+async function cloudLogin() {
+  const email = document.getElementById('cloud-email').value.trim();
+  const pass = document.getElementById('cloud-pass').value;
+  if (!email || !pass) { toast('Enter YI account email and password', true); return; }
+  const btn = document.getElementById('cloud-login-btn');
+  btn.disabled = true; btn.textContent = 'Logging in...';
+  try {
+    const r = await fetch(gw() + '/api/cloud/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password: pass})
+    });
+    if (r.ok) {
+      document.getElementById('cloud-status-bar').style.cssText += ';background:#14532d;color:#86efac';
+      document.getElementById('cloud-status-bar').textContent = 'Logged in: ' + email;
+      document.getElementById('cloud-pass').value = '';
+      document.getElementById('cloud-devices-btn').disabled = false;
+      toast('YI Cloud login OK');
+    } else { const e = await r.json(); toast('Login failed: ' + (e.detail||'check creds'), true); }
+  } catch(e) { toast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Login';
+}
+
+async function cloudDevices() {
+  const btn = document.getElementById('cloud-devices-btn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  try {
+    const r = await fetch(gw() + '/api/cloud/devices');
+    const data = await r.json();
+    const list = document.getElementById('cloud-devices-list');
+    if (data.devices && data.devices.length > 0) {
+      list.innerHTML = data.devices.map(d => {
+        const did = d.device_id || d.did || d.id || '?';
+        const name = d.name || d.device_name || 'Camera';
+        return `<div style="cursor:pointer;padding:4px;border-radius:4px;margin:2px 0;background:#1e293b;border:1px solid #334155" onclick="selectCloudDevice('${did}','${name}')"><b style="color:#c4b5fd">${name}</b><br><span style="color:#475569;font-size:.68rem">DID: ${did}</span></div>`;
+      }).join('');
+      list.style.display = 'block';
+      document.getElementById('cloud-stream-btn').style.display = 'block';
+      toast(data.count + ' camera(s) found');
+    } else { list.innerHTML = '<div style="color:#f87171">No cameras: ' + JSON.stringify(data).slice(0,200) + '</div>'; list.style.display='block'; }
+  } catch(e) { toast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Get Cameras';
+}
+
+function selectCloudDevice(did, name) {
+  _cloudDeviceId = did;
+  document.querySelectorAll('#cloud-devices-list div').forEach(d => {
+    d.style.borderColor = d.textContent.includes(did) ? '#7c3aed' : '#334155';
+  });
+  toast('Selected: ' + name);
+}
+
+async function cloudActivateStream() {
+  if (!_cloudDeviceId) { toast('Select a camera first', true); return; }
+  const btn = document.getElementById('cloud-stream-btn');
+  btn.disabled = true; btn.textContent = 'Getting stream...';
+  try {
+    const r = await fetch(gw() + '/api/cloud/stream?device_id=' + encodeURIComponent(_cloudDeviceId));
+    const data = await r.json();
+    if (data.url) {
+      toast('Stream: ' + data.url.substring(0,60));
+      document.getElementById('active-rtsp').textContent = data.url;
+    } else { toast('Response: ' + JSON.stringify(data).slice(0,200)); }
+  } catch(e) { toast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Start Cloud Stream';
+}
+
 function generateWifiQR() {
   const ssid = document.getElementById('qr-ssid').value.trim();
   const pass = document.getElementById('qr-wifi-pass').value;
@@ -465,8 +554,22 @@ function refreshQR() {
   document.getElementById('qr-caption').textContent = `${gw} · camera ${camIp}`;
 }
 
-// Auto-load QR on page ready
-window.addEventListener('DOMContentLoaded', () => setTimeout(refreshQR, 800));
+// QR + cloud status auto-load on page ready
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(refreshQR, 800);
+  setTimeout(async () => {
+    try {
+      const r = await fetch((document.getElementById('url-input')||{value:'http://localhost:8080'}).value.replace(/\/+$/,'') + '/api/cloud/status');
+      const s = await r.json();
+      if (s.authenticated) {
+        const bar = document.getElementById('cloud-status-bar');
+        if (bar) { bar.style.cssText += ';background:#14532d;color:#86efac'; bar.textContent = 'YI Cloud: logged in (user ' + s.user_id + ')'; }
+        const devBtn = document.getElementById('cloud-devices-btn');
+        if (devBtn) devBtn.disabled = false;
+      }
+    } catch {}
+  }, 1200);
+});
 
 async function registerFromQR() {
   const qr = document.getElementById('qr-input').value.trim();
