@@ -153,6 +153,44 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         except Exception as exc:
             return {"ip": ip, "port": port, "onvif": False, "error": str(exc)}
 
+    @app.get("/api/camera/qr-connect")
+    async def qr_connect_image(camera_ip: str = "10.0.0.161", rtsp_port: int = 554) -> Response:
+        """Return a PNG QR code encoding the gateway + camera connection JSON."""
+        import io, json, socket
+        try:
+            import qrcode
+        except ImportError:
+            raise HTTPException(503, "qrcode package not installed")
+
+        def _local_ip() -> str:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("10.0.0.1", 1))
+                return s.getsockname()[0]
+            finally:
+                s.close()
+
+        gw_ip = _local_ip()
+        payload = json.dumps(
+            {
+                "gateway": f"http://{gw_ip}:8080",
+                "camera": camera_ip,
+                "cameraPort": 8000,
+                "model": "YI-YHS3017",
+                "rtsp": f"rtsp://{camera_ip}:{rtsp_port}/ch0_0.264",
+            },
+            separators=(",", ":"),
+        )
+        qr = qrcode.QRCode(
+            error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4
+        )
+        qr.add_data(payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+
     @app.post("/api/camera/register-qr")
     async def register_qr(body: dict[str, Any]) -> dict[str, Any]:
         """Parse a YI camera QR string and locate the camera on the local subnet."""

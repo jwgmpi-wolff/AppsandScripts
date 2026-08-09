@@ -128,6 +128,17 @@
       <div id="device-info" class="device-info">–</div>
     </div>
 
+    <!-- Connect QR Code -->
+    <div class="section" style="background:#0f172a;border:1px solid #4a1d96;text-align:center">
+      <h3 style="color:#c4b5fd">📱 Mobile App Connect QR</h3>
+      <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">Scan with Android/iOS app to auto-configure gateway &amp; camera</div>
+      <img id="qr-img" src="" alt="Connect QR" style="width:180px;height:180px;border-radius:8px;border:2px solid #4a1d96;background:#fff">
+      <div style="font-size:.68rem;color:#64748b;margin-top:6px;font-family:monospace" id="qr-caption"></div>
+      <div style="margin-top:8px">
+        <button class="btn-purple" onclick="refreshQR()" style="font-size:.75rem;padding:5px 12px">↺ Refresh QR</button>
+      </div>
+    </div>
+
     <!-- QR Registration -->
     <div class="section" style="background:#0f172a;border:1px solid #365314">
       <h3 style="color:#a3e635">📷 Register Camera via QR Code</h3>
@@ -393,6 +404,18 @@ async function probeOnvif() {
 }
 
 let _qrRegistration = null;
+
+function refreshQR() {
+  const gw = document.getElementById('url-input').value.replace(/\/+$/, '');
+  const camIp = document.getElementById('cam-ip').value.trim() || '10.0.0.161';
+  const url = `${gw}/api/camera/qr-connect?camera_ip=${encodeURIComponent(camIp)}`;
+  const img = document.getElementById('qr-img');
+  img.src = url + '&t=' + Date.now();
+  document.getElementById('qr-caption').textContent = `${gw} · camera ${camIp}`;
+}
+
+// Auto-load QR on page ready
+window.addEventListener('DOMContentLoaded', () => setTimeout(refreshQR, 800));
 
 async function registerFromQR() {
   const qr = document.getElementById('qr-input').value.trim();
