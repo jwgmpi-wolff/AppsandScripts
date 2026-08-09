@@ -262,22 +262,17 @@ def login_from_env() -> dict:
 
 
 def get_google_token_url() -> str:
-    """Return the URL the user should visit to get their Google id_token for YI."""
-    # YI Home Android app uses this Google OAuth client for sign-in.
-    # The user visits this URL, signs in with Google, then copies the id_token
-    # from the resulting URL fragment or the token field shown.
-    client_id = os.environ.get(
-        "YI_GOOGLE_CLIENT_ID",
-        "870314384488-qr2m6qnkdcqia2e8l8sdmf7p0tqhj1ll.apps.googleusercontent.com",
-    )
+    """Return the URL the user should visit — only works if YI_GOOGLE_CLIENT_ID is set."""
+    client_id = os.environ.get("YI_GOOGLE_CLIENT_ID", "")
+    if not client_id:
+        return ""
     redirect = "http://localhost:8765/oauth/callback"
-    scope = "openid email profile"
     return (
         f"https://accounts.google.com/o/oauth2/v2/auth"
         f"?client_id={client_id}"
         f"&redirect_uri={redirect}"
         f"&response_type=id_token"
-        f"&scope={scope.replace(' ', '+')}"
+        f"&scope=openid+email+profile"
         f"&nonce=camcontrol"
     )
 
