@@ -153,6 +153,83 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         except Exception as exc:
             return {"ip": ip, "port": port, "onvif": False, "error": str(exc)}
 
+    @app.post("/api/camera/register-qr")
+    async def register_qr(body: dict[str, Any]) -> dict[str, Any]:
+        """Parse a YI camera QR string and locate the camera on the local subnet."""
+        import asyncio, base64, ipaddress, socket
+        from urllib.parse import parse_qs
+
+        raw = body.get("qr", "").strip()
+        if not raw:
+            raise HTTPException(400, "qr field required")
+
+        # Parse b=...&s=base64(ssid)&p=obfuscated_password
+        params = dict(kv.split("=", 1) for kv in raw.split("&") if "=" in kv)
+        try:
+            ssid = base64.b64decode(params["s"] + "==").decode("utf-8", errors="replace")
+        except Exception:
+            ssid = "(unreadable)"
+
+        hint_ip: str | None = body.get("ip")  # optional caller-supplied IP
+
+        def _tcp_open(ip: str, port: int, timeout: float = 0.8) -> bool:
+            s = socket.socket()
+            s.settimeout(timeout)
+            ok = s.connect_ex((ip, port)) == 0
+            s.close()
+            return ok
+
+        # If caller supplied an IP hint, trust it; otherwise scan /24 for port 8000
+        found_ip: str | None = None
+        if hint_ip:
+            found_ip = hint_ip if _tcp_open(hint_ip, 8000) else None
+        else:
+            try:
+                local_ip = socket.gethostbyname(socket.gethostname())
+                net = ipaddress.IPv4Interface(f"{local_ip}/24").network
+                candidates = [str(h) for h in net.hosts()]
+            except Exception:
+                candidates = [f"10.0.0.{i}" for i in range(1, 255)]
+
+            async def _scan_one(ip: str) -> str | None:
+                ok = await asyncio.to_thread(_tcp_open, ip, 8000, 0.6)
+                return ip if ok else None
+
+            results = await asyncio.gather(*(_scan_one(ip) for ip in candidates))
+            hits = [r for r in results if r]
+            found_ip = hits[0] if hits else None
+
+        registration = {
+            "ssid": ssid,
+            "cameraIp": found_ip,
+            "port": 8000,
+            "rtspCandidates": (
+                [
+                    f"rtsp://{found_ip}:554/ch0_0.264",
+                    f"rtsp://{found_ip}:554/stream0",
+                    f"rtsp://{found_ip}:8554/live",
+                ]
+                if found_ip
+                else []
+            ),
+            "note": (
+                "Camera found on local network."
+                if found_ip
+                else "Camera not found — ensure it is on the same subnet."
+            ),
+        }
+
+        # Hot-apply first RTSP candidate if bridge is available
+        if found_ip and _bridge:
+            candidate = registration["rtspCandidates"][0]
+            _bridge.capture.device_path = candidate
+            _bridge.stream.device_path = candidate
+            import os
+            os.environ["RTSP_URL"] = candidate
+            registration["rtspApplied"] = candidate
+
+        return registration
+
     @app.post("/api/recording/start", dependencies=[Depends(_require_key)])
     async def start_recording() -> dict[str, Any]:
         if not _bridge:

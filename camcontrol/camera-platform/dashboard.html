@@ -128,6 +128,23 @@
       <div id="device-info" class="device-info">–</div>
     </div>
 
+    <!-- QR Registration -->
+    <div class="section" style="background:#0f172a;border:1px solid #365314">
+      <h3 style="color:#a3e635">📷 Register Camera via QR Code</h3>
+      <div style="font-size:.75rem;color:#94a3b8;margin-bottom:8px">
+        Paste the QR code text (format: <code style="color:#a3e635">b=…&amp;s=…&amp;p=…</code>) — no cloud token stored.
+      </div>
+      <input id="qr-input" type="text" placeholder="b=US…&s=d29s…&p=VFY…"
+        style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;width:100%;font-size:.78rem;font-family:monospace;margin-bottom:8px">
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="qr-ip-hint" type="text" placeholder="IP hint (optional, e.g. 10.0.0.161)"
+          style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 8px;border-radius:6px;flex:1;font-size:.78rem;font-family:monospace">
+        <button class="btn-success" onclick="registerFromQR()" id="qr-reg-btn">🔗 Register</button>
+      </div>
+      <div id="qr-result" style="font-size:.75rem;font-family:monospace;color:#a3e635;display:none;padding:8px;background:#1a2e05;border-radius:6px;margin-bottom:8px"></div>
+      <button class="btn-primary" onclick="useQRCamera()" id="qr-use-btn" style="display:none;width:100%">✓ Use This Camera</button>
+    </div>
+
     <!-- WiFi Camera Setup -->
     <div class="section" style="background:#0f172a;border:1px solid #1e3a5f">
       <h3 style="color:#60a5fa">📡 YI WiFi Camera Setup</h3>
@@ -373,6 +390,55 @@ async function probeOnvif() {
     }
   } catch(e) { el.innerHTML = `<div style="color:#ef4444">✗ ${e.message}</div>`; }
   btn.disabled = false; btn.textContent = '📡 ONVIF';
+}
+
+let _qrRegistration = null;
+
+async function registerFromQR() {
+  const qr = document.getElementById('qr-input').value.trim();
+  if (!qr) { toast('Paste the QR code text first', true); return; }
+  const ipHint = document.getElementById('qr-ip-hint').value.trim();
+  const btn = document.getElementById('qr-reg-btn');
+  btn.disabled = true; btn.textContent = '⏳ Scanning…';
+  const resultEl = document.getElementById('qr-result');
+  resultEl.style.display = 'none';
+  try {
+    const body = { qr };
+    if (ipHint) body.ip = ipHint;
+    const r = await fetch(gw() + '/api/camera/register-qr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    _qrRegistration = data;
+    let html = `<b>SSID:</b> ${data.ssid || '—'}<br>`;
+    if (data.cameraIp) {
+      html += `<b>Camera IP:</b> ${data.cameraIp}:${data.port}<br>`;
+      html += `<b>RTSP candidates:</b><br>` + (data.rtspCandidates || []).map(u => `&nbsp;• ${u}`).join('<br>');
+      if (data.rtspApplied) html += `<br><span style="color:#86efac">✓ Applied: ${data.rtspApplied}</span>`;
+      document.getElementById('qr-use-btn').style.display = 'block';
+    } else {
+      html += `<span style="color:#f87171">${data.note}</span>`;
+    }
+    resultEl.innerHTML = html;
+    resultEl.style.display = 'block';
+    toast(data.note || 'QR parsed');
+  } catch(e) {
+    toast('❌ ' + e.message, true);
+  }
+  btn.disabled = false; btn.textContent = '🔗 Register';
+}
+
+function useQRCamera() {
+  if (!_qrRegistration || !_qrRegistration.rtspCandidates) return;
+  const url = _qrRegistration.rtspApplied || _qrRegistration.rtspCandidates[0];
+  document.getElementById('cam-ip').value = _qrRegistration.cameraIp || '';
+  api('PUT', '/api/camera/rtsp-url', { url }).then(() => {
+    document.getElementById('active-rtsp').textContent = '▶ ' + url;
+    toast('Camera registered: ' + url);
+    document.getElementById('set-cam-btn').disabled = false;
+  });
 }
 
 async function probeCamera() {
