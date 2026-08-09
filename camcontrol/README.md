@@ -7,6 +7,7 @@ Owner-authorized camera management platform for YI Outdoor cameras. Streams all 
 | Platform | File | Size |
 |----------|------|------|
 | **Windows** (no install needed) | [⬇ CamControl-Windows.zip](https://github.com/jwgmpi-wolff/AppsandScripts/releases/download/v1.0/CamControl-Windows.zip) | 21 MB |
+| **Windows** (source + bat files, safer) | [⬇ CamControl-Windows-Full.zip](https://github.com/jwgmpi-wolff/AppsandScripts/releases/download/v1.0/CamControl-Windows-Full.zip) | 16 MB |
 | **Android APK** | [⬇ CamControl-Android.apk](https://github.com/jwgmpi-wolff/AppsandScripts/releases/download/v1.0/CamControl-Android.apk) | 14 KB |
 | **All releases** | [GitHub Releases →](https://github.com/jwgmpi-wolff/AppsandScripts/releases) | |
 

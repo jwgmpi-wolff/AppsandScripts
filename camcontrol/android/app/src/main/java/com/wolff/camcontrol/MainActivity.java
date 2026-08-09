@@ -1,18 +1,23 @@
 package com.wolff.camcontrol;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.webkit.*;
 import android.view.WindowManager;
+import android.widget.EditText;
 
 public class MainActivity extends Activity {
-    private static final String DEFAULT_URL = "http://10.0.0.1:8080/";
+    private static final String PREF_URL = "gateway_url";
+    private static final String DEFAULT_URL = "http://10.0.0.112:8080/";
+    private WebView web;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        WebView web = new WebView(this);
+        web = new WebView(this);
         setContentView(web);
 
         WebSettings s = web.getSettings();
@@ -20,24 +25,46 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setDomStorageEnabled(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
 
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new WebViewClient() {
             @Override
-            public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
-                // Show setup page if gateway not reachable
-                view.loadData(
-                    "<html><body style='background:#0f172a;color:#e2e8f0;font-family:sans-serif;padding:40px;text-align:center'>" +
-                    "<h2>CamControl</h2><p>Cannot reach gateway.<br>Enter your gateway address below:</p>" +
-                    "<input id='u' value='" + DEFAULT_URL + "' style='width:80%;padding:8px;font-size:16px;border-radius:6px'><br><br>" +
-                    "<button onclick='location.href=document.getElementById(\"u\").value' style='padding:12px 24px;font-size:16px;border-radius:6px;background:#3b82f6;color:#fff;border:none'>Connect</button>" +
-                    "</body></html>",
-                    "text/html", "utf-8");
+            public void onPageFinished(WebView v, String url) {}
+            @Override
+            public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
+                if (req.isForMainFrame()) showUrlDialog("Cannot reach gateway. Enter your PC IP:");
             }
         });
 
-        // Read saved gateway URL or use default
-        String url = getPreferences(MODE_PRIVATE).getString("gateway_url", DEFAULT_URL);
-        web.loadUrl(url);
+        String saved = getPreferences(MODE_PRIVATE).getString(PREF_URL, null);
+        if (saved == null) {
+            showUrlDialog("Enter your PC gateway URL (default: " + DEFAULT_URL + "):");
+        } else {
+            web.loadUrl(saved);
+        }
+    }
+
+    private void showUrlDialog(String msg) {
+        EditText input = new EditText(this);
+        input.setText(getPreferences(MODE_PRIVATE).getString(PREF_URL, DEFAULT_URL));
+        input.setSelectAllOnFocus(true);
+        new AlertDialog.Builder(this)
+            .setTitle("CamControl")
+            .setMessage(msg)
+            .setView(input)
+            .setPositiveButton("Connect", (d, w) -> {
+                String url = input.getText().toString().trim();
+                if (!url.startsWith("http")) url = "http://" + url;
+                if (!url.contains(":")) url = url.replaceAll("/$","") + ":8080/";
+                getPreferences(MODE_PRIVATE).edit().putString(PREF_URL, url).apply();
+                web.loadUrl(url);
+            })
+            .setNegativeButton("Use Default", (d, w) -> {
+                getPreferences(MODE_PRIVATE).edit().putString(PREF_URL, DEFAULT_URL).apply();
+                web.loadUrl(DEFAULT_URL);
+            })
+            .setCancelable(false).show();
     }
 }
