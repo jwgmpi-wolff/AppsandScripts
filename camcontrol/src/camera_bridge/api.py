@@ -191,6 +191,60 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         img.save(buf, format="PNG")
         return Response(content=buf.getvalue(), media_type="image/png")
 
+    @app.get("/api/camera/yi-snapshot")
+    async def yi_snapshot(ip: str = "10.0.0.161") -> Response:
+        """Pull a JPEG snapshot directly from the YI camera's port 8000 binary protocol."""
+        import asyncio
+        from .yi_protocol import YICameraClient
+
+        async def _get() -> bytes | None:
+            client = YICameraClient(ip)
+            return await asyncio.to_thread(client.capture_jpeg, 10.0)
+
+        try:
+            jpg = await asyncio.wait_for(_get(), timeout=12.0)
+            if jpg:
+                return Response(content=jpg, media_type="image/jpeg")
+            return Response(content=b"", status_code=503,
+                            headers={"X-YI-Error": "no frame from port 8000"})
+        except Exception as exc:
+            return Response(content=str(exc).encode(), status_code=503)
+
+    @app.get("/api/camera/yi-probe")
+    async def yi_probe(ip: str = "10.0.0.161") -> dict[str, Any]:
+        """Test raw connection to YI camera port 8000 and attempt token exchange."""
+        import asyncio, socket, struct
+        MAGIC = 0x55AA55AA
+        MSG_TOKEN_REQ = 0x000003E8
+
+        def _probe() -> dict:
+            s = socket.socket()
+            s.settimeout(5)
+            try:
+                s.connect((ip, 8000))
+                # Send token request
+                pkt = struct.pack(">IIII", MAGIC, MSG_TOKEN_REQ, 0, 0)
+                s.sendall(pkt)
+                s.settimeout(3)
+                try:
+                    data = s.recv(512)
+                    if len(data) >= 16:
+                        magic, msg_type, token, length = struct.unpack(">IIII", data[:16])
+                        return {"connected": True, "magic": hex(magic),
+                                "msg_type": hex(msg_type), "token": token,
+                                "payload_len": length, "raw": data[:64].hex()}
+                    return {"connected": True, "raw": data.hex(), "note": "short response"}
+                except socket.timeout:
+                    return {"connected": True, "note": "no response to token request"}
+            except Exception as e:
+                return {"connected": False, "error": str(e)}
+            finally:
+                s.close()
+
+        result = await asyncio.to_thread(_probe)
+        result["ip"] = ip
+        return result
+
     @app.post("/api/camera/register-qr")
     async def register_qr(body: dict[str, Any]) -> dict[str, Any]:
         """Parse a YI camera QR string and locate the camera on the local subnet."""
