@@ -35,11 +35,13 @@ Write-Host "Installing Python packages..." -ForegroundColor Yellow
 & ".venv\Scripts\pip.exe" install -r requirements.txt --quiet
 Write-Host "Packages: OK" -ForegroundColor Green
 
-# Firewall rule for gateway port
-$rule = Get-NetFirewallRule -DisplayName "CamControl Gateway" -ErrorAction SilentlyContinue
-if (-not $rule) {
-    Write-Host "Adding firewall rule for port 8080..." -ForegroundColor Yellow
-    New-NetFirewallRule -DisplayName "CamControl Gateway" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow | Out-Null
+# Firewall rules for gateway and RTSP
+foreach ($port in @(8080, 8554)) {
+    $name = "CamControl :$port"
+    if (-not (Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)) {
+        Write-Host "Adding firewall rule for port $port..." -ForegroundColor Yellow
+        New-NetFirewallRule -DisplayName $name -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow -Profile Any | Out-Null
+    }
 }
 
 Write-Host ""
