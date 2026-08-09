@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CamControl — YI YHS.3017</title>
+<!-- QR code generator: no server required, pure JS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
@@ -126,6 +128,26 @@
       <h3>Camera</h3>
       <button class="btn-neutral" style="width:100%;margin-bottom:8px" onclick="loadDevice()">🔍 Load Device Info</button>
       <div id="device-info" class="device-info">–</div>
+    </div>
+
+    <!-- WiFi QR Generator — show this QR to the camera lens to configure WiFi -->
+    <div class="section" style="background:#0f172a;border:2px solid #f59e0b">
+      <h3 style="color:#fbbf24">📷 Camera WiFi Setup QR</h3>
+      <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">
+        Generate a QR code → hold your <b style="color:#fbbf24">phone/tablet screen</b> up to the camera lens to connect it to WiFi (no YI app needed).
+      </div>
+      <label style="font-size:.72rem;color:#94a3b8">WiFi Network (SSID)</label>
+      <input id="qr-ssid" type="text" value="wolffwifi" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.82rem;margin:3px 0 6px">
+      <label style="font-size:.72rem;color:#94a3b8">WiFi Password</label>
+      <input id="qr-wifi-pass" type="password" placeholder="Your WiFi password" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.82rem;margin:3px 0 8px">
+      <button class="btn-primary" onclick="generateWifiQR()" style="width:100%;margin-bottom:8px">🔲 Generate QR Code</button>
+      <div id="wifi-qr-box" style="display:none;text-align:center;background:#fff;padding:12px;border-radius:8px;margin-bottom:6px">
+        <div id="wifi-qr-canvas"></div>
+        <div style="font-size:.68rem;color:#374151;margin-top:6px" id="wifi-qr-caption"></div>
+      </div>
+      <div id="wifi-qr-tip" style="display:none;font-size:.72rem;color:#fbbf24;text-align:center">
+        ☝ Hold this screen directly in front of the camera lens · wait for beep/LED change
+      </div>
     </div>
 
     <!-- Connect QR Code -->
@@ -404,6 +426,32 @@ async function probeOnvif() {
 }
 
 let _qrRegistration = null;
+
+function generateWifiQR() {
+  const ssid = document.getElementById('qr-ssid').value.trim();
+  const pass = document.getElementById('qr-wifi-pass').value;
+  if (!ssid || !pass) { toast('Enter SSID and password first', true); return; }
+
+  // Standard WiFi QR (works with most cameras and phones)
+  const wifiStr = `WIFI:T:WPA;S:${ssid};P:${pass};;`;
+
+  const box = document.getElementById('wifi-qr-box');
+  const canvas = document.getElementById('wifi-qr-canvas');
+  const tip = document.getElementById('wifi-qr-tip');
+  canvas.innerHTML = '';
+  new QRCode(canvas, {
+    text: wifiStr,
+    width: 220,
+    height: 220,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+  document.getElementById('wifi-qr-caption').textContent = ssid + ' · hold 15cm from camera lens';
+  box.style.display = 'block';
+  tip.style.display = 'block';
+  toast('QR ready — hold screen up to camera lens');
+}
 
 function refreshQR() {
   const gw = document.getElementById('url-input').value.replace(/\/+$/, '');
