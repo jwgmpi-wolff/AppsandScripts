@@ -24,10 +24,11 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
-# YI Cloud API endpoints to try in order
+# YI Cloud API endpoints — real host discovered via HTTP Toolkit traffic capture
 _ENDPOINTS = [
-    "https://us.laikuai.com",
-    "https://ys.laikuai.com",
+    "https://gw-us.xiaoyi.com",   # US gateway (confirmed from live traffic)
+    "https://gw-eu.xiaoyi.com",   # EU fallback
+    "https://us.laikuai.com",     # legacy fallback
 ]
 APP_ID = "com.yi.android"
 
@@ -40,11 +41,31 @@ _session: dict[str, Any] = {}
 
 _CURL = shutil.which("curl")
 
+# Exact headers observed from live YI app traffic (HTTP Toolkit capture 2026-08-08)
+_APP_VERSION = "android;448;6.9.2_20260522071155"
+_USER_AGENT = "yihome/6.9.2_20260522071155 (Android 15; en-US)"
+
 _BASE_HEADERS = [
     "Content-Type: application/json",
     "Accept: application/json",
-    "User-Agent: YIHome/5.3 (Android; SDK 30)",
+    "Accept-Encoding: gzip",
+    "Connection: Keep-Alive",
+    f"User-Agent: {_USER_AGENT}",
+    "x-kamihome-appType: ANDROID",
+    "x-kamihome-packageType: RELEASE",
+    "x-xiaoyi-appCountryCode: US",
+    f"x-xiaoyi-appVersion: {_APP_VERSION}",
 ]
+
+
+def _hmac_params(user_id: str, secret: str, path: str) -> dict:
+    """Build HMAC query params matching YI app signing (HMAC-SHA1 over userid+path+timestamp)."""
+    import hmac as _hmac, base64, time as _t
+    ts = str(int(_t.time()))
+    msg = f"{user_id}{path}{ts}".encode()
+    key = secret.encode()
+    sig = base64.b64encode(_hmac.new(key, msg, "sha1").digest()).decode()
+    return {"hmac": sig, "userid": user_id, "seq": ts}
 
 
 def _curl_request(method: str, url: str, body: dict | None = None,
@@ -83,18 +104,27 @@ def _curl_request(method: str, url: str, body: dict | None = None,
 
 def _request(method: str, path: str, body: dict | None = None,
              token: str | None = None, base_url: str = _ENDPOINTS[0]) -> dict:
-    return _curl_request(method, f"{base_url}{path}", body=body, token=token)
+    # Build URL with HMAC auth params if session has them
+    uid = _session.get("user_id", "")
+    hmac_val = _session.get("hmac", "")
+    qs = f"?userid={uid}&seq=1" if uid else ""
+    if hmac_val:
+        import urllib.parse
+        qs += f"&hmac={urllib.parse.quote(hmac_val, safe='')}"
+    return _curl_request(method, f"{base_url}{path}{qs}", body=body, token=token)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 # YI uses Google Sign-In. The app exchanges a Google id_token for a YI session token.
 _GOOGLE_LOGIN_PATHS = [
+    "/v5/user/google_signin",
+    "/v4/user/google_signin",
     "/v1/user/google_signin",
+    "/v5/oauth/google",
     "/v1/oauth/google",
+    "/v5/user/social_login",
     "/v1/user/social_login",
-    "/v2/user/google_login",
-    "/v1/user/login",
 ]
 
 
@@ -136,7 +166,8 @@ def login(email: str, password: str) -> dict[str, Any]:
         hashlib.sha256(password.encode()).hexdigest(),
     ]
     last_err = "unknown"
-    paths = ["/v1/user/signin", "/v2/user/login", "/v1/account/login"]
+    paths = ["/v5/user/signin", "/v4/user/signin", "/v1/user/signin",
+             "/v5/user/login", "/v4/user/login", "/v1/account/login"]
 
     for base in _ENDPOINTS:
         for pw in pw_variants:
@@ -178,14 +209,16 @@ def _base() -> str:
 def get_devices() -> list[dict]:
     """Return list of cameras registered to the account."""
     t = _token()
-    if not t:
+    uid = _session.get("user_id", "")
+    if not t or not uid:
         return []
-    resp = _request("GET", "/v1/user/devices", token=t, base_url=_base())
-    devices = resp.get("data", resp) if "error" not in resp else []
+    resp = _request("GET", f"/v5/devices/list", token=t, base_url=_base())
+    if "error" in resp:
+        return []
+    devices = resp.get("data", [])
     if isinstance(devices, list):
         return devices
-    # Sometimes wrapped in a dict
-    return devices.get("devices", devices.get("device_list", []))
+    return []
 
 
 def find_camera(mac: str | None = None, ip: str | None = None) -> dict | None:

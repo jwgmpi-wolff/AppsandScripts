@@ -1,0 +1,13 @@
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+streams:
+  camera:
+    - "kalay://TNPUSAI-035961-DTFMK?password=D4B6EC06203F17D4CE63A54E25A9B0F2&license=MFNBDP:"
+  back_door:
+    - "kalay://TNPUSAI-027828-ZWBLH?password=75AD4BE191C87A1D939741D275E23BEE&license=ULGHQQ:"
+  kitchen:
+    - "kalay://TNPUSAD-064090-JEYND?password=867CED8517CDB81E8BD032C0E434FB38&license=AQHHST:"

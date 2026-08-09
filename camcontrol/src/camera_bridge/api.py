@@ -237,6 +237,20 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             raise HTTPException(401, result.get("error", "Login failed"))
         return {"ok": True, "user_id": result.get("user_id")}
 
+    @app.post("/api/cloud/inject-session")
+    async def inject_session(body: dict[str, Any]) -> dict[str, Any]:
+        """Directly inject a captured YI session token and HMAC (from HTTP Toolkit HAR)."""
+        from .yi_cloud import _session
+        import time
+        token = body.get("token", "").strip()
+        user_id = body.get("user_id", "")
+        hmac_val = body.get("hmac", "")
+        if not token and not hmac_val:
+            raise HTTPException(400, "token or hmac required")
+        _session.update({"token": token, "user_id": user_id, "hmac": hmac_val,
+                          "login_at": time.time(), "base": "https://us.laikuai.com"})
+        return {"ok": True, "injected": True, "user_id": user_id}
+
     @app.post("/api/cloud/google-auth-start")
     async def google_auth_start() -> dict[str, Any]:
         """Return the Google OAuth URL for the user to visit, and start the callback listener."""
