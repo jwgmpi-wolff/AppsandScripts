@@ -169,28 +169,25 @@
     }
   ],
   "QRCodeFindings": {
-    "CameraMAC": "0e-fd-70-0d-40-4d",
-    "PasswordEncoding": "XOR-obfuscated base64 (not plain text)",
-    "LocalControlOptions": [
-      "yi-hack custom firmware (enables RTSP + HTTP admin page)",
-      "Implement YI port-8000 binary protocol with auth token",
-      "Third-party app that speaks YI protocol (e.g. yi-home viewers)"
-    ],
-    "SSIDBase64": "d29sZmZ3aWZp",
     "CameraHomewifiIP": "10.0.0.161",
-    "CloudBindingToken": "REDACTED",
-    "RTSPStatus": "NOT exposed in stock firmware",
-    "Port8000Status": "open - accepts TCP connections, requires authenticated YI binary protocol",
-    "SSIDDecoded": "wolffwifi"
+    "CameraMAC": "0e-fd-70-0d-40-4d",
+    "SSIDDecoded": "wolffwifi",
+    "PasswordEncoding": "XOR-obfuscated base64 - not stored",
+    "CloudBindingToken": "not stored - not required for local access",
+    "Port8000Status": "open - YI proprietary binary protocol (auth required for cloud mode)",
+    "RTSPStatus": "not exposed in stock firmware",
+    "LocalAccessOptions": [
+      "yi-hack custom firmware -> RTSP rtsp://10.0.0.161:554/ch0_0.264 + HTTP admin (no cloud, no token)",
+      "yi-hack: no cloud account or binding token required after flash"
+    ]
   },
   "QRCodeAnalysisUtc": "2026-08-08T20:07:35.0304047-07:00",
   "CameraConfirmedIP": "10.0.0.161",
   "CameraConfirmedMAC": "0e-fd-70-0d-40-4d",
   "QRCodeDecoded": {
-    "CloudToken": "REDACTED",
-    "Port8000": "open - YI proprietary binary protocol (auth required)",
-    "RTSP": "not exposed in stock firmware",
     "SSID": "wolffwifi",
-    "PasswordEncoding": "XOR-obfuscated base64"
+    "CloudToken": "not stored - not required for local yi-hack access",
+    "Port8000": "open - YI proprietary protocol",
+    "RTSP": "not exposed in stock firmware; enabled by yi-hack"
   }
 }
