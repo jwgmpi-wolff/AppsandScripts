@@ -130,25 +130,37 @@
       <div id="device-info" class="device-info">–</div>
     </div>
 
-    <!-- YI Cloud — no app needed -->
+    <!-- YI Cloud — Google auth -->
     <div class="section" style="background:#0f172a;border:2px solid #7c3aed">
-      <h3 style="color:#c4b5fd">☁ YI Cloud (no app required)</h3>
+      <h3 style="color:#c4b5fd">☁ YI Cloud (Google Sign-In)</h3>
       <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">
-        Login once → gateway streams directly via cloud API. YI app not needed after this.
+        YI uses Google auth. Click <b style="color:#c4b5fd">Sign in with Google</b> — browser opens, you authenticate, token is captured automatically.
       </div>
       <div id="cloud-status-bar" style="font-size:.72rem;margin-bottom:8px;padding:4px 8px;border-radius:4px;background:#1e293b;color:#94a3b8">
         Not logged in
       </div>
-      <input id="cloud-email" type="email" placeholder="YI account email"
-        style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.8rem;margin-bottom:6px">
-      <input id="cloud-pass" type="password" placeholder="YI account password"
-        style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.8rem;margin-bottom:8px">
+      <!-- Option 1: auto browser OAuth -->
+      <button class="btn-purple" onclick="cloudGoogleAuth()" style="width:100%;margin-bottom:6px">🔑 Sign in with Google (auto)</button>
+      <!-- Option 2: paste token from devtools -->
+      <details style="margin-bottom:8px">
+        <summary style="font-size:.72rem;color:#94a3b8;cursor:pointer">↳ Paste Google id_token manually</summary>
+        <div style="margin-top:6px">
+          <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">
+            Get token: open <b>accounts.google.com</b> → DevTools → Network → find request with <code>id_token</code> param
+          </div>
+          <textarea id="google-token-input" rows="3" placeholder="eyJhbGciOi..." style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.7rem;font-family:monospace;resize:vertical;margin-bottom:4px"></textarea>
+          <button class="btn-purple" onclick="cloudLoginToken()" style="width:100%">🔑 Exchange Token</button>
+        </div>
+      </details>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
-        <button class="btn-purple" onclick="cloudLogin()" id="cloud-login-btn">🔑 Login</button>
         <button class="btn-neutral" onclick="cloudDevices()" id="cloud-devices-btn" disabled>📷 Get Cameras</button>
+        <button class="btn-neutral" onclick="importCameras()" id="import-cameras-btn" disabled>⬇ Import All</button>
       </div>
       <div id="cloud-devices-list" style="font-size:.75rem;font-family:monospace;display:none;margin-bottom:8px"></div>
-      <button class="btn-success" onclick="cloudActivateStream()" id="cloud-stream-btn" style="display:none;width:100%">▶ Start Cloud Stream</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <button class="btn-success" onclick="startAllStreams()" id="cloud-stream-btn" style="display:none">▶ Start All Streams</button>
+        <button class="btn-neutral" onclick="stopAllStreams()" id="stop-stream-btn" style="display:none">⏹ Stop All</button>
+      </div>
     </div>
 
     <!-- WiFi QR Generator — show this QR to the camera lens to configure WiFi -->
@@ -447,50 +459,138 @@ async function probeOnvif() {
 }
 
 let _qrRegistration = null;
-
 let _cloudDeviceId = null;
 
-async function cloudLogin() {
-  const email = document.getElementById('cloud-email').value.trim();
-  const pass = document.getElementById('cloud-pass').value;
-  if (!email || !pass) { toast('Enter YI account email and password', true); return; }
-  const btn = document.getElementById('cloud-login-btn');
-  btn.disabled = true; btn.textContent = 'Logging in...';
+async function cloudGoogleAuth() {
+  toast('Opening browser for Google sign-in...');
   try {
-    const r = await fetch(gw() + '/api/cloud/login', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email, password: pass})
+    const r = await fetch(gw() + '/api/cloud/google-auth-start', {method:'POST'});
+    const d = await r.json();
+    toast('Browser opened. Sign in with Google, then wait 5s.');
+    window.open(d.auth_url, '_blank');
+    // Poll status for up to 60s
+    for (let i = 0; i < 30; i++) {
+      await new Promise(res => setTimeout(res, 2000));
+      const s = await (await fetch(gw() + '/api/cloud/status')).json();
+      if (s.authenticated) { _onCloudLoggedIn(s.user_id); return; }
+    }
+    toast('Sign-in timed out. Paste the id_token manually.', true);
+  } catch(e) { toast('Error: ' + e.message, true); }
+}
+
+async function cloudLoginToken() {
+  const token = document.getElementById('google-token-input').value.trim();
+  if (!token) { toast('Paste a Google id_token first', true); return; }
+  try {
+    const r = await fetch(gw() + '/api/cloud/google-login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({google_token: token})
     });
     if (r.ok) {
-      document.getElementById('cloud-status-bar').style.cssText += ';background:#14532d;color:#86efac';
-      document.getElementById('cloud-status-bar').textContent = 'Logged in: ' + email;
-      document.getElementById('cloud-pass').value = '';
-      document.getElementById('cloud-devices-btn').disabled = false;
-      toast('YI Cloud login OK');
-    } else { const e = await r.json(); toast('Login failed: ' + (e.detail||'check creds'), true); }
+      const d = await r.json();
+      _onCloudLoggedIn(d.user_id);
+      document.getElementById('google-token-input').value = '';
+    } else { const e = await r.json(); toast('Token exchange failed: ' + (e.detail||'?'), true); }
   } catch(e) { toast('Error: ' + e.message, true); }
-  btn.disabled = false; btn.textContent = 'Login';
+}
+
+function _onCloudLoggedIn(userId) {
+  const bar = document.getElementById('cloud-status-bar');
+  bar.style.cssText += ';background:#14532d;color:#86efac';
+  bar.textContent = '✓ Logged in — user ' + (userId || '?');
+  document.getElementById('cloud-devices-btn').disabled = false;
+  document.getElementById('import-cameras-btn').disabled = false;
+  toast('Google auth OK — YI session active');
+}
+
+async function importCameras() {
+  const btn = document.getElementById('import-cameras-btn');
+  btn.disabled = true; btn.textContent = 'Importing...';
+  try {
+    const r = await fetch(gw() + '/api/cameras/import', {method:'POST'});
+    const d = await r.json();
+    toast('Imported ' + d.imported + ' camera(s) to registry');
+    await cloudDevices();
+    document.getElementById('cloud-stream-btn').style.display = '';
+    document.getElementById('stop-stream-btn').style.display = '';
+  } catch(e) { toast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = '⬇ Import All';
+}
+
+async function startAllStreams() {
+  toast('Starting all camera streams...');
+  try {
+    const r = await fetch(gw() + '/api/stream/start-all', {method:'POST'});
+    const d = await r.json();
+    toast('Started ' + d.started + ' / ' + (d.results||[]).length + ' streams');
+  } catch(e) { toast('Error: ' + e.message, true); }
+}
+
+async function stopAllStreams() {
+  try {
+    const r = await fetch(gw() + '/api/stream/stop-all', {method:'POST'});
+    const d = await r.json();
+    toast('Stopped: ' + (d.stopped||[]).join(', '));
+  } catch(e) { toast('Error: ' + e.message, true); }
 }
 
 async function cloudDevices() {
   const btn = document.getElementById('cloud-devices-btn');
   btn.disabled = true; btn.textContent = 'Loading...';
   try {
-    const r = await fetch(gw() + '/api/cloud/devices');
+    const r = await fetch(gw() + '/api/cameras');
     const data = await r.json();
     const list = document.getElementById('cloud-devices-list');
-    if (data.devices && data.devices.length > 0) {
-      list.innerHTML = data.devices.map(d => {
-        const did = d.device_id || d.did || d.id || '?';
-        const name = d.name || d.device_name || 'Camera';
-        return `<div style="cursor:pointer;padding:4px;border-radius:4px;margin:2px 0;background:#1e293b;border:1px solid #334155" onclick="selectCloudDevice('${did}','${name}')"><b style="color:#c4b5fd">${name}</b><br><span style="color:#475569;font-size:.68rem">DID: ${did}</span></div>`;
+    if (data.cameras && data.cameras.length > 0) {
+      list.innerHTML = data.cameras.map(d => {
+        const did = d.device_id || '?';
+        const name = d.name || 'Camera';
+        const alive = d.stream && d.stream.alive;
+        const hlsUrl = d.stream && d.stream.hls_url ? d.stream.hls_url : '';
+        return `<div style="padding:4px;border-radius:4px;margin:2px 0;background:#1e293b;border:1px solid #334155">
+          <b style="color:#c4b5fd">${name}</b>
+          <span style="float:right;font-size:.65rem;color:${alive?'#86efac':'#f87171'}">${alive?'● live':'○ idle'}</span>
+          <br><span style="color:#475569;font-size:.68rem">ID: ${did}</span>
+          ${hlsUrl ? `<br><a href="${hlsUrl}" target="_blank" style="font-size:.65rem;color:#7dd3fc">HLS link</a>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px">
+            <button class="btn-success" style="font-size:.65rem;padding:2px 4px" onclick="startOneStream('${did}')">▶ Start</button>
+            <button class="btn-neutral" style="font-size:.65rem;padding:2px 4px" onclick="stopOneStream('${did}')">⏹ Stop</button>
+          </div>
+        </div>`;
       }).join('');
       list.style.display = 'block';
-      document.getElementById('cloud-stream-btn').style.display = 'block';
-      toast(data.count + ' camera(s) found');
-    } else { list.innerHTML = '<div style="color:#f87171">No cameras: ' + JSON.stringify(data).slice(0,200) + '</div>'; list.style.display='block'; }
+      document.getElementById('cloud-stream-btn').style.display = '';
+      document.getElementById('stop-stream-btn').style.display = '';
+      toast(data.count + ' camera(s) in registry');
+    } else {
+      list.innerHTML = '<div style="color:#94a3b8;font-size:.72rem">No cameras registered. Click Import All after login.</div>';
+      list.style.display = 'block';
+    }
   } catch(e) { toast('Error: ' + e.message, true); }
-  btn.disabled = false; btn.textContent = 'Get Cameras';
+  btn.disabled = false; btn.textContent = '📷 Get Cameras';
+}
+
+async function startOneStream(did) {
+  try {
+    const r = await fetch(gw() + '/api/stream/start', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_id: did})
+    });
+    const d = await r.json();
+    if (d.ok) toast('Stream started: ' + (d.hls_url||did));
+    else toast('Failed: ' + (d.error||'?'), true);
+    await cloudDevices();
+  } catch(e) { toast('Error: ' + e.message, true); }
+}
+
+async function stopOneStream(did) {
+  try {
+    await fetch(gw() + '/api/stream/stop', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_id: did})
+    });
+    await cloudDevices();
+  } catch(e) { toast('Error: ' + e.message, true); }
 }
 
 function selectCloudDevice(did, name) {

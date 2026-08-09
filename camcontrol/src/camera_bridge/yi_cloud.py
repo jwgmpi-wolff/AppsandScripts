@@ -88,9 +88,48 @@ def _request(method: str, path: str, body: dict | None = None,
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
+# YI uses Google Sign-In. The app exchanges a Google id_token for a YI session token.
+_GOOGLE_LOGIN_PATHS = [
+    "/v1/user/google_signin",
+    "/v1/oauth/google",
+    "/v1/user/social_login",
+    "/v2/user/google_login",
+    "/v1/user/login",
+]
+
+
+def login_google(google_id_token: str) -> dict[str, Any]:
+    """Exchange a Google id_token for a YI cloud session token."""
+    last_err = "unknown"
+    bodies = [
+        {"id_token": google_id_token, "app_id": APP_ID},
+        {"token": google_id_token, "type": "google", "app_id": APP_ID},
+        {"google_token": google_id_token, "app_id": APP_ID},
+        {"grant_type": "google", "id_token": google_id_token},
+        {"access_token": google_id_token, "provider": "google"},
+    ]
+    for base in _ENDPOINTS:
+        for path in _GOOGLE_LOGIN_PATHS:
+            for body in bodies:
+                resp = _request("POST", path, body, base_url=base)
+                if "error" not in resp:
+                    data = resp.get("data", resp)
+                    token = (data.get("token") or data.get("access_token")
+                             or data.get("sessionId") or data.get("session_token"))
+                    user_id = data.get("user_id") or data.get("uid") or data.get("userId")
+                    if token:
+                        _session.update({"token": token, "user_id": user_id,
+                                         "login_at": time.time(), "base": base})
+                        LOGGER.info("YI Cloud Google login OK via %s%s", base, path)
+                        return {"ok": True, "token": token, "user_id": user_id}
+                    last_err = f"No token: {base}{path}: {str(resp)[:200]}"
+                else:
+                    last_err = f"{base}{path}: {resp.get('message', resp.get('error', ''))}"
+    return {"ok": False, "error": last_err}
+
+
 def login(email: str, password: str) -> dict[str, Any]:
-    """Authenticate with YI cloud. Tries multiple formats and endpoints."""
-    # Try MD5 hash first (most common for YI), then plain, then SHA256
+    """Try password login (legacy) — most YI accounts now require Google auth."""
     pw_variants = [
         hashlib.md5(password.encode()).hexdigest(),
         password,
@@ -220,3 +259,70 @@ def login_from_env() -> dict:
     if not email or not password:
         return {"ok": False, "error": "YI_EMAIL and YI_PASSWORD not set"}
     return login(email, password)
+
+
+def get_google_token_url() -> str:
+    """Return the URL the user should visit to get their Google id_token for YI."""
+    # YI Home Android app uses this Google OAuth client for sign-in.
+    # The user visits this URL, signs in with Google, then copies the id_token
+    # from the resulting URL fragment or the token field shown.
+    client_id = os.environ.get(
+        "YI_GOOGLE_CLIENT_ID",
+        "870314384488-qr2m6qnkdcqia2e8l8sdmf7p0tqhj1ll.apps.googleusercontent.com",
+    )
+    redirect = "http://localhost:8765/oauth/callback"
+    scope = "openid email profile"
+    return (
+        f"https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect}"
+        f"&response_type=id_token"
+        f"&scope={scope.replace(' ', '+')}"
+        f"&nonce=camcontrol"
+    )
+
+
+def capture_google_token_via_browser(timeout: int = 120) -> dict:
+    """Open browser for Google OAuth and capture the id_token via local callback."""
+    import urllib.parse
+    import webbrowser
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    captured: dict = {}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass  # suppress access logs
+
+        def do_GET(self):
+            # Google returns token in fragment (#id_token=...) which never reaches server.
+            # Serve a tiny page that reads the fragment and POSTs it back.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"""<html><body>
+<script>
+var p=new URLSearchParams(location.hash.slice(1));
+var t=p.get('id_token');
+if(t){fetch('/token',{method:'POST',body:t}).then(()=>{document.body.innerHTML='<h2>Token captured! You can close this tab.</h2>'});}
+else{document.body.innerHTML='<h2>No token found. Try again.</h2>';}
+</script><p>Capturing token...</p></body></html>""")
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            token = self.rfile.read(length).decode()
+            captured["id_token"] = token
+            self.send_response(200)
+            self.end_headers()
+
+    server = HTTPServer(("localhost", 8765), _Handler)
+    server.timeout = 2
+    url = get_google_token_url()
+    webbrowser.open(url)
+    LOGGER.info("Opened browser for Google OAuth. Waiting for callback...")
+    deadline = time.time() + timeout
+    while time.time() < deadline and "id_token" not in captured:
+        server.handle_request()
+    server.server_close()
+    if "id_token" not in captured:
+        return {"ok": False, "error": "Timed out waiting for Google OAuth callback"}
+    return login_google(captured["id_token"])

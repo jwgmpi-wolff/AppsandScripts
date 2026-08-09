@@ -222,16 +222,43 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
 
     @app.post("/api/cloud/login")
     async def cloud_login(body: dict[str, Any]) -> dict[str, Any]:
-        """Login to YI cloud with email+password. Credentials held in memory only — never stored."""
-        from .yi_cloud import login
-        import asyncio
-        email = body.get("email", "").strip()
-        password = body.get("password", "")
-        if not email or not password:
-            raise HTTPException(400, "email and password required")
-        result = await asyncio.to_thread(login, email, password)
+        """Login to YI cloud. Accepts google_token (preferred) or email+password (legacy)."""
+        from .yi_cloud import login, login_google
+        google_token = body.get("google_token", "").strip()
+        if google_token:
+            result = await asyncio.to_thread(login_google, google_token)
+        else:
+            email = body.get("email", "").strip()
+            password = body.get("password", "")
+            if not email or not password:
+                raise HTTPException(400, "google_token or (email + password) required")
+            result = await asyncio.to_thread(login, email, password)
         if not result.get("ok"):
             raise HTTPException(401, result.get("error", "Login failed"))
+        return {"ok": True, "user_id": result.get("user_id")}
+
+    @app.post("/api/cloud/google-auth-start")
+    async def google_auth_start() -> dict[str, Any]:
+        """Return the Google OAuth URL for the user to visit, and start the callback listener."""
+        from .yi_cloud import get_google_token_url, capture_google_token_via_browser
+        url = get_google_token_url()
+        asyncio.create_task(asyncio.to_thread(capture_google_token_via_browser))
+        return {
+            "auth_url": url,
+            "callback": "http://localhost:8765/oauth/callback",
+            "note": "Browser opened automatically. After Google sign-in, token captured and login attempted.",
+        }
+
+    @app.post("/api/cloud/google-login")
+    async def google_login_direct(body: dict[str, Any]) -> dict[str, Any]:
+        """Exchange a Google id_token directly for a YI session. Paste token from browser devtools."""
+        from .yi_cloud import login_google
+        token = body.get("google_token", "").strip()
+        if not token:
+            raise HTTPException(400, "google_token required")
+        result = await asyncio.to_thread(login_google, token)
+        if not result.get("ok"):
+            raise HTTPException(401, result.get("error", "Google token exchange failed"))
         return {"ok": True, "user_id": result.get("user_id")}
 
     @app.get("/api/cloud/status")
