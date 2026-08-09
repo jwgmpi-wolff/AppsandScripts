@@ -28,9 +28,13 @@ LOGGER = logging.getLogger(__name__)
 _ENDPOINTS = [
     "https://gw-us.xiaoyi.com",   # US gateway (confirmed from live traffic)
     "https://gw-eu.xiaoyi.com",   # EU fallback
-    "https://us.laikuai.com",     # legacy fallback
 ]
 APP_ID = "com.yi.android"
+
+# Google OAuth client IDs extracted from live JWT capture 2026-08-08
+# aud = YI server-side client, azp = Android app client
+_GOOGLE_CLIENT_ID = "903608373634-1mdc1ep1pn25ks95plf7idsosa5v2ejh.apps.googleusercontent.com"
+_GOOGLE_AZP_CLIENT_ID = "903608373634-hu8acfi640dstvrroa25k280eseiejbb.apps.googleusercontent.com"
 
 _session: dict[str, Any] = {}
 
@@ -129,33 +133,49 @@ _GOOGLE_LOGIN_PATHS = [
 
 
 def login_google(google_id_token: str) -> dict[str, Any]:
-    """Exchange a Google id_token for a YI cloud session token."""
+    """Exchange a Google id_token for a YI session via /v4/auth/login (real endpoint)."""
+    import urllib.parse, json as _json
     last_err = "unknown"
-    bodies = [
-        {"id_token": google_id_token, "app_id": APP_ID},
-        {"token": google_id_token, "type": "google", "app_id": APP_ID},
-        {"google_token": google_id_token, "app_id": APP_ID},
-        {"grant_type": "google", "id_token": google_id_token},
-        {"access_token": google_id_token, "provider": "google"},
-    ]
+    # Decode JWT email/name from the token payload for the API call
+    try:
+        import base64 as _b64
+        payload_b64 = google_id_token.split('.')[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        jwt_data = _json.loads(_b64.b64decode(payload_b64))
+        email = jwt_data.get('email', '')
+        name = jwt_data.get('name', '')
+    except Exception:
+        email, name = '', ''
+
     for base in _ENDPOINTS:
-        for path in _GOOGLE_LOGIN_PATHS:
-            for body in bodies:
-                resp = _request("POST", path, body, base_url=base)
-                if "error" not in resp:
-                    data = resp.get("data", resp)
-                    token = (data.get("token") or data.get("access_token")
-                             or data.get("sessionId") or data.get("session_token"))
-                    user_id = data.get("user_id") or data.get("uid") or data.get("userId")
-                    if token:
-                        _session.update({"token": token, "user_id": user_id,
-                                         "login_at": time.time(), "base": base})
-                        LOGGER.info("YI Cloud Google login OK via %s%s", base, path)
-                        return {"ok": True, "token": token, "user_id": user_id}
-                    last_err = f"No token: {base}{path}: {str(resp)[:200]}"
-                else:
-                    last_err = f"{base}{path}: {resp.get('message', resp.get('error', ''))}"
-    return {"ok": False, "error": last_err}
+        # Real login endpoint discovered from HTTP Toolkit capture (opt_type=1 = login)
+        qs = urllib.parse.urlencode({
+            'code': google_id_token, 'dev_name': 'PC', 'name': name,
+            'dev_os_version': 'Windows 11', 'opt_type': '1', 'type': '14',
+            'dev_type': 'camcontrol', 'seq': '1', 'email': email,
+        })
+        url = f"{base}/v4/auth/login?{qs}"
+        resp = _curl_request('GET', url)
+        if resp.get('code') == '20000':
+            data = resp.get('data', {})
+            token = data.get('token', '')
+            token_secret = data.get('token_secret', '')
+            user_id = str(data.get('userid', ''))
+            open_id = data.get('openId', '')
+            if token:
+                _session.update({
+                    'token': token, 'token_secret': token_secret,
+                    'user_id': user_id, 'open_id': open_id,
+                    'login_at': time.time(), 'base': base,
+                    # Use the session HMAC pattern from live capture
+                    'hmac': '0zLfYnrDo4yqvvw4571Ia1zCUJo=',
+                })
+                LOGGER.info("YI login OK via /v4/auth/login user=%s", user_id)
+                return {'ok': True, 'token': token, 'user_id': user_id}
+            last_err = f"No token in response: {str(resp)[:200]}"
+        else:
+            last_err = f"{base}: code={resp.get('code')} {resp.get('message','')[:100]}"
+    return {'ok': False, 'error': last_err}
 
 
 def login(email: str, password: str) -> dict[str, Any]:
@@ -205,6 +225,20 @@ def _base() -> str:
 
 
 # ── Devices ──────────────────────────────────────────────────────────────────
+
+def get_device_password(uid: str) -> str | None:
+    """Get the TUTK P2P password for a device from /v5/devices/password."""
+    t = _token()
+    uid_val = _session.get("user_id", "")
+    hmac_val = _session.get("hmac", "")
+    url = f"{_base()}/v5/devices/password?uid={uid}&pincode=&userid={uid_val}&seq=1"
+    if hmac_val:
+        import urllib.parse
+        url += f"&hmac={urllib.parse.quote(hmac_val, safe='')}"
+    resp = _curl_request("GET", url)
+    data = resp.get("data", {}) if resp.get("code") == "20000" else {}
+    return data.get("password")
+
 
 def get_devices() -> list[dict]:
     """Return list of cameras registered to the account."""
@@ -295,14 +329,11 @@ def login_from_env() -> dict:
 
 
 def get_google_token_url() -> str:
-    """Return the URL the user should visit — only works if YI_GOOGLE_CLIENT_ID is set."""
-    client_id = os.environ.get("YI_GOOGLE_CLIENT_ID", "")
-    if not client_id:
-        return ""
+    """Google OAuth URL using the real YI app client ID (captured from live JWT)."""
     redirect = "http://localhost:8765/oauth/callback"
     return (
         f"https://accounts.google.com/o/oauth2/v2/auth"
-        f"?client_id={client_id}"
+        f"?client_id={_GOOGLE_CLIENT_ID}"
         f"&redirect_uri={redirect}"
         f"&response_type=id_token"
         f"&scope=openid+email+profile"
