@@ -18,36 +18,70 @@ import json
 import logging
 import os
 import time
-import urllib.request
-import urllib.parse
+import warnings
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
-# YI Cloud API base — US region
-BASE_URL = "https://us.laikuai.com"
+# YI Cloud API endpoints to try in order
+_ENDPOINTS = [
+    "https://us.laikuai.com",
+    "https://ys.laikuai.com",
+]
 APP_ID = "com.yi.android"
-APP_KEY = "24a6bbb0-3b1c-4f5e-8c4d-1b2d4c9f1234"  # public client key from app
 
 _session: dict[str, Any] = {}
 
 
-# ── Low-level HTTP helper ────────────────────────────────────────────────────
+# ── Low-level HTTP helper (uses requests with SSL quirk handling) ─────────────
 
-def _request(method: str, path: str, body: dict | None = None, token: str | None = None) -> dict:
-    url = f"{BASE_URL}{path}"
-    data = json.dumps(body).encode() if body else None
-    headers: dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
+def _get_session():
+    """Return a requests.Session configured to handle YI's TLS quirks."""
+    try:
+        import requests
+        from requests.adapters import HTTPAdapter
+        import urllib3
+        urllib3.disable_warnings()
+        s = requests.Session()
+        s.verify = False          # YI servers have SNI issues with standard TLS
+        s.headers.update({
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "YIHome/5.3 (Android; SDK 30)",
+        })
+        return s
+    except ImportError:
+        return None
+
+
+def _request(method: str, path: str, body: dict | None = None,
+             token: str | None = None, base_url: str = _ENDPOINTS[0]) -> dict:
+    sess = _get_session()
+    url = f"{base_url}{path}"
+    headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        if sess:
+            fn = sess.post if method == "POST" else sess.get
+            r = fn(url, json=body, headers=headers, timeout=15)
+            if r.ok:
+                return r.json()
+            LOGGER.error("YI API %s %s → %d: %s", method, path, r.status_code, r.text[:500])
+            return {"error": r.status_code, "message": r.text[:300]}
+        # Fallback: urllib with SSL context
+        import urllib.request, ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        data = json.dumps(body).encode() if body else None
+        hdr = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "YIHome/5.3"}
+        if token:
+            hdr["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, data=data, headers=hdr, method=method)
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
             return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode(errors="replace")
-        LOGGER.error("YI API %s %s → %d: %s", method, path, e.code, body_text[:500])
-        return {"error": e.code, "message": body_text[:200]}
     except Exception as exc:
         LOGGER.error("YI API request failed: %s", exc)
         return {"error": str(exc)}
@@ -56,31 +90,49 @@ def _request(method: str, path: str, body: dict | None = None, token: str | None
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 def login(email: str, password: str) -> dict[str, Any]:
-    """Authenticate with YI cloud. Returns session dict with token and device list."""
-    pw_hash = hashlib.md5(password.encode()).hexdigest()
-    resp = _request("POST", "/v1/user/signin", {
-        "username": email,
-        "password": pw_hash,
-        "app_id": APP_ID,
-    })
-    if "error" in resp:
-        return {"ok": False, "error": resp.get("message", resp.get("error"))}
+    """Authenticate with YI cloud. Tries multiple formats and endpoints."""
+    # Try MD5 hash first (most common for YI), then plain, then SHA256
+    pw_variants = [
+        hashlib.md5(password.encode()).hexdigest(),
+        password,
+        hashlib.sha256(password.encode()).hexdigest(),
+    ]
+    last_err = "unknown"
+    paths = ["/v1/user/signin", "/v2/user/login", "/v1/account/login"]
 
-    data = resp.get("data", resp)
-    token = data.get("token") or data.get("access_token")
-    user_id = data.get("user_id") or data.get("uid")
+    for base in _ENDPOINTS:
+        for pw in pw_variants:
+            for path in paths:
+                for body in [
+                    {"username": email, "password": pw, "app_id": APP_ID},
+                    {"email": email, "password": pw, "app_id": APP_ID},
+                    {"account": email, "password": pw},
+                ]:
+                    resp = _request("POST", path, body, base_url=base)
+                    if "error" not in resp:
+                        data = resp.get("data", resp)
+                        token = (data.get("token") or data.get("access_token")
+                                 or data.get("sessionId"))
+                        user_id = data.get("user_id") or data.get("uid") or data.get("userId")
+                        if token:
+                            _session.update({"token": token, "user_id": user_id,
+                                             "login_at": time.time(), "base": base})
+                            LOGGER.info("YI Cloud login OK via %s%s user=%s", base, path, user_id)
+                            return {"ok": True, "token": token, "user_id": user_id}
+                        last_err = f"No token in response from {base}{path}: {str(resp)[:200]}"
+                    else:
+                        last_err = f"{base}{path}: {resp.get('message', resp.get('error', ''))}"
 
-    if not token:
-        LOGGER.error("Login response missing token: %s", resp)
-        return {"ok": False, "error": "No token in login response", "raw": resp}
-
-    _session.update({"token": token, "user_id": user_id, "login_at": time.time()})
-    LOGGER.info("YI Cloud login OK. user_id=%s", user_id)
-    return {"ok": True, "token": token, "user_id": user_id}
+    LOGGER.error("All login attempts failed. Last: %s", last_err)
+    return {"ok": False, "error": last_err}
 
 
 def _token() -> str | None:
     return _session.get("token")
+
+
+def _base() -> str:
+    return _session.get("base", _ENDPOINTS[0])
 
 
 # ── Devices ──────────────────────────────────────────────────────────────────
@@ -90,7 +142,7 @@ def get_devices() -> list[dict]:
     t = _token()
     if not t:
         return []
-    resp = _request("GET", "/v1/user/devices", token=t)
+    resp = _request("GET", "/v1/user/devices", token=t, base_url=_base())
     devices = resp.get("data", resp) if "error" not in resp else []
     if isinstance(devices, list):
         return devices
