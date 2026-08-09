@@ -45,15 +45,11 @@ nav a { color:var(--accent); text-decoration:none; margin-left: .8rem; }
 /* Ensure inputs/textarea inside constrained forms don't exceed container */
 .panel form input, .panel form textarea, .panel form select, .hero .hero-search input, .hero .hero-search button { box-sizing: border-box; width:100%; }
 
-/* Explicit two-column layout for People Search to match Webcam Live */
-#search .vertical-stack { display:flex; flex-direction:column; gap:8px; }
-#search .two-col { display:flex; gap:8px; align-items:flex-start; }
-#search .two-col .left { flex:1; display:flex; flex-direction:column; gap:8px; }
-#search .two-col .right { width:320px; display:flex; flex-direction:column; gap:8px; }
-#search .two-col .right button { width:100%; }
+#search .refinement-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+#search form > button { width:100%; }
 
 /* Make the People Search panel half the viewport width on larger screens */
-#tab-people .panel#search { width:50vw; max-width:900px; }
+#tab-people .panel#search { width:72vw; max-width:1100px; }
 @media (max-width: 980px) { #tab-people .panel#search { width:100%; max-width:100%; } }
 
 /* Keep the interactive search surface above decorative/background layers. */
@@ -64,14 +60,33 @@ nav a { color:var(--accent); text-decoration:none; margin-left: .8rem; }
 @media (max-width: 980px) { #history.panel { width:100%; max-width:100%; margin-left:0; } }
 label { display:grid; gap:.25rem; font-size:.95rem; color:var(--text); }
 input, select, button { border-radius: 8px; border: 1px solid var(--input-border); padding: .65rem .75rem; background: var(--input-bg); color: var(--text); }
+select { color-scheme: dark; background-color: #17232d; color: #f4f9fc; }
+select option, select optgroup { background-color: #101820; color: #f4f9fc; }
+select option:checked { background-color: #2e76b3; color: #ffffff; }
 button { cursor:pointer; }
 .status { margin-top:.75rem; color:var(--muted); font-size:.95rem; }
+.results-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:18px; }
+.results-heading h2 { margin:0; }
+.results-heading button { width:auto; }
 .pill-box { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.6rem; }
 .pill { background: linear-gradient(90deg, rgba(46,118,179,0.06) 0%, rgba(46,118,179,0.02) 100%); border-radius:999px; padding:.28rem .5rem; font-size:.85rem; color:var(--text); border:1px solid rgba(46,118,179,0.06); }
 .result-list { display:grid; gap:.8rem; }
 .card { border-radius: 12px; padding: .75rem; background: var(--panel-strong); border:1px solid rgba(0,0,0,0.25); box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
 .card h3 { margin-top:0; font-size:1rem; }
+.record-card { cursor:pointer; transition:border-color .16s ease, transform .16s ease; }
+.record-card:hover { border-color:#68bfff; transform:translateY(-1px); }
+.record-card:focus-visible { outline:3px solid #68bfff; outline-offset:3px; }
+.record-action { display:inline-block; margin-top:12px; color:#9fd7ff; font-weight:700; text-decoration:underline; }
+.record-detail { width:min(920px, calc(100% - 32px)); margin:24px auto; }
+.record-detail .record-fields { margin-bottom:18px; }
+.record-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+.record-actions a { border-radius:8px; border:1px solid var(--input-border); padding:.65rem .75rem; color:#f4f9fc; background:#17232d; text-decoration:none; }
 .muted { color:var(--muted); font-size:.9rem; }
+.record-summary { line-height:1.5; }
+.record-fields { display:grid; grid-template-columns:minmax(110px, .35fr) 1fr; gap:1px; margin:12px 0 0; border:1px solid rgba(46,118,179,.45); background:rgba(46,118,179,.35); }
+.record-fields dt, .record-fields dd { margin:0; padding:8px 10px; background:#111b23; overflow-wrap:anywhere; }
+.record-fields dt { color:#9fd7ff; font-weight:600; }
+.record-fields dd { color:#f4f9fc; }
 .history-list { margin:0; padding-left:1rem; color:var(--text); display:grid; gap:.5rem; }
 
 /* Accent utilities */
@@ -80,3 +95,5 @@ button { cursor:pointer; }
 .accent-yellow { color: #f4c542; }
 .muted-2 { color: #6f7f88; }
 @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .hero .overlay { width: 92%; } }
+@media (max-width: 620px) { #search .refinement-grid { grid-template-columns:1fr; } }
+@media (max-width: 620px) { .record-fields { grid-template-columns:1fr; } .record-fields dd { padding-top:4px; } }

@@ -1,0 +1,43 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/copilot/plugin/v2.4/schema.json",
+    "schema_version": "v2.4",
+    "name_for_human": "FinOps CCoE Copilot API",
+    "description_for_human": "Runs bounded, live Azure FinOps reports for Microsoft 365 Copilot.",
+    "description_for_model": "Runs bounded, live Azure FinOps reports for Microsoft 365 Copilot.",
+    "contact_email": "${{CONTACT_EMAIL}}",
+    "namespace": "finopscopilotagent",
+    "capabilities": {},
+    "functions": [
+        {
+            "name": "runFinOpsReport",
+            "description": "Returns a bounded report for the requested FinOps domain and Azure scope.",
+            "capabilities": {
+                "response_semantics": {
+                    "data_path": "$",
+                    "properties": {
+                        "title": "$.domain",
+                        "subtitle": "$.tenant_id"
+                    },
+                    "static_template": {
+                        "file": "adaptiveCards/runFinOpsReport1.json"
+                    }
+                }
+            }
+        }
+    ],
+    "runtimes": [
+        {
+            "type": "OpenApi",
+            "auth": {
+                "type": "OAuthPluginVault",
+                "reference_id": "${{AZUREMANAGEMENTOAUTH_REGISTRATION_ID}}"
+            },
+            "spec": {
+                "url": "apiSpecificationFile/openapi.yaml"
+            },
+            "run_for_functions": [
+                "runFinOpsReport"
+            ]
+        }
+    ]
+}

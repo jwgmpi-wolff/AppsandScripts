@@ -1,0 +1,176 @@
+Microsoft 365 Copilot Deployment Transcript
+FinOps CCoE reference deployment
+Date: 2026-07-30
+Status: SUCCESS THROUGH OAUTH SIGN-IN PROMPT
+
+HISTORICAL REFERENCE ONLY: Do not reuse the IDs, URLs, accounts, or paths below.
+Generate values for the authenticated target tenant with finops-copilot-agent/setup-tenant.ps1.
+
+Sanitization notice:
+Secrets, access tokens, passwords, MFA responses, cookies, authorization codes,
+and client-secret values are omitted.
+
+======================================================================
+1. BUILD AND VALIDATE
+======================================================================
+
+PS> Set-Location .\finops-copilot-agent
+
+PS> ./build-package.ps1
+Created ...\finops-copilot-agent\appPackage\build\appPackage.dev.zip
+EXIT_CODE=0
+
+PS> $env:ATK_CLI_SKILL = 'true'
+PS> atk validate --env dev --validate-method validation-rules
+
+Microsoft 365 Agents Toolkit has checked manifest(s) with the corresponding schema:
+
+Summary:
+All passed.
+Microsoft 365 Agents Toolkit has completed checking your app package against validation rules. All passed.
+EXIT_CODE=0
+
+PS> # Inspect package
+ZIP_SIZE_BYTES=10831
+ZIP_ENTRIES:
+adaptiveCards/runFinOpsReport1.json
+apiSpecificationFile/openapi.yaml
+ai-plugin.json
+color.png
+declarativeAgent.json
+manifest.json
+outline.png
+OPENAPI_YAML_ORIGINAL_PRESENT=False
+UNRESOLVED_TEMPLATE_TOKEN_PRESENT=False
+
+======================================================================
+2. TOOLKIT AUTH ATTEMPT
+======================================================================
+
+PS> atk auth list --interactive false
+Use `atk auth login azure` or `atk auth login m365` to log in to Azure or Microsoft 365 account.
+EXIT_CODE=0
+
+PS> atk auth login m365 --tenant <tenant-id> --interactive false
+Browser authentication completed, but the local Toolkit callback did not return.
+The credential cache remained empty.
+
+Decision:
+Continue through Teams Admin Center custom-app upload, which does not depend on
+the failing local Toolkit callback.
+
+======================================================================
+3. DEVELOPER PORTAL IMPORT
+======================================================================
+
+Uploaded:
+...\finops-copilot-agent\appPackage\build\appPackage.dev.zip
+
+Observed app:
+Name: FinOps CCoEdev
+Version: 1.0.0
+External app ID: <reference-teams-app-id>
+Publisher: <reference-publisher>
+
+Developer Portal remote App Validation returned HTTP 500. Local Toolkit
+validation had already passed, so this optional service failure did not block
+tenant publication.
+
+Screenshot:
+docs/screenshots/copilot-developer-portal-app.png
+
+======================================================================
+4. TEAMS ADMIN CENTER PUBLICATION
+======================================================================
+
+Navigation:
+Teams Admin Center > Teams apps > Manage apps > Actions > Upload new app
+
+Uploaded:
+...\finops-copilot-agent\appPackage\build\appPackage.dev.zip
+
+Result:
+New app added
+Tenant catalog app ID: <reference-catalog-app-id>
+External app ID: <reference-teams-app-id>
+Version: 1.0.0
+Status: Unblocked
+Availability: Everyone (org-wide default)
+
+Admin Center reported that this declarative agent cannot be force-installed.
+Users can self-install it because it is available organization-wide.
+
+Screenshot:
+docs/screenshots/copilot-teams-admin-published.png
+
+======================================================================
+5. MICROSOFT 365 COPILOT INSTALL
+======================================================================
+
+Navigation:
+Microsoft 365 Copilot > More agents > Built by your org
+
+Observed app card:
+Name: FinOps CCoEdev
+Publisher: <reference-publisher>
+Description: Analyze live Azure cost, governance, and optimization data.
+
+Action:
+Selected Add.
+
+Result:
+FinOps CCoE appeared in the Agents navigation and opened successfully.
+Installed declarative agent ID:
+<reference-declarative-agent-id>
+
+======================================================================
+6. END-TO-END AGENT TEST
+======================================================================
+
+USER>
+Show my highest-impact Azure optimization opportunities
+
+AGENT>
+Requested the Microsoft Entra tenant ID and optional subscription IDs.
+
+USER>
+Tenant ID is <target-tenant-id> and subscription ID is
+<target-subscription-id>.
+
+AGENT ACTION PREVIEW>
+domain: optimization
+tenant_id: <target-tenant-id>
+subscription_ids: ["<target-subscription-id>"]
+strict_live_mode: True
+
+ACTION>
+Selected Confirm.
+
+RESULT>
+Copilot displayed:
+Please sign in to FinOps CCoE Copilot API to proceed.
+
+This confirms:
+- Tenant catalog discovery works.
+- User installation works.
+- Declarative agent loading works.
+- Prompt instructions work.
+- Scope collection works.
+- OpenAPI action selection works.
+- OAuthPluginVault authentication is invoked.
+
+The final delegated API call requires the user to complete OAuth consent/MFA in
+the browser. Credentials are not recorded in this transcript.
+
+Screenshot:
+docs/screenshots/copilot-live-agent-test.png
+
+======================================================================
+7. REUSABLE DEPLOYMENT GUIDE
+======================================================================
+
+For another tenant, follow:
+docs/COPILOT_TENANT_DEPLOYMENT.md
+
+Readable transcript with embedded screenshots:
+docs/COPILOT_DEPLOYMENT_TRANSCRIPT.md

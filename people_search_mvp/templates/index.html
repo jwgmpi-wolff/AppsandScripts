@@ -31,41 +31,122 @@
       <section class="panel" id="search">
       <h2>Search</h2>
       <form id="search-form" class="stack">
-        <div class="vertical-stack">
-          <div class="two-col">
-            <div class="left">
-              <label>Query
-                <input name="query" type="text" placeholder="e.g. Microsoft public profile" required />
-              </label>
-              <label>Max results
-                <input name="max_results" type="number" min="5" max="20" value="8" />
-              </label>
-            </div>
-            <div class="right">
-              <label>Entity type
-                <select name="entity">
-                  <option value="public">Public profile</option>
-                  <option value="org">Organization</option>
-                  <option value="news">News & media</option>
-                </select>
-              </label>
-              <label>Source scope
-                <select name="source">
-                  <option value="all_source_scopes" selected>All source scopes</option>
-                  <option value="all">All public sources</option>
-                  <option value="web">Web</option>
-                  <option value="news">News</option>
-                </select>
-              </label>
-              <button type="submit">Run search</button>
-            </div>
-          </div>
+        <label>Query
+          <input name="query" type="text" placeholder="Additional terms, employer, username, or topic" />
+        </label>
+        <div class="refinement-grid">
+          <label>First name
+            <input name="first_name" type="text" autocomplete="given-name" placeholder="e.g. Avery" />
+          </label>
+          <label>Last name
+            <input name="last_name" type="text" autocomplete="family-name" placeholder="e.g. Stonebridge" />
+          </label>
+          <label>Entity type
+            <select name="entity">
+              <option value="public">Public profile</option>
+              <option value="org">Organization</option>
+              <option value="news">News & media</option>
+            </select>
+          </label>
+          <label>Source scope
+            <select name="source">
+              <option value="all_source_scopes" selected>All public sources (exhaustive)</option>
+              <option value="public_records">Local public records</option>
+              <option value="social_media">Social media</option>
+              <option value="web">General web</option>
+              <option value="news">News</option>
+            </select>
+          </label>
+          <label>County public records
+            <select name="public_record_type">
+              <option value="">All record types</option>
+              <option value="county_records">County official records</option>
+              <option value="assessor">Assessor & property</option>
+              <option value="clerk_court">Clerk & court</option>
+              <option value="recorder">Recorder & deeds</option>
+              <option value="sheriff">Sheriff records</option>
+            </select>
+          </label>
+          <label>Social media site
+            <select name="social_media_site">
+              <option value="">All social sites</option>
+              <option value="linkedin">LinkedIn</option>
+              <option value="facebook">Facebook</option>
+              <option value="x">X</option>
+              <option value="instagram">Instagram</option>
+              <option value="tiktok">TikTok</option>
+              <option value="github">GitHub</option>
+              <option value="youtube">YouTube</option>
+              <option value="reddit">Reddit</option>
+            </select>
+          </label>
+          <label>Country
+            <select name="country">
+              <option value="">Any country</option>
+              <option selected>United States</option>
+              <option>Australia</option><option>Brazil</option><option>Canada</option>
+              <option>France</option><option>Germany</option><option>India</option>
+              <option>Ireland</option><option>Italy</option><option>Japan</option>
+              <option>Mexico</option><option>Netherlands</option><option>New Zealand</option>
+              <option>Singapore</option><option>South Africa</option><option>Spain</option>
+              <option>Sweden</option><option>United Kingdom</option>
+            </select>
+          </label>
+          <label>State
+            <select name="state">
+              <option value="">Any state or region</option>
+              <option>Alabama</option><option>Alaska</option><option>Arizona</option><option>Arkansas</option>
+              <option>California</option><option>Colorado</option><option>Connecticut</option><option>Delaware</option>
+              <option>Florida</option><option>Georgia</option><option>Hawaii</option><option>Idaho</option>
+              <option>Illinois</option><option>Indiana</option><option>Iowa</option><option>Kansas</option>
+              <option>Kentucky</option><option>Louisiana</option><option>Maine</option><option>Maryland</option>
+              <option>Massachusetts</option><option>Michigan</option><option>Minnesota</option><option>Mississippi</option>
+              <option>Missouri</option><option>Montana</option><option>Nebraska</option><option>Nevada</option>
+              <option>New Hampshire</option><option>New Jersey</option><option>New Mexico</option><option>New York</option>
+              <option>North Carolina</option><option>North Dakota</option><option>Ohio</option><option>Oklahoma</option>
+              <option>Oregon</option><option>Pennsylvania</option><option>Rhode Island</option><option>South Carolina</option>
+              <option>South Dakota</option><option>Tennessee</option><option>Texas</option><option>Utah</option>
+              <option>Vermont</option><option>Virginia</option><option selected>Washington</option><option>West Virginia</option>
+              <option>Wisconsin</option><option>Wyoming</option><option>District of Columbia</option>
+            </select>
+          </label>
+          <label>County
+            <select name="county">
+              <option value="">Any county</option>
+              <option>Clark County</option><option>King County</option><option>Kitsap County</option>
+              <option>Pierce County</option><option>Skagit County</option><option>Snohomish County</option>
+              <option>Spokane County</option><option>Thurston County</option><option>Whatcom County</option>
+              <option>Yakima County</option>
+            </select>
+          </label>
+          <label>City
+            <select name="city">
+              <option value="">Any city</option>
+              <option>Bellevue</option><option>Everett</option><option>Kent</option><option>Kirkland</option>
+              <option>Olympia</option><option>Redmond</option><option>Renton</option><option>Seattle</option>
+              <option>Spokane</option><option>Tacoma</option><option>Vancouver</option><option>Yakima</option>
+            </select>
+          </label>
+          <label>Sort results
+            <select name="sort_by">
+              <option value="relevance">Relevance</option>
+              <option value="first_name">First name</option>
+              <option value="last_name">Last name</option>
+            </select>
+          </label>
+          <label>Max results
+            <input name="max_results" type="number" min="5" max="100" value="25" />
+          </label>
         </div>
+        <button type="submit">Run search</button>
       </form>
       <div id="status" class="status">Ready.</div>
       <div id="learning" class="pill-box"></div>
 
-      <h2 style="margin-top:18px">Search Results</h2>
+      <div class="results-heading">
+        <h2>Search Results</h2>
+        <button id="clear-results" type="button">Clear results</button>
+      </div>
       <div id="result-list" class="result-list"></div>
       </section>
     </div>
@@ -126,7 +207,54 @@
     const status = document.getElementById('status');
     const learning = document.getElementById('learning');
     const historyList = document.getElementById('history-list');
+    const clearResultsBtn = document.getElementById('clear-results');
+    const searchResultsStorageKey = 'people_search_results';
     let searchInFlight = false;
+    let currentSearchResults = null;
+
+    function saveSearchResults(data) {
+      currentSearchResults = data;
+      try {
+        sessionStorage.setItem(searchResultsStorageKey, JSON.stringify(data));
+      } catch (err) {
+        console.warn('Unable to preserve search results for this session.', err);
+      }
+    }
+
+    function searchCompletionText(data) {
+      const diagnostics = data.diagnostics || {};
+      const coverage = diagnostics.provider_query_count
+        ? ` Searched ${diagnostics.provider_query_count} provider queries across ${diagnostics.provider_count} providers.`
+        : '';
+      return `Search complete for “${data.query}” (${data.results.length} results).${coverage}`;
+    }
+
+    function restoreSearchResults() {
+      try {
+        const saved = sessionStorage.getItem(searchResultsStorageKey);
+        if (!saved) return;
+        const data = JSON.parse(saved);
+        currentSearchResults = data;
+        renderResults(data);
+        renderLearning(data.learning_terms || {});
+        status.textContent = searchCompletionText(data);
+      } catch (err) {
+        sessionStorage.removeItem(searchResultsStorageKey);
+        console.warn('Unable to restore saved search results.', err);
+      }
+    }
+
+    function clearSearchResults() {
+      currentSearchResults = null;
+      resultList.innerHTML = '';
+      learning.innerHTML = '';
+      status.textContent = 'Ready.';
+      try {
+        sessionStorage.removeItem(searchResultsStorageKey);
+      } catch (err) {
+        console.warn('Unable to clear saved search results.', err);
+      }
+    }
 
     function renderResults(data) {
       resultList.innerHTML = '';
@@ -136,14 +264,60 @@
       }
 
       data.results.forEach(item => {
+        const record = item.record || {
+          name: item.title,
+          summary: item.snippet || 'No record summary was published.',
+          fields: [],
+          source_name: item.source
+        };
         const card = document.createElement('article');
-        card.className = 'card';
-        card.innerHTML = `
-          <h3>${item.title}</h3>
-          <p class="muted">Score: ${item.score} · Source: ${item.source}</p>
-          <p>${item.snippet || 'Public web result preview.'}</p>
-          <a href="${item.url}" target="_blank" rel="noreferrer">Open source</a>
-        `;
+        card.className = 'card record-card';
+        card.tabIndex = 0;
+        card.setAttribute('role', 'link');
+        card.setAttribute('aria-label', `View record for ${record.name || 'public record'}`);
+        card.addEventListener('click', () => {
+          if (currentSearchResults) saveSearchResults(currentSearchResults);
+          window.location.href = item.record_path;
+        });
+        card.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (currentSearchResults) saveSearchResults(currentSearchResults);
+            window.location.href = item.record_path;
+          }
+        });
+
+        const heading = document.createElement('h3');
+        heading.textContent = record.name || 'Public record';
+        card.appendChild(heading);
+
+        const provenance = document.createElement('p');
+        provenance.className = 'muted';
+        provenance.textContent = `Record source: ${record.source_name || item.source} · ${record.extraction === 'page' ? 'Page data' : 'Search excerpt'}`;
+        card.appendChild(provenance);
+
+        const summary = document.createElement('p');
+        summary.className = 'record-summary';
+        summary.textContent = record.summary || 'No record summary was published.';
+        card.appendChild(summary);
+
+        if (Array.isArray(record.fields) && record.fields.length) {
+          const fields = document.createElement('dl');
+          fields.className = 'record-fields';
+          record.fields.forEach(field => {
+            const term = document.createElement('dt');
+            term.textContent = field.label;
+            const value = document.createElement('dd');
+            value.textContent = field.value;
+            fields.append(term, value);
+          });
+          card.appendChild(fields);
+        }
+
+        const action = document.createElement('span');
+        action.className = 'record-action';
+        action.textContent = 'View full record';
+        card.appendChild(action);
         resultList.appendChild(card);
       });
     }
@@ -180,7 +354,6 @@
       const submitBtn = activeForm.querySelector('button[type="submit"]');
       if (submitBtn) submitBtn.disabled = true;
       status.textContent = 'Searching…';
-      resultList.innerHTML = '';
 
       try {
         // if hero-search used, copy its query into the main search form input so results and history behave consistently
@@ -205,7 +378,8 @@
         }
         renderResults(data);
         renderLearning(data.learning_terms || {});
-        status.textContent = `Search complete for “${data.query}” (${data.results.length} results).`;
+        saveSearchResults(data);
+        status.textContent = searchCompletionText(data);
         loadHistory();
       } catch (err) {
         console.error('search error', err);
@@ -223,7 +397,10 @@
         performSearch();
       });
     }
+    clearResultsBtn.addEventListener('click', clearSearchResults);
+    window.addEventListener('pageshow', restoreSearchResults);
 
+    restoreSearchResults();
     loadHistory();
 
     // Scanner UI bindings

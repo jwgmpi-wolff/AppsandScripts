@@ -81,7 +81,7 @@ This button deploys `infra/azuredeploy.json`.
 Use the deployment script for end-to-end infra + code deploy:
 
 ```powershell
-./deploy-azure.ps1 -SubscriptionId <subscription-guid> -ResourceGroup rg-finops-agent -Location eastus
+./deploy-azure.ps1 -SubscriptionId <subscription-guid> -ResourceGroup rg-finops-agent -Location eastus -MsalClientId <tenant-entra-client-id>
 ```
 
 What it does:
@@ -101,7 +101,24 @@ Environment settings used by the app:
 - `FINOPS_REPORT_DB_PATH`: SQLite path override
 - `FINOPS_FX_SOURCE`: FX source (`env` or `url`)
 - `FINOPS_FX_RATES_JSON`: FX rate payload (JSON)
-- `FINOPS_MSAL_CLIENT_ID`: optional MSAL public client id for interactive UI login flow
+- `FINOPS_MSAL_CLIENT_ID`: tenant-owned Entra client ID required only for the standalone HTML report's interactive Azure sign-in; Copilot uses its OAuth registration instead
+
+## Microsoft 365 Copilot Agent
+
+The repository includes a Microsoft 365 Copilot declarative agent in [finops-copilot-agent](finops-copilot-agent). It calls the deployed, read-only `/api/agent/reports/{domain}` operation using delegated Azure Resource Manager access.
+
+The package includes:
+
+- A Microsoft 365 declarative agent definition
+- An OAuth API plugin generated from the bounded Copilot OpenAPI contract
+- Domain-specific instructions, conversation starters, and evaluation prompts
+- Microsoft 365 Agents Toolkit provisioning and tenant-publishing workflows
+
+Run [finops-copilot-agent/setup-tenant.ps1](finops-copilot-agent/setup-tenant.ps1) to generate tenant configuration, build, validate, and optionally publish the package. See [finops-copilot-agent/DEPLOYMENT.md](finops-copilot-agent/DEPLOYMENT.md) for the two required administrator registrations and complete deployment steps.
+
+For a single-request deployment from VS Code GitHub Copilot Chat, run `/deploy-finops-copilot`. See the [one-request prompt guide](docs/COPILOT_ONE_REQUEST_DEPLOYMENT_PROMPT.md) for parameters and a copy/paste alternative.
+
+For deployment to another tenant, use the simplified [tenant deployment guide](docs/COPILOT_TENANT_DEPLOYMENT.md). The successful reference run is preserved in the screenshot-backed [deployment transcript](docs/COPILOT_DEPLOYMENT_TRANSCRIPT.md) and [plain-text terminal transcript](docs/COPILOT_DEPLOYMENT_TRANSCRIPT.txt); their identifiers are historical evidence and must not be reused.
 
 ## Scope Selection (Tenant / Subscription)
 
@@ -110,6 +127,12 @@ The HTML report includes a **Switch Tenant / Subscription** dialog.
 - Set `tenantId` and `subscriptionId` to scope report execution.
 - If omitted, scope is automatic.
 - The app checks for subscriptions visible to the executing identity and returns a clear error if not accessible.
+
+## Copilot Studio Agent
+
+See [Build a Copilot Studio FinOps Agent with Live Azure Data](docs/COPILOT_STUDIO_FINOPS_AGENT.md) for the tenant-safe agent, authentication, knowledge, tool, and publishing setup.
+
+To configure **Get Azure Advisor** for authenticated live tenant data only, use the [live-only runbook](docs/COPILOT_STUDIO_GET_AZURE_ADVISOR_LIVE_ONLY.md) and [PDF](docs/COPILOT_STUDIO_GET_AZURE_ADVISOR_LIVE_ONLY.pdf). The agent uses Azure Monitor Logs under the signed-in user's access and excludes static files, websites, skills, sample data, and unsupported Advisor or Cost Management claims.
 
 ## Artifact Endpoints
 

@@ -39,7 +39,7 @@ _report_db_override = (os.getenv("FINOPS_REPORT_DB_PATH") or "").strip()
 REPORT_DB_PATH = Path(_report_db_override) if _report_db_override else (ARTIFACT_DIR / "finops_reports.db")
 REPORT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _CURRENT_SUBSCRIPTION_ID = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
-MSAL_PUBLIC_CLIENT_ID = (os.getenv("FINOPS_MSAL_CLIENT_ID") or "04b07795-8ddb-461a-bbee-02f9e1bf7b46").strip()
+MSAL_PUBLIC_CLIENT_ID = (os.getenv("FINOPS_MSAL_CLIENT_ID") or "").strip()
 
 
 def _subscription_id_from_owner_name() -> str:
@@ -1949,6 +1949,11 @@ def render_tabular_html(response: dict[str, Any]) -> str:
         }}
 
         async function signInForArm() {{
+            if (!clientId) {{
+                alert('Interactive Azure sign-in is not configured. Set FINOPS_MSAL_CLIENT_ID to this tenant\'s Entra application client ID.');
+                return;
+            }}
+
             if (!window.msal) {{
                 alert('Microsoft login library did not load. Refresh and try again.');
                 return;

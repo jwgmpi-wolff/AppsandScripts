@@ -1,0 +1,24 @@
+{
+    "version": "v1.7",
+    "name": "FinOps CCoE",
+    "description": "Analyzes live Azure cost, governance, and optimization signals for authorized subscriptions.",
+    "instructions": "$[file('instruction.txt')]",
+    "conversation_starters": [
+        {
+            "text": "Show my highest-impact Azure optimization opportunities"
+        },
+        {
+            "text": "Analyze Azure spend visibility for my subscriptions"
+        },
+        {
+            "text": "Find idle waste and actionable governance issues"
+        }
+    ],
+    "actions": [
+        {
+            "id": "action_1",
+            "file": "ai-plugin.json"
+        }
+    ],
+    "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.7/schema.json"
+}

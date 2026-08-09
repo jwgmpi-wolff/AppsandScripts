@@ -1,0 +1,166 @@
+openapi: 3.0.4
+info:
+  title: FinOps CCoE Copilot API - Subset
+  description: 'Runs bounded, live Azure FinOps reports for Microsoft 365 Copilot.'
+  version: 1.0.0
+servers:
+  - url: ${{API_BASE_URL}}
+paths:
+  '/api/agent/reports/{domain}':
+    post:
+      summary: Run a live Azure FinOps report
+      description: Returns a bounded report for the requested FinOps domain and Azure scope.
+      operationId: runFinOpsReport
+      parameters:
+        - name: domain
+          in: path
+          description: FinOps reporting domain to analyze.
+          required: true
+          schema:
+            enum:
+              - spend_visibility
+              - budget_forecasting
+              - optimization
+              - reservations
+              - savings_plans
+              - savings_potential
+              - reservations_potential
+              - anomaly_detection
+              - governance
+              - tag_compliance
+              - chargeback_showback
+              - architecture_efficiency
+              - sustainability
+              - ai_finops
+              - ai_token_tracking
+              - idle_waste_detection
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - tenant_id
+              type: object
+              properties:
+                tenant_id:
+                  type: string
+                  description: Microsoft Entra tenant ID containing the Azure subscriptions.
+                subscription_ids:
+                  type: array
+                  items:
+                    type: string
+                  description: Azure subscription IDs to include. Omit to use all accessible subscriptions.
+                strict_live_mode:
+                  type: boolean
+                  description: Reject incomplete live data instead of using cached results.
+                  default: true
+                max_rows:
+                  maximum: 100
+                  minimum: 1
+                  type: integer
+                  description: Maximum number of detail rows returned to Copilot.
+                  default: 25
+                filters:
+                  type: object
+                  properties:
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    resource_group:
+                      type: string
+                    resource_type:
+                      type: string
+                    region:
+                      type: string
+                    tag_key:
+                      type: string
+                    tag_value:
+                      type: string
+                    severity:
+                      type: string
+                    actionable_only:
+                      type: boolean
+                      default: false
+        required: true
+      responses:
+        '200':
+          description: Live FinOps report generated successfully.
+          content:
+            application/json:
+              schema:
+                required:
+                  - domain
+                  - tenant_id
+                  - generated_at_utc
+                  - live_data_confirmed
+                  - total_row_count
+                  - returned_row_count
+                type: object
+                properties:
+                  domain:
+                    type: string
+                  tenant_id:
+                    type: string
+                  subscription_scope:
+                    type: array
+                    items:
+                      type: string
+                  generated_at_utc:
+                    type: string
+                    format: date-time
+                  execution_time_ms:
+                    type: integer
+                  live_data_confirmed:
+                    type: boolean
+                  data_quality_score:
+                    type: number
+                  unresolved_fields_count:
+                    type: integer
+                  total_row_count:
+                    type: integer
+                  returned_row_count:
+                    type: integer
+                  result_truncated:
+                    type: boolean
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                  recommendations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category:
+                          type: string
+                        impact_estimate:
+                          type: string
+                        confidence:
+                          type: string
+                        affected_scope:
+                          type: string
+                        suggested_action:
+                          type: string
+                        evidence:
+                          type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+      security:
+        - azureManagementOAuth:
+            - https://management.azure.com/user_impersonation
+components:
+  securitySchemes:
+    azureManagementOAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/${{DEPLOYMENT_TENANT_ID}}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/${{DEPLOYMENT_TENANT_ID}}/oauth2/v2.0/token
+          scopes:
+            https://management.azure.com/user_impersonation: Access Azure resources as the signed-in user.

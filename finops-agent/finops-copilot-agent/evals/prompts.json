@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.2.0",
+  "default_evaluators": {
+    "Relevance": {},
+    "Coherence": {}
+  },
+  "items": [
+    {
+      "prompt": "Show the highest-impact optimization opportunities for my tenant and ask me which subscriptions to include.",
+      "expected_response": "Uses the live optimization report action and summarizes actionable recommendations, scope, freshness, and data-quality limitations."
+    },
+    {
+      "prompt": "Find idle Azure waste for my authorized subscriptions.",
+      "expected_response": "Uses the idle waste report domain and asks for subscription scope when needed."
+    }
+  ]
+}

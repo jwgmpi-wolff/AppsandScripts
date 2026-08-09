@@ -7,7 +7,8 @@ param(
     [string]$FunctionAppName = '',
     [string]$StorageName = '',
     [string]$AppServicePlanName = '',
-    [string]$AppInsightsName = ''
+    [string]$AppInsightsName = '',
+    [string]$MsalClientId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,14 +68,22 @@ az functionapp deployment source config-zip `
     --build-remote true `
     --output none
 
+if ($MsalClientId) {
+    az functionapp config appsettings set `
+        --resource-group $ResourceGroup `
+        --name $FunctionAppName `
+        --settings FINOPS_MSAL_CLIENT_ID=$MsalClientId `
+        --output none
+}
+
 az functionapp restart --resource-group $ResourceGroup --name $FunctionAppName --output none
 
 $key = az functionapp keys list --resource-group $ResourceGroup --name $FunctionAppName --query functionKeys.default -o tsv
-$host = az functionapp show --resource-group $ResourceGroup --name $FunctionAppName --query defaultHostName -o tsv
+$functionHost = az functionapp show --resource-group $ResourceGroup --name $FunctionAppName --query defaultHostName -o tsv
 
 Write-Host ''
 Write-Host 'Deployment complete.'
 Write-Host "Function app: $FunctionAppName"
 Write-Host "Resource group: $ResourceGroup"
-Write-Host "Health URL: https://$host/api/finops_health?code=$key"
-Write-Host "Report URL: https://$host/api/run_finops_report?format=html&pageSize=25&code=$key"
+Write-Host "Health URL: https://$functionHost/api/finops_health?code=$key"
+Write-Host "Report URL: https://$functionHost/api/run_finops_report?format=html&pageSize=25&code=$key"

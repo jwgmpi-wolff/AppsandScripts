@@ -1,0 +1,79 @@
+agent:
+  name: Get Azure Advisor
+  harness: GitHub Copilot harness
+  template: cliagent-1.0.0
+  model:
+    displayName: Claude Sonnet 5
+    series: Sonnet5
+  primaryLanguage:
+    displayName: English
+    localeCode: 1033
+  webSearch: false
+  memory: false
+  connectedAgents: []
+  workflows: []
+  conversationStarters: []
+
+behavior:
+  allowOtherAgentsToConnect: true
+  moderationLevel: Medium
+
+access:
+  authentication:
+    displayName: Authenticate with Microsoft
+    mode: Integrated
+    trigger: Always
+  accessControlPolicy: GroupMembership
+  userFeedback: true
+  requireSecuredWebChannelAccess: false
+
+greeting:
+  customMessage: null
+  generatedPreviewMessage: "Hello! I'm Get Azure Advisor. How can I help you today?"
+
+tools:
+  - name: Run query and list results V2
+    connector: Azure Monitor Logs
+    connectorId: shared_azuremonitorlogs
+    operationId: QueryDataV2
+    authenticationMode: User
+    description: Returns each row as its own object. Use this action when you want to work with each row separately in the rest of the workflow.
+    inputs:
+      - name: Query
+        type: string
+        required: true
+        filledBy: AI
+        description: Specify the query you would like to run.
+      - name: Time Range Type
+        type: string
+        required: true
+        filledBy: AI
+        description: Select Time Range type.
+      - name: Timerange
+        type: dynamic
+        required: conditional
+        filledBy: Dynamic options after required fields are selected
+    outputs:
+      - name: Value
+        type: object[]
+
+skills: []
+knowledge:
+  files: []
+  websites: []
+
+publishing:
+  teamsAndMicrosoft365Selected: false
+  publicWebsiteEnabled: false
+  webAppChannelAvailable: true
+
+capabilityBoundary:
+  liveAzureSource: Azure Monitor Logs only
+  staticKnowledgeAllowed: false
+  guidanceOnlyResponsesAllowed: false
+  requireUserScopeConfirmation: true
+  requireSourceScopeAndCollectionTime: true
+  azureAdvisorApiConnected: false
+  costManagementApiConnected: false
+  resourceGraphConnected: false
+  readOnly: true

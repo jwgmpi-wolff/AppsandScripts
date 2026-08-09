@@ -38,7 +38,7 @@ RTSP_PATH_CANDIDATES = [
     "/ch0_1.h264",
     "/live",
     "/stream1",
-    "/ch0_0.264",   # YI YHS.3017 community-observed path
+    "/ch0_0.h264",  # yi-hack-Allwinner-v2 YI Outdoor 1080p (h30ga/r40ga)
 ]
 
 

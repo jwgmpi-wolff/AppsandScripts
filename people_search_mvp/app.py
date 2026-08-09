@@ -4,16 +4,19 @@ import os
 import re
 import socket
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, redirect, render_template, request
 from urllib.parse import urlparse
 import csv
 import io
 import datetime
 import time
+from html import unescape
+from urllib.parse import quote_plus
 
 # optional background worker (RQ)
 try:
@@ -80,6 +83,11 @@ def init_db():
         )
         """
     )
+    result_columns = {
+        row[1] for row in cur.execute("PRAGMA table_info(search_results)").fetchall()
+    }
+    if "record_json" not in result_columns:
+        cur.execute("ALTER TABLE search_results ADD COLUMN record_json TEXT")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS learning_terms (
@@ -147,10 +155,24 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-def safe_request(url: str, *, params: dict, timeout: int = 20, source_name: str = "web"):
+def safe_request(
+    url: str,
+    *,
+    params: dict,
+    timeout: int = 20,
+    source_name: str = "web",
+    method: str = "get",
+):
     try:
         logger.info("[%s] Request start url=%s params=%s", source_name, url, params)
-        resp = requests.get(url, headers=DEFAULT_HEADERS, params=params, timeout=timeout)
+        request_kwargs = {"params": params} if method == "get" else {"data": params}
+        resp = requests.request(
+            method,
+            url,
+            headers=DEFAULT_HEADERS,
+            timeout=timeout,
+            **request_kwargs,
+        )
         logger.info("[%s] Response status=%s final_url=%s", source_name, resp.status_code, resp.url)
         resp.raise_for_status()
         return resp, None
@@ -160,10 +182,11 @@ def safe_request(url: str, *, params: dict, timeout: int = 20, source_name: str 
 
 def fetch_duckduckgo(query: str, max_results: int = 8):
     resp, err = safe_request(
-        "https://duckduckgo.com/html/",
+        "https://lite.duckduckgo.com/lite/",
         params={"q": query, "kl": "us-en"},
         timeout=20,
         source_name="duckduckgo",
+        method="post",
     )
     if err:
         return {"results": [], "error": err, "source": "duckduckgo"}
@@ -172,20 +195,21 @@ def fetch_duckduckgo(query: str, max_results: int = 8):
     items = []
     seen = set()
 
-    for result in soup.select("div.result"):
-        a = result.select_one("a.result__a")
-        if not a:
-            continue
-
-        title = a.get_text(" ", strip=True)
+    for a in soup.select("a.result-link"):
+        title = unescape(a.get_text(" ", strip=True))
         href = a.get("href")
         if not href or not href.startswith(("http://", "https://")):
             continue
         if href in seen:
             continue
 
-        snippet_node = result.select_one("a.result__snippet, div.result__snippet")
-        snippet = snippet_node.get_text(" ", strip=True) if snippet_node else "DuckDuckGo result"
+        result_row = a.find_parent("tr")
+        snippet_row = result_row.find_next_sibling("tr") if result_row else None
+        snippet_node = snippet_row.select_one("td.result-snippet") if snippet_row else None
+        snippet = (
+            unescape(snippet_node.get_text(" ", strip=True))
+            if snippet_node else "DuckDuckGo result"
+        )
 
         items.append({
             "title": title,
@@ -302,12 +326,257 @@ PROVIDERS = {
     "wikipedia": fetch_wikipedia,
 }
 
+SOCIAL_MEDIA_DOMAINS = {
+    "linkedin": "linkedin.com",
+    "facebook": "facebook.com",
+    "x": "x.com",
+    "instagram": "instagram.com",
+    "tiktok": "tiktok.com",
+    "github": "github.com",
+    "youtube": "youtube.com",
+    "reddit": "reddit.com",
+}
+
+PUBLIC_RECORD_TERMS = {
+    "county_records": '"county public records"',
+    "assessor": '"county assessor" OR "property records"',
+    "clerk_court": '"county clerk" OR "court records"',
+    "recorder": '"county recorder" OR "deed records"',
+    "sheriff": '"county sheriff"',
+}
+
+ENTITY_QUERY_TERMS = {
+    "public": '"public profile"',
+    "org": '"organization"',
+    "news": '"news" OR "media"',
+}
+
+
+def build_search_query(query: str, filters: dict) -> str:
+    base_query = query.strip()
+    person_name = " ".join(
+        value for value in (
+            filters.get("first_name", "").strip(),
+            filters.get("last_name", "").strip(),
+        ) if value
+    )
+    entity = filters.get("entity", "")
+    if entity == "public" and base_query and not person_name and not (
+        base_query.startswith('"') and base_query.endswith('"')
+    ):
+        base_query = f'"{base_query}"'
+    parts = [f'"{person_name}"'] if person_name else []
+    if base_query:
+        parts.append(base_query)
+    if entity in ENTITY_QUERY_TERMS and entity != "public":
+        parts.append(f"({ENTITY_QUERY_TERMS[entity]})")
+
+    locations = [
+        value for value in (
+            filters.get("city", ""),
+            filters.get("county", ""),
+            filters.get("state", ""),
+            filters.get("country", ""),
+        ) if value
+    ]
+    parts.extend(locations)
+
+    public_record_type = filters.get("public_record_type", "")
+    if public_record_type in PUBLIC_RECORD_TERMS:
+        parts.append(f"({PUBLIC_RECORD_TERMS[public_record_type]})")
+    if filters.get("source") == "public_records":
+        parts.append('(site:.gov OR site:.us) "public records"')
+
+    social_media_site = filters.get("social_media_site", "")
+    if social_media_site in SOCIAL_MEDIA_DOMAINS:
+        parts.append(f"site:{SOCIAL_MEDIA_DOMAINS[social_media_site]}")
+    elif filters.get("source") == "social_media":
+        domains = " OR ".join(f"site:{domain}" for domain in SOCIAL_MEDIA_DOMAINS.values())
+        parts.append(f"({domains})")
+
+    return " ".join(parts)
+
+
+def result_name_key(item: dict, sort_by: str):
+    title = re.split(r"\s[-|:]\s", item.get("title") or "", maxsplit=1)[0]
+    words = re.findall(r"[A-Za-z][A-Za-z'.-]*", title)
+    if not words:
+        return ("", "", (item.get("title") or "").casefold())
+    first_name = words[0].casefold()
+    last_name = words[-1].casefold() if len(words) > 1 else first_name
+    primary, secondary = (last_name, first_name) if sort_by == "last_name" else (first_name, last_name)
+    return (primary, secondary, (item.get("title") or "").casefold())
+
+
+def sort_search_results(results: list, sort_by: str) -> list:
+    if sort_by in {"first_name", "last_name"}:
+        return sorted(results, key=lambda item: result_name_key(item, sort_by))
+    return sorted(results, key=lambda item: item["score"], reverse=True)
+
+
+def _record_value(value) -> str:
+    if isinstance(value, dict):
+        ordered_keys = ("streetAddress", "addressLocality", "addressRegion", "postalCode", "addressCountry")
+        address = ", ".join(str(value[key]).strip() for key in ordered_keys if value.get(key))
+        if address:
+            return address
+        for key in ("name", "title", "jobTitle", "description"):
+            if value.get(key):
+                return _record_value(value[key])
+        return ""
+    if isinstance(value, list):
+        return ", ".join(_record_value(item) for item in value if _record_value(item))
+    return re.sub(r"\s+", " ", unescape(str(value or ""))).strip()
+
+
+def extract_record_from_html(html: str, item: dict) -> dict:
+    soup = BeautifulSoup(html or "", "html.parser")
+    fields = []
+    seen_labels = set()
+
+    def add_field(label, value):
+        clean_label = re.sub(r"\s+", " ", str(label or "")).strip().rstrip(":")
+        clean_value = _record_value(value)
+        normalized_label = clean_label.casefold()
+        if clean_label and clean_value and normalized_label not in seen_labels:
+            fields.append({"label": clean_label[:80], "value": clean_value[:500]})
+            seen_labels.add(normalized_label)
+
+    structured_record = None
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            payload = json.loads(script.string or script.get_text() or "")
+        except (TypeError, ValueError):
+            continue
+        candidates = payload if isinstance(payload, list) else [payload]
+        for candidate in candidates:
+            if isinstance(candidate, dict) and isinstance(candidate.get("@graph"), list):
+                candidates.extend(candidate["@graph"])
+            if not isinstance(candidate, dict):
+                continue
+            record_type = candidate.get("@type")
+            record_types = record_type if isinstance(record_type, list) else [record_type]
+            if any(value in {"Person", "Organization", "NewsArticle", "Article", "GovernmentOrganization"} for value in record_types):
+                structured_record = candidate
+                break
+        if structured_record:
+            break
+
+    if structured_record:
+        for key, label in (
+            ("jobTitle", "Occupation"),
+            ("hasOccupation", "Occupation"),
+            ("worksFor", "Organization"),
+            ("address", "Address"),
+            ("telephone", "Phone"),
+            ("email", "Email"),
+            ("birthDate", "Birth date"),
+            ("datePublished", "Published"),
+        ):
+            add_field(label, structured_record.get(key))
+
+    snippet = _record_value(item.get("snippet"))
+    explicit_patterns = (
+        ("Occupation", r"\b(?:occupation|profession|job title)\b\s*(?:is|:|-)?\s*([^.;|·]{2,100})"),
+        ("Organization", r"\b(?:employer|works (?:at|for)|employed (?:at|by)|experience)\b\s*(?:is|:|-)?\s*([^.;|·]{2,100})"),
+        ("Employment status", r"\b(?:employment|working) status\b\s*(?:is|:|-)?\s*([^.;|·]{2,80})"),
+        ("Source of income", r"\b(?:source of income|income source)\b\s*(?:is|:|-)?\s*([^.;|·]{2,100})"),
+        ("Relationship status (third-party)", r"\b(?:relationship|marital status)\b\s*(?:is|:|-)?\s*([^.;|·]{2,40})"),
+        ("Relationship status (third-party)", r"\b(?:is|is now)\s+(married|single|divorced|widowed)\b"),
+        ("Associates (third-party)", r"\b(?:associates(?:\s*&\s*neighbors)?|personal network)[^.;:]*?(?:include|:)\s*([^.;]{2,300})"),
+    )
+    for label, pattern in explicit_patterns:
+        match = re.search(pattern, snippet, flags=re.IGNORECASE)
+        if match:
+            add_field(label, match.group(1))
+
+    currency = r"\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?)?(?:\s*(?:thousand|million|billion|[KMB]))?"
+    net_worth_match = re.search(
+        rf"(?:estimated\s+)?net\s+worth\s*(?:is|of|:|-)?\s*(?:greater\s+than\s+)?({currency})|({currency})\s+(?:estimated\s+)?net\s+worth",
+        snippet,
+        flags=re.IGNORECASE,
+    )
+    if net_worth_match:
+        add_field("Estimated net worth (third-party)", net_worth_match.group(1) or net_worth_match.group(2))
+
+    income_match = re.search(
+        rf"\b(?:annual\s+)?income\s*(?:is|of|:|-)?\s*({currency})|\bmakes?\s+(?:between\s+)?({currency})\s+(?:a|per)\s+year\b",
+        snippet,
+        flags=re.IGNORECASE,
+    )
+    if income_match:
+        add_field("Annual income (third-party)", income_match.group(1) or income_match.group(2))
+
+    for row in soup.select("table tr"):
+        cells = row.find_all(["th", "td"], recursive=False)
+        if len(cells) >= 2:
+            add_field(cells[0].get_text(" ", strip=True), cells[1].get_text(" ", strip=True))
+        if len(fields) >= 16:
+            break
+
+    if len(fields) < 16:
+        for term in soup.select("dl dt"):
+            description = term.find_next_sibling("dd")
+            if description:
+                add_field(term.get_text(" ", strip=True), description.get_text(" ", strip=True))
+            if len(fields) >= 16:
+                break
+
+    description = ""
+    if structured_record:
+        description = _record_value(structured_record.get("description"))
+    if not description:
+        meta = soup.select_one('meta[name="description"], meta[property="og:description"]')
+        description = _record_value(meta.get("content")) if meta else ""
+    if not description:
+        paragraphs = [node.get_text(" ", strip=True) for node in soup.select("main p, article p, body p")]
+        description = " ".join(value for value in paragraphs if len(value) >= 30)[:1000]
+
+    name = _record_value(structured_record.get("name")) if structured_record else ""
+    if not name:
+        name = re.split(r"\s[-|:]\s", item.get("title") or "", maxsplit=1)[0].strip()
+
+    return {
+        "name": _record_value(name or item.get("title")) or "Public record",
+        "summary": _record_value(description or item.get("snippet")) or "No record summary was published.",
+        "fields": fields,
+        "source_name": urlparse(item.get("url") or "").netloc,
+        "extraction": "page" if description or fields else "search_excerpt",
+    }
+
+
+def enrich_result_with_record(item: dict) -> dict:
+    if item.get("source") == "local-fixture":
+        return {**item, "record": extract_record_from_html("", item)}
+
+    response, error = safe_request(
+        item.get("url") or "",
+        params={},
+        timeout=10,
+        source_name="record-extractor",
+    )
+    if error or response is None:
+        record = extract_record_from_html("", item)
+        record["extraction"] = "search_excerpt"
+        return {**item, "record": record, "record_error": error}
+
+    content_type = response.headers.get("Content-Type", "").lower()
+    html = response.text if "html" in content_type or not content_type else ""
+    return {**item, "record": extract_record_from_html(html, item)}
+
+
+def enrich_search_results(results: list) -> list:
+    if not results:
+        return []
+    with ThreadPoolExecutor(max_workers=min(6, len(results))) as executor:
+        return list(executor.map(enrich_result_with_record, results))
+
 
 def resolve_provider_names(source: str):
     normalized = (source or "all").strip().lower()
 
     # UI-level source scopes currently map to the same public providers.
-    if normalized in {"all", "all_source_scopes", "web", "news"}:
+    if normalized in {"all", "all_source_scopes", "web", "news", "public_records", "social_media"}:
         return list(PROVIDERS.keys())
 
     # Direct provider targeting is still supported for advanced callers.
@@ -315,6 +584,32 @@ def resolve_provider_names(source: str):
         return [normalized]
 
     return []
+
+
+def build_provider_query_plan(source: str, query: str):
+    normalized = (source or "all").strip().lower()
+    provider_names = resolve_provider_names(normalized)
+    if normalized not in {"all", "all_source_scopes"}:
+        return [(provider_name, query, "selected_scope") for provider_name in provider_names]
+
+    scoped_queries = [
+        ("general_web", query),
+        ("public_records", f'{query} (site:.gov OR site:.us) "public records"'),
+        ("news", f'{query} ("news" OR "media")'),
+    ]
+    scoped_queries.extend(
+        (f"social_{site}", f"{query} site:{domain}")
+        for site, domain in SOCIAL_MEDIA_DOMAINS.items()
+    )
+
+    plan = []
+    for provider_name in provider_names:
+        provider_queries = scoped_queries if provider_name != "wikipedia" else scoped_queries[:1]
+        plan.extend(
+            (provider_name, scoped_query, scope_name)
+            for scope_name, scoped_query in provider_queries
+        )
+    return plan
 
 FICTIONAL_PROFILE_RESULTS = {
     "avery stonebridge": [
@@ -412,6 +707,7 @@ def fetch_results(source: str, query: str, max_results: int):
     seen_urls = set()
 
     provider_names = resolve_provider_names(source)
+    query_plan = build_provider_query_plan(source, query)
 
     if not provider_names:
         warning = {
@@ -422,7 +718,7 @@ def fetch_results(source: str, query: str, max_results: int):
         errors.append(warning)
         return aggregated, errors
 
-    for provider_name in provider_names:
+    for provider_name, provider_query, scope_name in query_plan:
         provider_func = PROVIDERS.get(provider_name)
         if not provider_func:
             warning = {
@@ -433,10 +729,11 @@ def fetch_results(source: str, query: str, max_results: int):
             errors.append(warning)
             continue
 
-        provider_response = provider_func(query, max_results)
+        provider_response = provider_func(provider_query, max_results)
         if provider_response.get("error"):
             errors.append({
                 "source": provider_name,
+                "scope": scope_name,
                 "error": provider_response["error"],
             })
 
@@ -447,8 +744,39 @@ def fetch_results(source: str, query: str, max_results: int):
             aggregated.append(item)
             seen_urls.add(url)
 
-    logger.info("[router] Aggregated unique results=%s errors=%s", len(aggregated), len(errors))
+    logger.info(
+        "[router] Aggregated unique results=%s errors=%s provider_queries=%s",
+        len(aggregated),
+        len(errors),
+        len(query_plan),
+    )
     return aggregated, errors
+
+
+def enrich_person_search_excerpts(person_name: str, results: list, max_results: int):
+    if not person_name or not results:
+        return results, None
+
+    detail_query = f'"{person_name}" net worth income employment'
+    detail_response = fetch_duckduckgo(detail_query, max_results)
+    if detail_response.get("error"):
+        return results, detail_response["error"]
+
+    by_url = {item.get("url"): item for item in results if item.get("url")}
+    for detail in detail_response.get("results", []):
+        url = detail.get("url")
+        if not url:
+            continue
+        existing = by_url.get(url)
+        if existing:
+            if len(detail.get("snippet") or "") > len(existing.get("snippet") or ""):
+                existing["snippet"] = detail["snippet"]
+            continue
+        if len(results) < max_results:
+            results.append(detail)
+            by_url[url] = detail
+
+    return results, None
 
 
 def get_fictional_fallback_results(query: str, max_results: int):
@@ -462,8 +790,8 @@ def get_generic_fallback_results(query: str, max_results: int):
     if not q:
         return []
 
-    q_plus = q.replace(" ", "+")
-    q_underscore = q.replace(" ", "_")
+    q_plus = quote_plus(q)
+    q_underscore = quote_plus(q).replace("+", "_")
     options = [
         {
             "title": f"Search '{q}' on Wikipedia",
@@ -1007,51 +1335,72 @@ def search():
 
     query = str(_field("query", "")).strip()
     try:
-        max_results = int(_field("max_results", 8) or 8)
+        max_results = int(_field("max_results", 25) or 25)
     except ValueError:
-        max_results = 8
+        max_results = 25
 
     filters = {
         "entity": str(_field("entity", _field("entity_type", "public")) or "public"),
         "source": str(_field("source", "all") or "all").lower(),
-        "max_results": max(1, min(max_results, 25)),
+        "max_results": max(1, min(max_results, 100)),
+        "first_name": str(_field("first_name", "") or "").strip(),
+        "last_name": str(_field("last_name", "") or "").strip(),
+        "country": str(_field("country", "") or "").strip(),
+        "state": str(_field("state", "") or "").strip(),
+        "county": str(_field("county", "") or "").strip(),
+        "city": str(_field("city", "") or "").strip(),
+        "public_record_type": str(_field("public_record_type", "") or "").strip().lower(),
+        "social_media_site": str(_field("social_media_site", "") or "").strip().lower(),
+        "sort_by": str(_field("sort_by", "relevance") or "relevance").strip().lower(),
     }
 
-    if not query:
-        return jsonify({"error": "Provide at least one search term."}), 400
+    person_name = " ".join(
+        value for value in (filters["first_name"], filters["last_name"]) if value
+    )
+    if not query and not person_name:
+        return jsonify({"error": "Provide a query, first name, or last name."}), 400
 
+    search_label = query or person_name
+
+    effective_query = build_search_query(query, filters)
     query_terms = [
-        t for t in re.findall(r"[A-Za-z0-9]+", query.lower()) if len(t) > 2
+        t for t in re.findall(r"[A-Za-z0-9]+", effective_query.lower()) if len(t) > 2
     ]
     learning_weights = load_learning_weights()
     candidate_results, fetch_errors = fetch_results(
         filters["source"],
-        query,
+        effective_query,
         filters["max_results"],
     )
 
-    if not candidate_results:
-        fallback_results = get_fictional_fallback_results(query, filters["max_results"])
-        if fallback_results:
-            logger.info("[search] Using local fictional fallback for query=%r", query)
-            candidate_results = fallback_results
+    if person_name and "duckduckgo" in resolve_provider_names(filters["source"]):
+        candidate_results, detail_error = enrich_person_search_excerpts(
+            person_name,
+            candidate_results,
+            filters["max_results"],
+        )
+        if detail_error:
+            fetch_errors.append({"source": "duckduckgo-details", "error": detail_error})
 
     if not candidate_results:
-        logger.info("[search] Using generic fallback links for query=%r", query)
-        candidate_results = get_generic_fallback_results(query, filters["max_results"])
+        fallback_results = get_fictional_fallback_results(search_label, filters["max_results"])
+        if fallback_results:
+            logger.info("[search] Using local fictional fallback for query=%r", search_label)
+            candidate_results = fallback_results
 
     scored = []
     for item in candidate_results:
         score = score_result(item, query_terms, learning_weights)
         scored.append({**item, "score": score})
 
-    scored_sorted = sorted(scored, key=lambda x: x["score"], reverse=True)
+    scored_sorted = sort_search_results(scored, filters["sort_by"])[:filters["max_results"]]
+    scored_sorted = enrich_search_results(scored_sorted)
     result_count = len(scored_sorted)
 
     if result_count == 0:
         logger.warning(
             "[search] No results query=%r source=%s errors=%s",
-            query,
+            search_label,
             filters["source"],
             fetch_errors,
         )
@@ -1060,15 +1409,17 @@ def search():
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO searches(query, filters, result_count) VALUES(?, ?, ?)",
-        (query, json.dumps(filters), result_count),
+        (search_label, json.dumps(filters), result_count),
     )
     search_id = cur.lastrowid
 
     for item in scored_sorted:
         cur.execute(
             """
-            INSERT INTO search_results(search_id, title, url, snippet, source, score)
-            VALUES(?, ?, ?, ?, ?, ?)
+            INSERT INTO search_results(
+                search_id, title, url, snippet, source, score, record_json
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 search_id,
@@ -1077,28 +1428,80 @@ def search():
                 item["snippet"],
                 item["source"],
                 item["score"],
+                json.dumps(item.get("record") or {}),
             ),
         )
+        item["record_path"] = f"/records/{cur.lastrowid}"
 
     conn.commit()
     conn.close()
 
     update_learning_weights(query_terms, [item["score"] for item in scored_sorted])
 
+    response_results = [
+        {key: value for key, value in item.items() if key != "url"}
+        for item in scored_sorted
+    ]
     response = {
-        "query": query,
+        "query": search_label,
+        "effective_query": effective_query,
         "filters": filters,
-        "results": scored_sorted,
+        "results": response_results,
         "search_id": search_id,
         "learning_terms": load_learning_weights(),
         "fetch_errors": fetch_errors,
         "diagnostics": {
             "provider_count": len(resolve_provider_names(filters["source"])),
+            "provider_query_count": len(build_provider_query_plan(filters["source"], effective_query)),
+            "searched_providers": resolve_provider_names(filters["source"]),
+            "searched_scopes": sorted({
+                scope_name
+                for _, _, scope_name in build_provider_query_plan(filters["source"], effective_query)
+            }),
             "requested_source": filters["source"],
             "result_count": result_count,
         },
     }
     return jsonify(response)
+
+
+@app.route("/records/<int:result_id>")
+def record_detail(result_id: int):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id, title, snippet, source, record_json FROM search_results WHERE id = ?",
+        (result_id,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        abort(404)
+
+    try:
+        record = json.loads(row["record_json"] or "{}")
+    except (TypeError, ValueError):
+        record = {}
+    record.setdefault("name", row["title"] or "Public record")
+    record.setdefault("summary", row["snippet"] or "No record summary was published.")
+    record.setdefault("fields", [])
+    record.setdefault("source_name", row["source"] or "Public source")
+    return render_template("record_detail.html", record=record, result_id=result_id)
+
+
+@app.route("/records/<int:result_id>/source")
+def record_source(result_id: int):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT url FROM search_results WHERE id = ?",
+        (result_id,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        abort(404)
+
+    source_url = row["url"] or ""
+    if urlparse(source_url).scheme not in {"http", "https"}:
+        abort(404)
+    return redirect(source_url)
 
 @app.route("/history")
 def history():

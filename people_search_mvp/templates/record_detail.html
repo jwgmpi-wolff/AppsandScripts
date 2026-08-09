@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ record.name }} | Public Search Intelligence</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>{{ record.name }}</h1>
+      <p>Extracted public record data</p>
+    </div>
+    <nav><a href="/#results" onclick="if (history.length > 1) { history.back(); return false; }">Back to results</a></nav>
+  </header>
+
+  <main class="panel record-detail">
+    <p class="muted">Record source: {{ record.source_name }} · {{ "Page data" if record.extraction == "page" else "Search excerpt" }}</p>
+    <p class="record-summary">{{ record.summary }}</p>
+
+    {% if record.fields %}
+    <dl class="record-fields">
+      {% for field in record.fields %}
+      <dt>{{ field.label }}</dt>
+      <dd>{{ field.value }}</dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+
+    <div class="record-actions">
+      <a href="/records/{{ result_id }}/source" target="_blank" rel="noopener noreferrer">Open original record</a>
+      <a href="/#results" onclick="if (history.length > 1) { history.back(); return false; }">Back to results</a>
+    </div>
+  </main>
+</body>
+</html>

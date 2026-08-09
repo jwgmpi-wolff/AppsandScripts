@@ -1,0 +1,46 @@
+{
+    "type": "AdaptiveCard",
+    "$schema": "https://adaptivecards.io/schemas/adaptive-card.json",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "FinOps CCoE live report",
+            "size": "Large",
+            "weight": "Bolder",
+            "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {
+                    "title": "Domain",
+                    "value": "${if(domain, domain, 'N/A')}"
+                },
+                {
+                    "title": "Tenant",
+                    "value": "${if(tenant_id, tenant_id, 'N/A')}"
+                },
+                {
+                    "title": "Rows",
+                    "value": "${if(returned_row_count, returned_row_count, 0)} of ${if(total_row_count, total_row_count, 0)}"
+                },
+                {
+                    "title": "Data quality",
+                    "value": "${if(data_quality_score, data_quality_score, 'N/A')}"
+                },
+                {
+                    "title": "Generated",
+                    "value": "${if(generated_at_utc, generated_at_utc, 'N/A')}"
+                }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Live Azure data confirmed: ${if(live_data_confirmed, 'Yes', 'No')}",
+            "weight": "Bolder",
+            "color": "Accent",
+            "wrap": true
+        }
+    ]
+}
