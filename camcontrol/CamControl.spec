@@ -25,7 +25,8 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=['matplotlib', 'numpy', 'pandas', 'PIL', 'tkinter'],
+    excludes=['matplotlib', 'numpy', 'pandas', 'PIL', 'tkinter',
+              'cv2', 'opencv', 'azure'],  # exclude large unused deps
     noarchive=False,
 )
 

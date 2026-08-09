@@ -3,7 +3,7 @@ package com.wolff.camcontrol;
 import android.app.Activity;
 import android.os.Bundle;
 import android.webkit.*;
-import android.view.Window;
+import android.view.WindowManager;
 
 public class MainActivity extends Activity {
     private static final String DEFAULT_URL = "http://10.0.0.1:8080/";
@@ -11,7 +11,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         WebView web = new WebView(this);
         setContentView(web);
 

@@ -4,7 +4,7 @@
     <application
         android:label="CamControl"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
