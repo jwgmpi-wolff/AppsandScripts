@@ -1,48 +1,34 @@
 @echo off
-title CamControl - Starting...
+title CamControl
 cd /d "%~dp0"
 
-echo ============================================
-echo  CamControl - YI Camera Platform
-echo ============================================
+:: Kill any existing instances on port 8080
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8080 "') do taskkill /f /pid %%a >nul 2>&1
 
 :: Check Python
-where python >nul 2>&1 || (
-    echo [ERROR] Python not found. Run Install-CamControl.ps1 first.
-    pause & exit /b 1
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo Python not found. Installing via winget...
+    winget install Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
+    refreshenv 2>nul
 )
 
-:: Install deps if needed
+:: Create venv if missing
 if not exist ".venv\Scripts\python.exe" (
-    echo [Setup] Creating virtual environment...
+    echo Setting up environment - this takes 2 minutes on first run...
     python -m venv .venv
-    echo [Setup] Installing dependencies...
-    .venv\Scripts\pip.exe install -r requirements.txt --quiet
+    .venv\Scripts\pip install fastapi uvicorn requests pillow --quiet
 )
 
-:: Kill any existing instances
-taskkill /f /im go2rtc.exe >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| find ":8080"') do taskkill /f /pid %%a >nul 2>&1
-
-:: Start go2rtc (background)
+:: Start go2rtc in background
 if exist "tools\go2rtc.exe" (
-    echo [go2rtc] Starting stream proxy...
     start /b "" "tools\go2rtc.exe" -config "tools\go2rtc.yaml"
-    timeout /t 2 /nobreak >nul
 )
 
 :: Start gateway
-echo [Gateway] Starting on http://localhost:8080
-start /b "" ".venv\Scripts\python.exe" -m camera_bridge.main
-
-timeout /t 4 /nobreak >nul
-
-:: Open browser
-echo [Browser] Opening dashboard...
-start http://localhost:8080/
-
+echo Starting CamControl at http://localhost:8080
 echo.
-echo  Dashboard: http://localhost:8080/
-echo  Press Ctrl+C to stop
-echo.
+start "" http://localhost:8080/
+.venv\Scripts\python.exe -m camera_bridge.main
+
 pause
