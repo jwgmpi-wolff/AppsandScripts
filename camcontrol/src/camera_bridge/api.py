@@ -52,6 +52,9 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
 
     # Serve dashboard at root so it loads from the same origin as the API (no CORS issues)
     _dashboard = Path(__file__).parent.parent.parent / "camera-platform" / "dashboard.html"
+    _static = Path(__file__).parent.parent.parent / "camera-platform" / "static"
+    if _static.exists():
+        app.mount("/static", StaticFiles(directory=str(_static)), name="static")
     if _dashboard.exists():
         from fastapi.responses import FileResponse
         @app.get("/")
