@@ -6,8 +6,8 @@ Owner-authorized camera management platform for YI Outdoor cameras. Streams all 
 
 | Platform | File | Size |
 |----------|------|------|
-| **Windows** (no install needed) | [⬇ CamControl-Windows.exe](https://github.com/jwgmpi-wolff/AppsandScripts/releases/latest/download/CamControl-Windows.exe) | ~21 MB |
-| **Android APK** | [⬇ CamControl-Android.apk](https://github.com/jwgmpi-wolff/AppsandScripts/releases/latest/download/app-debug.apk) | ~3 MB |
+| **Windows** (no install needed) | [⬇ CamControl-Windows.zip](https://github.com/jwgmpi-wolff/AppsandScripts/releases/download/v1.0/CamControl-Windows.zip) | 21 MB |
+| **Android APK** (auto-built on push) | [⬇ GitHub Actions → Artifacts](https://github.com/jwgmpi-wolff/AppsandScripts/actions) | ~3 MB |
 | **All releases** | [GitHub Releases →](https://github.com/jwgmpi-wolff/AppsandScripts/releases) | |
 
 > **Android (no APK):** Open Chrome → `http://[your-pc-ip]:8080/` → ⋮ → **Add to Home Screen** — installs as full-screen PWA instantly.
@@ -29,8 +29,8 @@ Owner-authorized camera management platform for YI Outdoor cameras. Streams all 
 ## Quick Start — Windows
 
 ### Option A: Standalone EXE (no Python needed)
-1. [⬇ Download CamControl-Windows.exe](https://github.com/jwgmpi-wolff/AppsandScripts/releases/latest/download/CamControl-Windows.exe)
-2. Double-click → gateway + go2rtc start → browser opens at `http://localhost:8080/`
+1. [⬇ Download CamControl-Windows.zip](https://github.com/jwgmpi-wolff/AppsandScripts/releases/download/v1.0/CamControl-Windows.zip)
+2. Extract ZIP → double-click `CamControl.exe` → gateway starts → browser opens at `http://localhost:8080/`
 
 ### Option B: From source
 ```powershell
@@ -46,7 +46,7 @@ Owner-authorized camera management platform for YI Outdoor cameras. Streams all 
 ## Quick Start — Android
 
 ### Option A: Install APK
-1. [⬇ Download CamControl-Android.apk](https://github.com/jwgmpi-wolff/AppsandScripts/releases/latest/download/app-debug.apk)
+1. Go to [GitHub Actions](https://github.com/jwgmpi-wolff/AppsandScripts/actions) → latest **Build Releases** run → **CamControl-Android-APK** artifact → download
 2. Enable *Install unknown apps* in Android settings → install and open
 3. Enter your PC's IP when prompted (e.g. `http://10.0.0.112:8080/`)
 
