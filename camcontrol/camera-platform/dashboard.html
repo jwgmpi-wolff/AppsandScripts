@@ -94,6 +94,7 @@
       <span style="color:#60a5fa;font-weight:700">📹 Live Feeds</span>
       <button class="grid-btn" onclick="startAllStreams()" title="Start all cameras">▶ Start All</button>
       <button class="grid-btn" onclick="stopAllStreams()" title="Stop all cameras">⏹ Stop All</button>
+      <button class="grid-btn" onclick="startPhoneScreen()" title="Stream phone screen (YI app open on phone)">📱 Phone Screen</button>
       <button class="grid-btn" onclick="refreshGrid()" title="Refresh grid">↺ Refresh</button>
       <span id="live-count" style="color:#64748b;margin-left:auto">0 live</span>
     </div>
@@ -618,6 +619,21 @@ async function startOneStream(did) {
 async function stopOneStream(did) {
   _detachHls(did);
   await fetch(gw() + '/api/stream/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({device_id: did}) });
+}
+
+async function startPhoneScreen() {
+  toast('Opening YI app on phone → navigate to camera live view then click again');
+  try {
+    const r = await fetch(gw() + '/api/stream/start-phone', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_id: 'phone_screen'})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast(`Phone screen streaming: ${d.hls_url}`);
+      setTimeout(refreshGrid, 4000);
+    } else { toast('Failed: ' + (d.detail || d.error || '?'), true); }
+  } catch(e) { toast(e.message, true); }
 }
 
 // Grid toolbar wrappers

@@ -527,6 +527,46 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
                 results.append({"device_id": did, "ok": False, "error": "no source URL"})
         return {"started": sum(1 for r in results if r["ok"]), "results": results}
 
+    @app.post("/api/stream/start-phone")
+    async def stream_start_phone(body: dict[str, Any]) -> dict[str, Any]:
+        """Start streaming phone screen (YI app live view) via ADB → ffmpeg → HLS."""
+        import os
+        from pathlib import Path as _Path
+        device_id = body.get("device_id", "phone_screen")
+        adb_device = body.get("adb_device", "")  # ADB serial, empty = first device
+
+        adb_pt = _Path(os.environ.get("LOCALAPPDATA","")) / "Microsoft/WinGet/Packages"
+        adb = next((str(p) for p in adb_pt.glob("Google.PlatformTools*/platform-tools/adb.exe")), "adb")
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(503, "ffmpeg not found")
+
+        out_dir = stream_manager._HLS_ROOT / device_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        m3u8 = str(out_dir / "live.m3u8")
+
+        dev_args = ["-s", adb_device] if adb_device else []
+        adb_cmd = [adb] + dev_args + ["exec-out", "screenrecord",
+                                       "--output-format=h264", "--size=1280x720", "-"]
+        ffmpeg_cmd = [ffmpeg, "-loglevel", "error", "-f", "h264", "-i", "pipe:0",
+                      "-c:v", "copy", "-f", "hls", "-hls_time", "2",
+                      "-hls_list_size", "8",
+                      "-hls_flags", "delete_segments+append_list",
+                      "-hls_segment_filename", str(out_dir / "seg%05d.ts"), m3u8]
+
+        import subprocess as _sp
+        adb_proc = _sp.Popen(adb_cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL)
+        ff_proc = _sp.Popen(ffmpeg_cmd, stdin=adb_proc.stdout,
+                             stdout=_sp.DEVNULL, stderr=_sp.PIPE)
+        adb_proc.stdout.close()
+
+        stream_manager._procs[device_id] = ff_proc
+        hls_url = stream_manager.hls_url(device_id)
+        cam_registry.upsert_camera(device_id, {
+            "name": "Phone Screen", "last_source_url": "adb://screen"})
+        return {"ok": True, "device_id": device_id, "pid": ff_proc.pid,
+                "hls_url": hls_url, "source": "adb-screenrecord"}
+
     @app.post("/api/stream/stop")
     async def stream_stop(body: dict[str, Any]) -> dict[str, Any]:
         device_id = body.get("device_id", "")
