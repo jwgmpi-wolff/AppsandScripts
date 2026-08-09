@@ -213,27 +213,30 @@
     <div class="section" style="background:#0f172a;border:2px solid #f59e0b">
       <h3 style="color:#fbbf24">📷 Camera WiFi Setup QR</h3>
       <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">
-        Generate a QR code → hold your <b style="color:#fbbf24">phone/tablet screen</b> up to the camera lens to connect it to WiFi (no YI app needed).
+        Hold your <b style="color:#fbbf24">screen</b> up to the camera lens to connect it to WiFi.
+        Format: <code style="color:#fbbf24">b=&amp;s=base64(ssid)&amp;p=base64(pass)</code> (confirmed working).
       </div>
       <label style="font-size:.72rem;color:#94a3b8">WiFi Network (SSID)</label>
       <input id="qr-ssid" type="text" value="wolffwifi" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.82rem;margin:3px 0 6px">
       <label style="font-size:.72rem;color:#94a3b8">WiFi Password</label>
-      <input id="qr-wifi-pass" type="password" placeholder="Your WiFi password" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.82rem;margin:3px 0 8px">
-      <button class="btn-primary" onclick="generateWifiQR()" style="width:100%;margin-bottom:8px">🔲 Generate QR Code</button>
+      <input id="qr-wifi-pass" type="password" placeholder="Your WiFi password" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.82rem;margin:3px 0 4px">
+      <label style="font-size:.72rem;color:#64748b;margin-bottom:6px;display:block">Binding token (leave blank = WiFi-only, no cloud)</label>
+      <input id="qr-bind-token" type="text" placeholder="e.g. US5mBBkW4IYN2fol (from YI app capture)" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 8px;border-radius:6px;width:100%;font-size:.75rem;font-family:monospace;margin-bottom:8px">
+      <button class="btn-primary" onclick="generateWifiQR()" style="width:100%;margin-bottom:8px">🔲 Generate Camera WiFi QR</button>
       <div id="wifi-qr-box" style="display:none;text-align:center;background:#fff;padding:12px;border-radius:8px;margin-bottom:6px">
         <div id="wifi-qr-canvas"></div>
-        <div style="font-size:.68rem;color:#374151;margin-top:6px" id="wifi-qr-caption"></div>
+        <div style="font-size:.65rem;color:#374151;margin-top:6px;word-break:break-all" id="wifi-qr-caption"></div>
       </div>
       <div id="wifi-qr-tip" style="display:none;font-size:.72rem;color:#fbbf24;text-align:center">
-        ☝ Hold this screen directly in front of the camera lens · wait for beep/LED change
+        ☝ Hold directly at camera lens · wait for beep/LED change
       </div>
     </div>
 
-    <!-- Connect QR Code -->
+    <!-- Dashboard URL QR for phones -->
     <div class="section" style="background:#0f172a;border:1px solid #4a1d96;text-align:center">
-      <h3 style="color:#c4b5fd">📱 Mobile App Connect QR</h3>
-      <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">Scan with Android/iOS app to auto-configure gateway &amp; camera</div>
-      <img id="qr-img" src="" alt="Connect QR" style="width:180px;height:180px;border-radius:8px;border:2px solid #4a1d96;background:#fff">
+      <h3 style="color:#c4b5fd">📱 Open Dashboard on Phone</h3>
+      <div style="font-size:.72rem;color:#94a3b8;margin-bottom:8px">Scan to open the live camera dashboard on any device on your WiFi</div>
+      <div id="qr-img" style="display:inline-block;background:#fff;padding:10px;border-radius:8px;border:2px solid #4a1d96"></div>
       <div style="font-size:.68rem;color:#64748b;margin-top:6px;font-family:monospace" id="qr-caption"></div>
       <div style="margin-top:8px">
         <button class="btn-purple" onclick="refreshQR()" style="font-size:.75rem;padding:5px 12px">↺ Refresh QR</button>
@@ -819,13 +822,18 @@ async function cloudActivateStream() {
 function generateWifiQR() {
   const ssid = document.getElementById('qr-ssid').value.trim();
   const pass = document.getElementById('qr-wifi-pass').value;
+  const bindToken = document.getElementById('qr-bind-token').value.trim();
   if (!ssid || !pass) { toast('Enter SSID and password first', true); return; }
 
-  // YI camera format: b=[token]&s=base64(ssid)&p=base64(password)
-  // The 'b' field is a cloud binding token; leaving it empty allows WiFi-only setup on some firmware.
+  // Correct YI camera WiFi QR format (confirmed from live capture 2026-08-08):
+  // b=<binding_token>&s=<btoa(ssid)>&p=<btoa(pass)>
+  // b is optional: omit or leave blank for WiFi-only (no cloud binding)
   const s = btoa(ssid);
   const p = btoa(pass);
-  const yiStr = `s=${s}&p=${p}`;
+  const parts = [];
+  if (bindToken) parts.push(`b=${bindToken}`);
+  parts.push(`s=${s}`, `p=${p}`);
+  const yiStr = parts.join('&');
 
   const box = document.getElementById('wifi-qr-box');
   const canvas = document.getElementById('wifi-qr-canvas');
@@ -833,25 +841,27 @@ function generateWifiQR() {
   canvas.innerHTML = '';
   new QRCode(canvas, {
     text: yiStr,
-    width: 240,
-    height: 240,
-    colorDark: '#000000',
-    colorLight: '#ffffff',
+    width: 256, height: 256,
+    colorDark: '#000000', colorLight: '#ffffff',
     correctLevel: QRCode.CorrectLevel.M
   });
-  document.getElementById('wifi-qr-caption').textContent = 'YI format · ' + ssid + ' · hold ~10cm from lens';
+  document.getElementById('wifi-qr-caption').textContent = yiStr;
   box.style.display = 'block';
   tip.style.display = 'block';
-  toast('YI-format QR ready — hold screen directly at camera lens');
+  toast('QR ready — hold screen 5-10cm from camera lens');
 }
 
 function refreshQR() {
-  const gw = document.getElementById('url-input').value.replace(/\/+$/, '');
-  const camIp = document.getElementById('cam-ip').value.trim() || '10.0.0.161';
-  const url = `${gw}/api/camera/qr-connect?camera_ip=${encodeURIComponent(camIp)}`;
-  const img = document.getElementById('qr-img');
-  img.src = url + '&t=' + Date.now();
-  document.getElementById('qr-caption').textContent = `${gw} · camera ${camIp}`;
+  // Show dashboard URL QR so any device on the same WiFi can scan and open the dashboard
+  const url = window.location.origin || 'http://localhost:8080';
+  const el = document.getElementById('qr-img');
+  el.innerHTML = '';
+  new QRCode(el, {
+    text: url, width: 180, height: 180,
+    colorDark: '#000000', colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+  document.getElementById('qr-caption').textContent = url;
 }
 
 // QR + cloud status auto-load on page ready
