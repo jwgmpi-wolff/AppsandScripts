@@ -150,7 +150,8 @@
       <div style="font-size:.75rem;color:#94a3b8;margin-bottom:4px">RTSP path (try each):</div>
       <div id="probe-results" style="font-size:.75rem;font-family:monospace;margin-bottom:8px"></div>
       <div class="btn-row">
-        <button class="btn-primary" onclick="probeCamera()" id="probe-btn">🔍 Probe Camera</button>
+        <button class="btn-primary" onclick="probeCamera()" id="probe-btn">🔍 Probe RTSP</button>
+        <button class="btn-purple" onclick="probeOnvif()" id="onvif-btn">📡 ONVIF</button>
         <button class="btn-success" onclick="setActiveCamera()" id="set-cam-btn" disabled>✓ Use This URL</button>
       </div>
       <div id="active-rtsp" style="font-size:.72rem;color:#a3e635;margin-top:6px;font-family:monospace;word-break:break-all"></div>
@@ -182,7 +183,11 @@
           <td><span class="tag tag-on">HTTPS</span></td>
           <td><button class="btn-primary" style="padding:2px 8px;font-size:.7rem" onclick="event.stopPropagation();targetAndProbe('10.0.0.188')">▶</button></td>
         </tr>
-        <tr><td colspan="4" style="color:#64748b;padding-top:4px">Port 554 closed on all — RTSP not in stock firmware</td></tr>
+        <tr><td colspan="4" style="color:#f59e0b;padding-top:6px;font-size:.75rem">
+          ⚠ 10.0.0.161:8000 responds with connection-reset → YI proprietary protocol (not ONVIF/RTSP).<br>
+          Stock YHS.3017 does not expose a standard local stream. Check YI app for LAN Stream toggle,<br>
+          or use an ONVIF/RTSP-capable camera with this gateway.
+        </td></tr>
       </table>
     </div>
 
@@ -332,6 +337,33 @@ function targetAndProbe(ip) {
   document.getElementById('cam-ip').value = ip;
   document.getElementById('cam-ip').scrollIntoView({behavior:'smooth'});
   setTimeout(probeCamera, 200);
+}
+
+async function probeOnvif() {
+  const ip = document.getElementById('cam-ip').value.trim();
+  if (!ip) { toast('Enter camera IP first', true); return; }
+  const btn = document.getElementById('onvif-btn');
+  btn.disabled = true; btn.textContent = 'Probing…';
+  const el = document.getElementById('probe-results');
+  el.innerHTML = '<div style="color:#64748b">Sending ONVIF GetCapabilities to ' + ip + ':8000…</div>';
+  try {
+    const r = await fetch(`${gw()}/api/camera/onvif-probe?ip=${encodeURIComponent(ip)}&port=8000`,
+      {signal: AbortSignal.timeout(8000)});
+    const d = await r.json();
+    if (d.onvif) {
+      el.innerHTML = `<div style="color:#a3e635">✓ ONVIF device found at ${ip}:8000</div>`;
+      if (d.rtspPort) {
+        el.innerHTML += `<div style="color:#a3e635">RTSP port: ${d.rtspPort} — set URL manually in Setup</div>`;
+        const rtspUrl = `rtsp://${ip}:${d.rtspPort}/ch0_0.264`;
+        confirmedRtspUrl = rtspUrl;
+        document.getElementById('set-cam-btn').disabled = false;
+      }
+      el.innerHTML += `<div style="color:#64748b;font-size:.7rem;margin-top:4px">${(d.snippet||'').substring(0,300)}</div>`;
+    } else {
+      el.innerHTML = `<div style="color:#ef4444">✗ No ONVIF response: ${d.error}</div>`;
+    }
+  } catch(e) { el.innerHTML = `<div style="color:#ef4444">✗ ${e.message}</div>`; }
+  btn.disabled = false; btn.textContent = '📡 ONVIF';
 }
 
 async function probeCamera() {

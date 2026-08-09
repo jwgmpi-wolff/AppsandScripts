@@ -109,6 +109,10 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
         _require_key(x_api_key)
         if not _bridge:
             raise HTTPException(503, "Bridge not initialised")
+        src = _bridge.settings.effective_camera_source
+        # Block PC webcam (index 0) — require an explicit RTSP URL
+        if not src.startswith(("rtsp://", "rtsps://", "/dev/")):
+            raise HTTPException(503, "No RTSP camera configured. Use WiFi Camera Setup.")
         try:
             import asyncio
 
@@ -117,6 +121,31 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
             return Response(content=buf.tobytes(), media_type="image/jpeg")
         except Exception as exc:
             raise HTTPException(503, str(exc)) from exc
+
+    @app.get("/api/camera/onvif-probe")
+    async def onvif_probe(ip: str, port: int = 8000) -> dict[str, Any]:
+        """ONVIF GetCapabilities SOAP probe — returns RTSP port hint if found."""
+        import re, urllib.request
+        soap = (
+            '<?xml version="1.0"?>'
+            '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+            '<s:Body><GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl">'
+            "<Category>All</Category></GetCapabilities></s:Body></s:Envelope>"
+        )
+        hdrs = {"Content-Type": "application/soap+xml; charset=utf-8",
+                "SOAPAction": '"http://www.onvif.org/ver10/device/wsdl/GetCapabilities"'}
+        try:
+            req = urllib.request.Request(
+                f"http://{ip}:{port}/onvif/device_service",
+                data=soap.encode(), headers=hdrs, method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read(4096).decode(errors="replace")
+            m = re.search(r"(\d{1,5})</(?:[^:]+:)?RtspPort>", body, re.IGNORECASE)
+            rtsp_port = int(m.group(1)) if m else None
+            return {"ip": ip, "port": port, "onvif": True, "rtspPort": rtsp_port, "snippet": body[:600]}
+        except Exception as exc:
+            return {"ip": ip, "port": port, "onvif": False, "error": str(exc)}
 
     @app.post("/api/recording/start", dependencies=[Depends(_require_key)])
     async def start_recording() -> dict[str, Any]:
