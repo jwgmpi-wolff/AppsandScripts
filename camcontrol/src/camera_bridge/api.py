@@ -566,43 +566,56 @@ def create_app(bridge: "CameraBridge") -> FastAPI:
 
     @app.post("/api/stream/start-phone")
     async def stream_start_phone(body: dict[str, Any]) -> dict[str, Any]:
-        """Start streaming phone screen (YI app live view) via ADB → ffmpeg → HLS."""
-        import os
-        from pathlib import Path as _Path
+        """Stream phone screen via scrcpy (Windows named pipe) → ffmpeg → HLS."""
+        import subprocess as _sp, threading as _th, tempfile as _tmp
         device_id = body.get("device_id", "phone_screen")
-        adb_device = body.get("adb_device", "")  # ADB serial, empty = first device
-
-        adb_pt = _Path(os.environ.get("LOCALAPPDATA","")) / "Microsoft/WinGet/Packages"
-        adb = next((str(p) for p in adb_pt.glob("Google.PlatformTools*/platform-tools/adb.exe")), "adb")
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        scrcpy_bin = shutil.which("scrcpy")
+        if not ffmpeg_bin:
             raise HTTPException(503, "ffmpeg not found")
+        if not scrcpy_bin:
+            raise HTTPException(503, "scrcpy not found")
 
         out_dir = stream_manager._HLS_ROOT / device_id
         out_dir.mkdir(parents=True, exist_ok=True)
         m3u8 = str(out_dir / "live.m3u8")
+        # Use a temp file as buffer since scrcpy 4.x doesn't support stdout piping
+        buf_file = str(out_dir / "scrcpy_buf.mkv")
 
-        dev_args = ["-s", adb_device] if adb_device else []
-        adb_cmd = [adb] + dev_args + ["exec-out", "screenrecord",
-                                       "--output-format=h264", "--size=1280x720", "-"]
-        ffmpeg_cmd = [ffmpeg, "-loglevel", "error", "-f", "h264", "-i", "pipe:0",
-                      "-c:v", "copy", "-f", "hls", "-hls_time", "2",
-                      "-hls_list_size", "8",
-                      "-hls_flags", "delete_segments+append_list",
-                      "-hls_segment_filename", str(out_dir / "seg%05d.ts"), m3u8]
+        def _run():
+            """Loop: scrcpy records 2-min chunks → ffmpeg appends to HLS."""
+            seg_n = 0
+            while True:
+                # scrcpy records to buffer file (120s max, then loops)
+                sc = _sp.Popen(
+                    [scrcpy_bin, "--no-audio", "--video-codec=h264",
+                     f"--record={buf_file}", "--time-limit=120"],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
+                )
+                sc.wait()
+                # ffmpeg processes the recorded chunk and appends to HLS
+                if Path(buf_file).exists() and Path(buf_file).stat().st_size > 10000:
+                    ff = _sp.Popen([
+                        ffmpeg_bin, "-loglevel", "error", "-i", buf_file,
+                        "-c:v", "copy", "-f", "hls",
+                        "-hls_time", "2", "-hls_list_size", "10",
+                        "-hls_flags", "append_list+delete_segments",
+                        "-hls_segment_filename", str(out_dir / f"seg%05d.ts"),
+                        m3u8,
+                    ], stdout=_sp.DEVNULL, stderr=_sp.PIPE)
+                    stream_manager._procs[device_id] = ff
+                    ff.wait()
+                    try: Path(buf_file).unlink()
+                    except: pass
 
-        import subprocess as _sp
-        adb_proc = _sp.Popen(adb_cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL)
-        ff_proc = _sp.Popen(ffmpeg_cmd, stdin=adb_proc.stdout,
-                             stdout=_sp.DEVNULL, stderr=_sp.PIPE)
-        adb_proc.stdout.close()
+        t = _th.Thread(target=_run, daemon=True)
+        t.start()
 
-        stream_manager._procs[device_id] = ff_proc
-        hls_url = stream_manager.hls_url(device_id)
-        cam_registry.upsert_camera(device_id, {
-            "name": "Phone Screen", "last_source_url": "adb://screen"})
-        return {"ok": True, "device_id": device_id, "pid": ff_proc.pid,
-                "hls_url": hls_url, "source": "adb-screenrecord"}
+        await asyncio.sleep(1)
+        cam_registry.upsert_camera(device_id, {"name": "Phone Screen (YI app)", "last_source_url": "scrcpy://screen"})
+        return {"ok": True, "device_id": device_id, "pid": 0,
+                "hls_url": stream_manager.hls_url(device_id), "source": "scrcpy-loop",
+                "note": "HLS appears after first 2-minute scrcpy chunk. Keep phone YI app on camera view."}
 
     @app.post("/api/stream/stop")
     async def stream_stop(body: dict[str, Any]) -> dict[str, Any]:

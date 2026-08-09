@@ -45,8 +45,8 @@
     "last_source_url": "rtsp://localhost:8554/kitchen"
   },
   "phone_screen": {
-    "name": "Phone Screen",
-    "last_source_url": "adb://screen",
+    "name": "Phone Screen (YI app)",
+    "last_source_url": "scrcpy://screen",
     "device_id": "phone_screen"
   }
 }
