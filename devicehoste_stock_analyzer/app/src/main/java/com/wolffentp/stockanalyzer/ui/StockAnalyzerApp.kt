@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,6 +64,7 @@ import com.wolffentp.stockanalyzer.domain.AnalysisResult
 import com.wolffentp.stockanalyzer.domain.Direction
 import com.wolffentp.stockanalyzer.domain.Horizon
 import com.wolffentp.stockanalyzer.domain.Recommendation
+import com.wolffentp.stockanalyzer.data.ModelSettings
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -100,10 +102,14 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
     var holdingEntry by remember { mutableStateOf<StockRowState?>(null) }
     var deleteSymbol by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var configureModel by remember { mutableStateOf(false) }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text("Stock Movement Analyzer") },
             actions = {
+                IconButton(onClick = { configureModel = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Configure free local model")
+                }
                 IconButton(onClick = { confirmClear = true }, enabled = state.rows.isNotEmpty()) {
                     Icon(Icons.Default.DeleteSweep, contentDescription = "Clear watchlist")
                 }
@@ -224,6 +230,17 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
             onDismiss = { confirmClear = false },
         )
     }
+    if (configureModel) {
+        ModelSettingsDialog(
+            settings = state.modelSettings,
+            onDismiss = { configureModel = false },
+            onSave = { enabled, endpoint, modelName ->
+                model.saveModelSettings(enabled, endpoint, modelName).also { saved ->
+                    if (saved) configureModel = false
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -250,6 +267,13 @@ private fun StockGridCard(
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
+            Text(
+                row.modelReview?.let { "Local ${it.model}: ${it.recommendation} · ${String.format(Locale.US, "$%,.2f-$%,.2f", it.low, it.high)}" }
+                    ?: row.modelError?.let { "Local model unavailable; technical result retained" }
+                    ?: "Local model review off",
+                color = Color(0xFF606067),
+                fontSize = 12.sp,
+            )
             Text(directionLabel(result?.direction), color = color, fontWeight = FontWeight.Bold)
             Text(result?.let { "Confidence ${it.confidence}%" } ?: "Not calculated", color = color)
             Text(holdingText(row), color = Color(0xFF3F3F45), fontSize = 13.sp)
@@ -265,6 +289,51 @@ private fun StockGridCard(
             }
         }
     }
+}
+
+@Composable
+private fun ModelSettingsDialog(
+    settings: ModelSettings,
+    onDismiss: () -> Unit,
+    onSave: (Boolean, String, String) -> Boolean,
+) {
+    var enabled by remember { mutableStateOf(settings.enabled) }
+    var endpoint by remember { mutableStateOf(settings.endpoint) }
+    var model by remember { mutableStateOf(settings.model) }
+    var invalid by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Free local model") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Use Ollama review", Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it; invalid = false })
+                }
+                OutlinedTextField(
+                    value = endpoint,
+                    onValueChange = { endpoint = it; invalid = false },
+                    label = { Text("Ollama URL on local network") },
+                    placeholder = { Text("http://192.168.1.10:11434") },
+                    singleLine = true,
+                    isError = invalid,
+                )
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it; invalid = false },
+                    label = { Text("Installed model") },
+                    placeholder = { Text("qwen3:4b") },
+                    singleLine = true,
+                    isError = invalid,
+                )
+                Text("Analysis stays on your devices. The validated technical result remains available when Ollama is offline.", fontSize = 13.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { invalid = !onSave(enabled, endpoint, model) }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -352,6 +421,7 @@ private fun AnalysisDetail(row: StockRowState, onBack: () -> Unit) {
                 item { DetailHeader(result) }
                 item { DetailSection("Holding", holdingText(row)) }
                 item { DetailSection("Predictive action and range", recommendationText(result)) }
+                item { DetailSection("Free local model review", modelReviewText(row)) }
                 item { DetailSection("Source", sourceText(result)) }
                 item { DetailSection("Indicators", indicatorText(result)) }
                 item { DetailSection("Signal weights", signalText(result)) }
@@ -363,6 +433,11 @@ private fun AnalysisDetail(row: StockRowState, onBack: () -> Unit) {
         }
     }
 }
+
+private fun modelReviewText(row: StockRowState): String = row.modelReview?.let { review ->
+    "Model: ${review.model}\nRecommendation: ${review.recommendation}\nProjected range: ${String.format(Locale.US, "$%,.2f - $%,.2f", review.low, review.high)}\nRationale: ${review.rationale}\nThis secondary local-model review does not replace the validated technical baseline."
+} ?: row.modelError?.let { "$it. The validated technical baseline is retained." }
+    ?: "Disabled. Configure an Ollama server and installed free model in Settings."
 
 @Composable
 private fun DetailHeader(result: AnalysisResult) {

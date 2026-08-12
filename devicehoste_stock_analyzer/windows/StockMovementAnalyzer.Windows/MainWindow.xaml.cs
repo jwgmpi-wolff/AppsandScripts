@@ -1,0 +1,234 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Net.Http;
+using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Threading;
+
+namespace StockMovementAnalyzer.Windows;
+
+public partial class MainWindow : Window, INotifyPropertyChanged
+{
+    private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(45) };
+    private readonly AppStore store = new();
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(60) };
+    private bool isRefreshing;
+    private string status = "Ready";
+    private string newSymbol = "";
+    private HorizonDefinition selectedHorizon = HorizonDefinition.All[0];
+    private string ollamaEndpoint = "http://127.0.0.1:11434";
+    private string? selectedModel;
+    private bool useLocalModel = true;
+    private StockRow? selectedRow;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        DataContext = this;
+        var settings = store.Load();
+        OllamaEndpoint = settings.OllamaEndpoint;
+        SelectedModel = settings.Model;
+        UseLocalModel = settings.UseLocalModel;
+        foreach (var row in settings.Rows) Rows.Add(new StockRow(row.Symbol, row.Quantity, row.AverageCost));
+        Loaded += async (_, _) => { await DiscoverModelsAsync(false); await RefreshAsync(); refreshTimer.Start(); };
+        refreshTimer.Tick += async (_, _) => await RefreshAsync();
+        Closing += (_, _) => { refreshTimer.Stop(); lifetime.Cancel(); Save(); httpClient.Dispose(); };
+    }
+
+    public ObservableCollection<StockRow> Rows { get; } = [];
+    public ObservableCollection<string> Models { get; } = [];
+    public IReadOnlyList<HorizonDefinition> Horizons { get; } = HorizonDefinition.All;
+    public string Status { get => status; set => Set(ref status, value); }
+    public string NewSymbol { get => newSymbol; set => Set(ref newSymbol, value); }
+    public HorizonDefinition SelectedHorizon { get => selectedHorizon; set => Set(ref selectedHorizon, value); }
+    public string OllamaEndpoint { get => ollamaEndpoint; set => Set(ref ollamaEndpoint, value); }
+    public string? SelectedModel { get => selectedModel; set => Set(ref selectedModel, value); }
+    public bool UseLocalModel { get => useLocalModel; set => Set(ref useLocalModel, value); }
+    public StockRow? SelectedRow { get => selectedRow; set => Set(ref selectedRow, value); }
+
+    private async void AddSymbol_Click(object sender, RoutedEventArgs e)
+    {
+        var symbol = NewSymbol.Trim().ToUpperInvariant();
+        if (!Regex.IsMatch(symbol, "^[A-Z0-9.-]{1,10}$")) { Status = "Enter a valid ticker symbol"; return; }
+        if (Rows.All(row => row.Symbol != symbol)) Rows.Add(new StockRow(symbol, null, null));
+        NewSymbol = "";
+        Save();
+        await RefreshAsync();
+    }
+
+    private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void DiscoverModels_Click(object sender, RoutedEventArgs e) => await DiscoverModelsAsync(true);
+
+    private void Delete_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRow is not null) Rows.Remove(SelectedRow);
+        Save();
+    }
+
+    private void Clear_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("Clear every saved symbol and holding?", "Clear watchlist", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+        { Rows.Clear(); Save(); }
+    }
+
+    private async Task DiscoverModelsAsync(bool reportSuccess)
+    {
+        try
+        {
+            var discovered = await new OllamaClient(httpClient).GetModelsAsync(OllamaEndpoint, lifetime.Token);
+            Models.Clear();
+            foreach (var model in discovered) Models.Add(model);
+            if (SelectedModel is null || !Models.Contains(SelectedModel)) SelectedModel = Models.FirstOrDefault();
+            Status = Models.Count == 0 ? "Ollama found; install a free model" : reportSuccess ? $"Found {Models.Count} local model(s)" : Status;
+        }
+        catch { Status = "Ollama unavailable; technical analysis remains active"; }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        Status = "Refreshing live evidence";
+        try
+        {
+            var analyzer = new AnalysisService(httpClient);
+            var ollama = new OllamaClient(httpClient);
+            foreach (var row in Rows)
+            {
+                try
+                {
+                    var analysis = await analyzer.AnalyzeAsync(row.Symbol, SelectedHorizon, lifetime.Token);
+                    row.ApplyTechnical(analysis);
+                    if (analysis.Recommendation == Recommendation.Unavailable)
+                    {
+                        row.ApplyModelError("No local-model review was requested because current validated analysis was unavailable.");
+                    }
+                    else if (UseLocalModel && !string.IsNullOrWhiteSpace(SelectedModel))
+                    {
+                        try { row.ApplyModel(await ollama.ReviewAsync(OllamaEndpoint, SelectedModel, analysis, lifetime.Token), SelectedModel); }
+                        catch (Exception error) { row.ApplyModelError($"{error.Message} Technical result retained."); }
+                    }
+                    else row.ApplyModelError(UseLocalModel ? "No installed model selected. Technical result retained." : "Local model review off.");
+                }
+                catch (Exception error) { row.ApplyDataError($"Live validation failed: {error.Message}"); }
+            }
+            Status = $"Updated {DateTime.Now:t}; next live refresh in 60 seconds";
+            Save();
+        }
+        finally { isRefreshing = false; }
+    }
+
+    private void Save() => store.Save(new AppSettings(OllamaEndpoint, SelectedModel, UseLocalModel,
+        Rows.Select(row => new SavedRow(row.Symbol, row.Quantity, row.AverageCost)).ToList()));
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new(propertyName)); }
+}
+
+public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
+{
+    private string price = "-", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
+    private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
+    private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
+    private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
+    private Brush technicalBrush = DirectionBrushes.Neutral, modelBrush = DirectionBrushes.Neutral;
+    private decimal? quantity = quantity, averageCost = averageCost;
+    public string Symbol { get; } = symbol;
+    public string Price { get => price; private set => Set(ref price, value); }
+    public string Technical { get => technical; private set => Set(ref technical, value); }
+    public string TechnicalRange { get => technicalRange; private set => Set(ref technicalRange, value); }
+    public string Confidence { get => confidence; private set => Set(ref confidence, value); }
+    public string ModelResult { get => modelResult; private set => Set(ref modelResult, value); }
+    public string ModelRationale { get => modelRationale; private set => Set(ref modelRationale, value); }
+    public string TechnicalSummary { get => technicalSummary; private set => Set(ref technicalSummary, value); }
+    public string SourceDetails { get => sourceDetails; private set => Set(ref sourceDetails, value); }
+    public string IndicatorDetails { get => indicatorDetails; private set => Set(ref indicatorDetails, value); }
+    public string SignalDetails { get => signalDetails; private set => Set(ref signalDetails, value); }
+    public string NewsDetails { get => newsDetails; private set => Set(ref newsDetails, value); }
+    public string ModelDetails { get => modelDetails; private set => Set(ref modelDetails, value); }
+    public string WarningDetails { get => warningDetails; private set => Set(ref warningDetails, value); }
+    public string FinalReason { get => finalReason; private set => Set(ref finalReason, value); }
+    public Brush TechnicalBrush { get => technicalBrush; private set => Set(ref technicalBrush, value); }
+    public Brush ModelBrush { get => modelBrush; private set => Set(ref modelBrush, value); }
+    public decimal? Quantity { get => quantity; set => Set(ref quantity, value); }
+    public decimal? AverageCost { get => averageCost; set => Set(ref averageCost, value); }
+
+    public void ApplyTechnical(AnalysisResult value)
+    {
+        Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
+        Technical = value.Recommendation.ToString().ToUpperInvariant();
+        TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
+        Confidence = $"{value.Confidence}%";
+        TechnicalBrush = DirectionBrushes.For(value.Direction);
+        ModelRationale = value.Reason;
+        TechnicalSummary = $"{Technical} · {TechnicalRange} · Confidence {Confidence}";
+        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nLatest quote: {Price}";
+        IndicatorDetails = value.Indicators is null ? "Indicators were not calculated because live-data validation failed." :
+            $"Momentum: {Display(value.Indicators.MomentumPercent)}%\nShort moving average: {Display(value.Indicators.ShortMovingAverage)}\nLong moving average: {Display(value.Indicators.LongMovingAverage)}\nRelative volume: {Display(value.Indicators.RelativeVolume)}\nRSI: {Display(value.Indicators.Rsi)}\nMACD: {Display(value.Indicators.Macd)}\nVWAP: {Display(value.Indicators.Vwap)}\nFresh news sentiment: {Display(value.Indicators.SentimentAverage)}";
+        SignalDetails = value.Signals.Count == 0 ? "Signals were not calculated." : string.Join("\n", value.Signals.Select(signal =>
+            $"{signal.Name}: value {Display(signal.Value)} x weight {signal.Weight:F2} = {Display(signal.Contribution)}"));
+        NewsDetails = value.News?.Items.Count > 0
+            ? string.Join("\n\n", value.News.Items.Select(item => $"{item.Headline}\n{item.Source} · {item.PublishedAt.LocalDateTime:g} · Score {item.Score:+0.000;-0.000;0.000}"))
+            : "No timestamped news was returned for this refresh.";
+        WarningDetails = value.Warnings.Count == 0 ? "None reported." : string.Join("\n", value.Warnings.Select(warning => $"- {warning}"));
+        FinalReason = value.Reason;
+    }
+    public void ApplyModel(ModelReview value, string model)
+    {
+        ModelResult = $"{value.Recommendation} {value.Low:C2}-{value.High:C2}";
+        ModelBrush = DirectionBrushes.For(value.Recommendation);
+        ModelRationale = value.Rationale;
+        ModelDetails = $"Model: {model}\nRecommendation: {value.Recommendation}\nProjected range: {value.Low:C2} - {value.High:C2}\nRationale: {value.Rationale}\nOnly evidence current at refresh time was supplied. This secondary local-model review does not replace the validated technical baseline.";
+    }
+    public void ApplyModelError(string message)
+    { ModelResult = "Unavailable"; ModelBrush = DirectionBrushes.Neutral; ModelRationale = message; ModelDetails = message; }
+    public void ApplyDataError(string message)
+    {
+        Price = Technical = TechnicalRange = Confidence = "Unavailable";
+        ModelResult = "Unavailable";
+        TechnicalBrush = ModelBrush = DirectionBrushes.Neutral;
+        ModelRationale = message;
+        TechnicalSummary = "UNAVAILABLE · No projection generated";
+        SourceDetails = IndicatorDetails = SignalDetails = NewsDetails = "Not available because live-data validation failed.";
+        ModelDetails = "No local-model review was requested because the validated baseline was unavailable.";
+        WarningDetails = FinalReason = message;
+    }
+
+    private static string Display(double? value) => value?.ToString("F4") ?? "Unsupported / unavailable";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new(propertyName)); }
+}
+
+internal static class DirectionBrushes
+{
+    public static readonly Brush Rise = FrozenBrush(0x15, 0x65, 0xC0);
+    public static readonly Brush Drop = FrozenBrush(0x7B, 0x1F, 0xA2);
+    public static readonly Brush Neutral = FrozenBrush(0x6B, 0x6B, 0x72);
+
+    public static Brush For(Direction direction) => direction switch
+    {
+        Direction.Up => Rise,
+        Direction.Down => Drop,
+        _ => Neutral,
+    };
+
+    public static Brush For(string recommendation) => recommendation.ToUpperInvariant() switch
+    {
+        "BUY" => Rise,
+        "SELL" => Drop,
+        _ => Neutral,
+    };
+
+    private static Brush FrozenBrush(byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+}

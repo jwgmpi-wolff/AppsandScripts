@@ -15,8 +15,9 @@ class StockMovementAnalyzer(
     fun analyze(snapshot: MarketSnapshot, horizon: Horizon, now: Instant = Instant.now()): AnalysisResult {
         val latestTimestamp = snapshot.candles.maxOfOrNull { it.timestamp }
         val age = latestTimestamp?.let { Duration.between(it, now).toMinutes() }
+        val currentNews = currentNews(snapshot, horizon, now)
         val warnings = validator.validate(snapshot, horizon, now)
-        if (warnings.isNotEmpty()) return insufficient(snapshot, horizon, latestTimestamp, age, warnings)
+        if (warnings.isNotEmpty()) return insufficient(snapshot, horizon, latestTimestamp, age, warnings, news = currentNews)
 
         val ordered = snapshot.candles.sortedBy { it.timestamp }
         val closes = ordered.map { it.close }
@@ -29,7 +30,7 @@ class StockMovementAnalyzer(
             rsi = Indicators.rsi(closes),
             macd = Indicators.macd(closes),
             vwap = Indicators.vwap(ordered.takeLast(20)),
-            sentimentAverage = freshSentimentScore(snapshot, horizon, now),
+            sentimentAverage = currentNews?.items?.takeIf { it.isNotEmpty() }?.map { it.score.coerceIn(-1.0, 1.0) }?.average(),
         )
         val signals = listOf(
             contribution("Momentum", indicators.momentumPercent?.coerceIn(-2.0, 2.0)?.div(2.0), 0.30),
@@ -41,7 +42,7 @@ class StockMovementAnalyzer(
         )
         val availableWeight = signals.filter { it.contribution != null }.sumOf { it.weight }
         if (availableWeight < 0.6) {
-            return insufficient(snapshot, horizon, latestTimestamp, age, listOf("Too few supported signals to calculate a prediction."), indicators, signals)
+            return insufficient(snapshot, horizon, latestTimestamp, age, listOf("Too few supported signals to calculate a prediction."), indicators, signals, currentNews)
         }
         val score = signals.sumOf { it.contribution ?: 0.0 } / availableWeight
         val direction = when {
@@ -66,7 +67,7 @@ class StockMovementAnalyzer(
             if (indicators.macd == null) add("MACD was unavailable and was not used.")
             if (indicators.sentimentAverage == null) add(snapshot.newsWarning ?: "Fresh timestamped sentiment was unavailable and was not used.")
         }
-        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, recommendation, projectedPriceRange, limitations, reason, snapshot.news)
+        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, recommendation, projectedPriceRange, limitations, reason, currentNews)
     }
 
     private fun projectedPriceRange(candles: List<Candle>, currentPrice: Double, horizon: Horizon, score: Double): ProjectedPriceRange? {
@@ -108,16 +109,16 @@ class StockMovementAnalyzer(
         else -> 0.0
     }
 
-    private fun freshSentimentScore(snapshot: MarketSnapshot, horizon: Horizon, now: Instant): Double? {
+    private fun currentNews(snapshot: MarketSnapshot, horizon: Horizon, now: Instant): NewsSentimentBatch? {
         if (snapshot.news?.provider != snapshot.provider) return null
         val maximumAgeMinutes = if (horizon.isDaily) 10_080L else 1_440L
         val fresh = snapshot.news?.items.orEmpty().filter { item ->
             val age = Duration.between(item.publishedAt, now).toMinutes()
             age in 0..maximumAgeMinutes && item.source.isNotBlank() && item.headline.isNotBlank()
         }
-        return fresh.takeIf { it.isNotEmpty() }?.map { it.score.coerceIn(-1.0, 1.0) }?.average()
+        return snapshot.news?.copy(items = fresh)
     }
 
-    private fun insufficient(snapshot: MarketSnapshot, horizon: Horizon, timestamp: Instant?, age: Long?, warnings: List<String>, indicators: IndicatorValues? = null, signals: List<SignalContribution> = emptyList()) =
-        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, Recommendation.UNAVAILABLE, null, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.", snapshot.news)
+    private fun insufficient(snapshot: MarketSnapshot, horizon: Horizon, timestamp: Instant?, age: Long?, warnings: List<String>, indicators: IndicatorValues? = null, signals: List<SignalContribution> = emptyList(), news: NewsSentimentBatch? = null) =
+        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, Recommendation.UNAVAILABLE, null, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.", news)
 }

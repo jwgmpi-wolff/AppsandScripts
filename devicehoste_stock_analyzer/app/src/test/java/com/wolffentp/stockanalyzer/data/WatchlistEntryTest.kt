@@ -22,4 +22,15 @@ class WatchlistEntryTest {
         assertNull(decoded.quantity)
         assertNull(decoded.averageCost)
     }
+
+    @Test
+    fun previousVersionWatchlistSurvivesSchemaAdditions() {
+        val previousVersion = """[{"symbol":"MSFT","quantity":12.5,"averageCost":310.75,"futureField":"ignored"},{"symbol":"NVDA"}]"""
+        val decoded = WatchlistCodec.decode(previousVersion)
+
+        assertEquals(listOf("MSFT", "NVDA"), decoded.map { it.symbol })
+        assertEquals(12.5, decoded.first().quantity ?: 0.0, 0.0)
+        assertEquals(310.75, decoded.first().averageCost ?: 0.0, 0.0)
+        assertNull(decoded.last().quantity)
+    }
 }

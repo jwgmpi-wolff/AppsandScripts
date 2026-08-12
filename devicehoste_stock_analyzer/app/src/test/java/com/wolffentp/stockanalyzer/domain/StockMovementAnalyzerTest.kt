@@ -118,7 +118,8 @@ class StockMovementAnalyzerTest {
         )
         assertEquals(0.8, result.indicators?.sentimentAverage ?: 0.0, 0.0001)
         assertTrue(result.signals.any { it.name == "News sentiment" && it.contribution != null })
-        assertEquals(2, result.news?.items?.size)
+        assertEquals(1, result.news?.items?.size)
+        assertEquals("Earnings outlook improves", result.news?.items?.single()?.headline)
     }
 
     private fun snapshot(latest: Instant): MarketSnapshot {

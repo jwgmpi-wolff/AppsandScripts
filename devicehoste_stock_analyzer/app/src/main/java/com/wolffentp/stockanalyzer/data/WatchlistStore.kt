@@ -24,10 +24,10 @@ interface WatchlistStore {
 
 class DataStoreWatchlistStore(
     private val context: Context,
-    private val json: Json = Json { ignoreUnknownKeys = true },
+    private val json: Json = WATCHLIST_JSON_CODEC,
 ) : WatchlistStore {
     override val entries: Flow<List<WatchlistEntry>> = context.watchlistDataStore.data.map { preferences ->
-        decode(preferences[WATCHLIST_JSON])
+        WatchlistCodec.decode(preferences[WATCHLIST_JSON], json)
     }
 
     override suspend fun save(entries: List<WatchlistEntry>) {
@@ -36,7 +36,13 @@ class DataStoreWatchlistStore(
         }
     }
 
-    internal fun decode(value: String?): List<WatchlistEntry> {
+    private companion object {
+        val WATCHLIST_JSON = stringPreferencesKey("watchlist_json")
+    }
+}
+
+internal object WatchlistCodec {
+    fun decode(value: String?, json: Json = WATCHLIST_JSON_CODEC): List<WatchlistEntry> {
         if (value.isNullOrBlank()) return DEFAULT_WATCHLIST
         return runCatching { json.decodeFromString<List<WatchlistEntry>>(value) }
             .getOrDefault(DEFAULT_WATCHLIST)
@@ -44,11 +50,9 @@ class DataStoreWatchlistStore(
             .distinctBy { it.symbol }
     }
 
-    private companion object {
-        val WATCHLIST_JSON = stringPreferencesKey("watchlist_json")
-        val SYMBOL = Regex("^[A-Z0-9.-]{1,10}$")
-        val DEFAULT_WATCHLIST = listOf("MSFT", "AAPL", "NVDA").map(::WatchlistEntry)
-    }
+    private val SYMBOL = Regex("^[A-Z0-9.-]{1,10}$")
+    private val DEFAULT_WATCHLIST = listOf("MSFT", "AAPL", "NVDA").map(::WatchlistEntry)
 }
 
+private val WATCHLIST_JSON_CODEC = Json { ignoreUnknownKeys = true }
 private val Context.watchlistDataStore by preferencesDataStore(name = "watchlist")

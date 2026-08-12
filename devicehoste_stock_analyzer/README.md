@@ -1,6 +1,6 @@
 # Stock Movement Analyzer
 
-A native Android app that produces explainable, probabilistic short-horizon stock movement analysis from live or recently retrieved intraday market data. It does not provide financial advice, recommendations, or guaranteed outcomes.
+A native Android and Windows app that produces explainable, probabilistic stock movement analysis from current market evidence. An optional Ollama review uses only free models running on hardware you control; no paid or cloud model API is supported. It does not provide financial advice or guaranteed outcomes.
 
 ## Architecture
 
@@ -8,6 +8,7 @@ A native Android app that produces explainable, probabilistic short-horizon stoc
 - `domain/`: indicators, news freshness validation, non-hallucination validation, and weighted scoring independent of UI.
 - `data/`: keyless Yahoo Finance adapter, optional HTTPS proxy adapter, provider errors, and repository orchestration.
 - `ui/`: persistent watchlist, locally logged holdings, adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
+- `windows/`: native .NET 8 WPF grid, cross-platform parity verification, and self-contained per-user setup for Windows x64 and ARM64.
 - `proxy/`: optional dependency-free Node 20 adapter for deployments that already use Finnhub or Alpha Vantage.
 
 The default Android client calls Yahoo Finance public HTTPS endpoints directly. It requires no account, API key, paid plan, proxy deployment, or `marketData.baseUrl` setting. Yahoo Finance is a best-effort public source rather than a contracted application API, so availability, throttling, and response compatibility are not guaranteed. Provider failures never generate substituted market values.
@@ -23,6 +24,39 @@ The app retrieves:
 Quote and candle calls share a short in-memory response cache to avoid duplicate chart requests during one refresh. Responses are not persisted by the app. News is filtered to articles whose `relatedTickers` contains the requested symbol. Yahoo does not provide a sentiment score in this response, so the app labels its deterministic local headline score rather than attributing that score to Yahoo.
 
 No setup is required beyond normal Android internet access. `local.properties` remains optional and may contain only Android SDK settings or non-secret analyzer thresholds.
+
+## Free local AI models
+
+AI review is Ollama-only. The technical Yahoo-backed calculation remains authoritative and available when Ollama is stopped, unreachable, or returns invalid output. Both platforms send the same validated price, signal contributions, baseline classification/range, and current sourced headlines to the selected local model. Intraday prompts include only non-future articles published within 24 hours; daily prompts allow seven days. Every article includes its publication timestamp. The provider rechecks quote and market-data freshness when the model call starts, uses temperature zero, rejects malformed recommendations, and rejects price ranges outside 50%-150% of the validated current quote. A stale or insufficient analysis produces no model request.
+
+Install Ollama from its official distribution, then explicitly download any free model supported by your hardware. A practical compact starting point is:
+
+```powershell
+ollama pull qwen3:4b
+ollama list
+```
+
+The model is not bundled because model files are large, hardware-dependent third-party artifacts. Windows discovers all models currently returned by Ollama at `http://127.0.0.1:11434`. Android Settings accepts the Ollama URL and installed model name. To use a Windows-hosted model from Android, configure Ollama to listen on the trusted LAN interface, allow TCP 11434 only on a private network, and enter a URL such as `http://192.168.1.10:11434`. Never expose an unauthenticated Ollama endpoint to the public internet. Android permits cleartext traffic solely to support this user-configured local HTTP service; use a trusted LAN or local HTTPS reverse proxy.
+
+## Run Windows
+
+Use the matching installer under `releases/`, or build the native client:
+
+```powershell
+dotnet build .\windows\StockMovementAnalyzer.Windows\StockMovementAnalyzer.Windows.csproj -c Release
+```
+
+The self-contained setup installs under the current user's local application directory, creates Start Menu and desktop shortcuts, and needs no administrator access or separately installed .NET runtime. Watchlist, holdings, Ollama endpoint, and selected model are persisted separately under local application data. Updating replaces program binaries only; it does not delete settings. The Windows grid refreshes every 60 seconds, supports the same 10-60 minute and 1/5/10-day horizons as Android, uses the same color palette, and opens a complete evidence pane when a row is selected.
+
+## Validate and redeploy every change
+
+Run the repository deployment workflow after every application change:
+
+```powershell
+.\scripts\deploy-all.ps1
+```
+
+It runs the complete Android unit suite, Windows parity/current-evidence/update-persistence verification, builds the Android APK, publishes self-contained ARM64 and x64 Windows executables, refreshes all files under `releases/`, installs Windows for the current architecture, updates Android in place, and relaunches Windows. The Android package ID, signing identity, DataStore file, and `watchlist_json` key remain stable, so `installDebug` preserves the device watchlist and holdings. Windows settings remain at `%LOCALAPPDATA%\StockMovementAnalyzer\settings.json`, outside the replaceable program directory, and are saved atomically with a backup.
 
 ## Optional proxy adapter
 
@@ -121,7 +155,7 @@ Pop-Location
 
 ## Known limitations
 
-- This is a technical-signal model, not a trained predictive AI model, and it cannot account for future events.
+- The deterministic baseline and optional local language-model review cannot know future events or guarantee market movement.
 - `BUY`, `SELL`, and `HOLD` are model classifications, not personalized investment advice or trade instructions. The range can be exceeded, especially around gaps, earnings, and breaking news.
 - Yahoo Finance public endpoints are free and keyless but are unofficial for this application use and can change, throttle, delay, or become unavailable without notice.
 - Day projections use trading-session candles, so 5-day and 10-day labels refer to five and ten observed sessions rather than guaranteed calendar-day outcomes.

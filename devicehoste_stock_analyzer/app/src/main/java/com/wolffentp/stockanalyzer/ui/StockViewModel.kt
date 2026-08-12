@@ -6,6 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.wolffentp.stockanalyzer.BuildConfig
 import com.wolffentp.stockanalyzer.data.MarketAnalysisRepository
 import com.wolffentp.stockanalyzer.data.MarketDataException
+import com.wolffentp.stockanalyzer.data.ModelReview
+import com.wolffentp.stockanalyzer.data.ModelSettings
+import com.wolffentp.stockanalyzer.data.ModelSettingsStore
+import com.wolffentp.stockanalyzer.data.DataStoreModelSettingsStore
+import com.wolffentp.stockanalyzer.data.OllamaModelAnalysisProvider
 import com.wolffentp.stockanalyzer.data.YahooFinanceMarketDataProvider
 import com.wolffentp.stockanalyzer.data.DataStoreWatchlistStore
 import com.wolffentp.stockanalyzer.data.WatchlistEntry
@@ -31,6 +36,8 @@ data class StockRowState(
     val quantity: Double? = null,
     val averageCost: Double? = null,
     val analysis: AnalysisResult? = null,
+    val modelReview: ModelReview? = null,
+    val modelError: String? = null,
     val error: String? = null,
 )
 
@@ -41,6 +48,7 @@ data class StockUiState(
     val autoRefresh: Boolean = true,
     val lastRefreshAt: Instant? = null,
     val selectedSymbol: String? = null,
+    val modelSettings: ModelSettings = ModelSettings(),
 )
 
 class StockViewModel @JvmOverloads constructor(
@@ -52,6 +60,8 @@ class StockViewModel @JvmOverloads constructor(
         ),
     ),
     private val watchlistStore: WatchlistStore = DataStoreWatchlistStore(application),
+    private val modelSettingsStore: ModelSettingsStore = DataStoreModelSettingsStore(application),
+    private val modelProvider: OllamaModelAnalysisProvider = OllamaModelAnalysisProvider(),
 ) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(StockUiState())
     val state: StateFlow<StockUiState> = mutableState.asStateFlow()
@@ -59,8 +69,16 @@ class StockViewModel @JvmOverloads constructor(
     private var refreshJob: Job? = null
 
     init {
+        loadModelSettings()
         loadWatchlist()
         startAutoRefresh()
+    }
+
+    private fun loadModelSettings() {
+        viewModelScope.launch {
+            val settings = modelSettingsStore.settings.first()
+            mutableState.update { it.copy(modelSettings = settings) }
+        }
     }
 
     private fun loadWatchlist() {
@@ -132,16 +150,37 @@ class StockViewModel @JvmOverloads constructor(
         if (enabled) startAutoRefresh()
     }
 
+    fun saveModelSettings(enabled: Boolean, endpoint: String, model: String): Boolean {
+        val normalizedEndpoint = endpoint.trim().trimEnd('/')
+        val normalizedModel = model.trim()
+        if (enabled && (!normalizedEndpoint.matches(Regex("^https?://[^\\s]+$")) || normalizedModel.isBlank())) return false
+        val settings = ModelSettings(enabled, normalizedEndpoint, normalizedModel.ifBlank { "qwen3:4b" })
+        mutableState.update { it.copy(modelSettings = settings) }
+        viewModelScope.launch { modelSettingsStore.save(settings) }
+        refresh()
+        return true
+    }
+
     fun refresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             mutableState.update { it.copy(isRefreshing = true) }
             val horizon = mutableState.value.horizon
+            val modelSettings = mutableState.value.modelSettings
             val updated = mutableState.value.rows.map { row ->
                 try {
-                    row.copy(analysis = repository.analyze(row.symbol, horizon), error = null)
+                    val analysis = repository.analyze(row.symbol, horizon)
+                    if (modelSettings.enabled && analysis.recommendation != com.wolffentp.stockanalyzer.domain.Recommendation.UNAVAILABLE) {
+                        runCatching { modelProvider.analyze(analysis, modelSettings) }
+                            .fold(
+                                onSuccess = { row.copy(analysis = analysis, modelReview = it, modelError = null, error = null) },
+                                onFailure = { row.copy(analysis = analysis, modelReview = null, modelError = it.message ?: "Local model review unavailable", error = null) },
+                            )
+                    } else {
+                        row.copy(analysis = analysis, modelReview = null, modelError = null, error = null)
+                    }
                 } catch (error: Exception) {
-                    row.copy(analysis = null, error = error.displayMessage())
+                    row.copy(analysis = null, modelReview = null, modelError = null, error = error.displayMessage())
                 }
             }
             mutableState.update { it.copy(rows = updated, isRefreshing = false, lastRefreshAt = Instant.now()) }
