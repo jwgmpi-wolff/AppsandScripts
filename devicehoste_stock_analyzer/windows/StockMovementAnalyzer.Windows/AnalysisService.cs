@@ -6,6 +6,8 @@ namespace StockMovementAnalyzer.Windows;
 public sealed class AnalysisService(HttpClient httpClient)
 {
     private const string Provider = "Yahoo Finance";
+    private const string ExtendedHoursBaseUrl = "https://query2.finance.yahoo.com";
+    private static readonly TimeZoneInfo EasternTime = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
     public async Task<AnalysisResult> AnalyzeAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)
     {
@@ -39,15 +41,18 @@ public sealed class AnalysisService(HttpClient httpClient)
         var regularMarketTime = OptionalLong(meta, "regularMarketTime") ?? OptionalLong(summary, "regularMarketTime");
         if (regularMarketTime is null)
             throw new InvalidOperationException("Quote timestamp was unavailable.");
+        var extended = await GetExtendedSessionAsync(symbol, cancellationToken);
         var preMarketChange = OptionalDouble(meta, "preMarketChange")
             ?? OptionalDouble(summary, "preMarketChange");
         var afterHoursChange = OptionalDouble(meta, "postMarketChange")
             ?? OptionalDouble(summary, "postMarketChange");
         var preMarketPrice = OptionalDouble(meta, "preMarketPrice")
-            ?? OptionalDouble(summary, "preMarketPrice");
+            ?? OptionalDouble(summary, "preMarketPrice")
+            ?? extended.PreMarketPrice;
         if (preMarketPrice is null && preMarketChange is not null) preMarketPrice = regularPrice + preMarketChange;
         var afterHoursPrice = OptionalDouble(meta, "postMarketPrice")
-            ?? OptionalDouble(summary, "postMarketPrice");
+            ?? OptionalDouble(summary, "postMarketPrice")
+            ?? extended.AfterHoursPrice;
         if (afterHoursPrice is null && afterHoursChange is not null) afterHoursPrice = regularPrice + afterHoursChange;
         var preMarketChangePercent = OptionalDouble(meta, "preMarketChangePercent")
             ?? OptionalDouble(summary, "preMarketChangePercent")
@@ -60,6 +65,9 @@ public sealed class AnalysisService(HttpClient httpClient)
             regularPrice.Value,
             DateTimeOffset.FromUnixTimeSeconds(regularMarketTime.Value),
             Provider,
+            extended.OvernightPrice,
+            extended.OvernightPrice is double overnight ? overnight - regularPrice.Value : null,
+            extended.OvernightPrice is double overnightPercent && regularPrice.Value != 0.0 ? ((overnightPercent - regularPrice.Value) / regularPrice.Value) * 100.0 : null,
             preMarketPrice,
             preMarketChange ?? (preMarketPrice is double resolvedPre ? resolvedPre - regularPrice.Value : null),
             preMarketChangePercent,
@@ -68,6 +76,44 @@ public sealed class AnalysisService(HttpClient httpClient)
             afterHoursChangePercent);
         quoteSummary?.Dispose();
         return quote;
+    }
+
+    private async Task<ExtendedSessionPrices> GetExtendedSessionAsync(string symbol, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var chart = await GetJsonAsync(
+                $"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d&includePrePost=true",
+                cancellationToken,
+                ExtendedHoursBaseUrl);
+            var result = GetChartResult(chart);
+            var timestamps = result.GetProperty("timestamp").EnumerateArray().Select(value => value.GetInt64()).ToList();
+            var closes = result.GetProperty("indicators").GetProperty("quote")[0].GetProperty("close").EnumerateArray().Select(NullableDouble).ToList();
+            var samples = timestamps.Select((timestamp, index) => new { Timestamp = DateTimeOffset.FromUnixTimeSeconds(timestamp), Close = ElementAt(closes, index) })
+                .Where(sample => sample.Close is not null)
+                .ToList();
+            double? LatestSessionPrice(int startMinute, int endMinute) => samples
+                .Where(sample =>
+                {
+                    var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
+                    var minute = time.Hours * 60 + time.Minutes;
+                    return minute >= startMinute && minute < endMinute;
+                })
+                .MaxBy(sample => sample.Timestamp)?.Close;
+            double? LatestOvernightPrice() => samples
+                .Where(sample =>
+                {
+                    var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
+                    var minute = time.Hours * 60 + time.Minutes;
+                    return minute >= 20 * 60 || minute < 4 * 60;
+                })
+                .MaxBy(sample => sample.Timestamp)?.Close;
+            return new ExtendedSessionPrices(
+                LatestOvernightPrice(),
+                LatestSessionPrice(4 * 60, 9 * 60 + 30),
+                LatestSessionPrice(16 * 60, 20 * 60));
+        }
+        catch { return new ExtendedSessionPrices(null, null, null); }
     }
 
     private async Task<IReadOnlyList<Candle>> GetCandlesAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)
@@ -114,9 +160,9 @@ public sealed class AnalysisService(HttpClient httpClient)
         return new NewsSentimentBatch(Provider, DateTimeOffset.UtcNow, items);
     }
 
-    private async Task<JsonDocument> GetJsonAsync(string path, CancellationToken cancellationToken)
+    private async Task<JsonDocument> GetJsonAsync(string path, CancellationToken cancellationToken, string baseUrl = "https://query1.finance.yahoo.com")
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://query1.finance.yahoo.com{path}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}{path}");
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.UserAgent.ParseAdd("StockMovementAnalyzer/1.6");
         using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -171,6 +217,8 @@ public sealed class AnalysisService(HttpClient httpClient)
             ? result
             : null;
     }
+
+            private sealed record ExtendedSessionPrices(double? OvernightPrice, double? PreMarketPrice, double? AfterHoursPrice);
 
     private static double? NullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
     private static long? NullableLong(JsonElement value) => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result) ? result : null;

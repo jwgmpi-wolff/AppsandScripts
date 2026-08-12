@@ -73,6 +73,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}" IsReadOnly="True" Width="75"/>
                     <DataGridTextColumn Header="Price" Binding="{Binding Price}" IsReadOnly="True" Width="88"/>
+                    <DataGridTextColumn Header="Overnight" Binding="{Binding OvernightGrid}" IsReadOnly="True" Width="180"/>
                     <DataGridTextColumn Header="Pre-market" Binding="{Binding PreMarketGrid}" IsReadOnly="True" Width="180"/>
                     <DataGridTextColumn Header="After-hours" Binding="{Binding AfterHoursGrid}" IsReadOnly="True" Width="180"/>
                     <DataGridTextColumn Header="Technical" Binding="{Binding Technical}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="90"/>

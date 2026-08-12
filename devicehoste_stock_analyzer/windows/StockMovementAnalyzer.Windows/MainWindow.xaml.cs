@@ -196,7 +196,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
 {
-    private string price = "-", extendedSession = "-", preMarketGrid = "Unavailable", afterHoursGrid = "Unavailable", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
+    private string price = "-", extendedSession = "-", overnightGrid = "Unavailable", preMarketGrid = "Unavailable", afterHoursGrid = "Unavailable", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
     private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
     private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
@@ -205,6 +205,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
     public string ExtendedSession { get => extendedSession; private set => Set(ref extendedSession, value); }
+    public string OvernightGrid { get => overnightGrid; private set => Set(ref overnightGrid, value); }
     public string PreMarketGrid { get => preMarketGrid; private set => Set(ref preMarketGrid, value); }
     public string AfterHoursGrid { get => afterHoursGrid; private set => Set(ref afterHoursGrid, value); }
     public string Technical { get => technical; private set => Set(ref technical, value); }
@@ -229,15 +230,16 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     {
         Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
         ExtendedSession = ExtendedSessionSummary(value.Quote);
-        PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
-        AfterHoursGrid = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
+        OvernightGrid = SessionGridText(value.Quote?.OvernightPrice, value.Quote?.OvernightChange, value.Quote?.OvernightChangePercent, value.Quote?.Price);
+        PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
+        AfterHoursGrid = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
         Technical = value.Recommendation.ToString().ToUpperInvariant();
         TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
         Confidence = $"{value.Confidence}%";
         TechnicalBrush = DirectionBrushes.For(value.Direction);
         ModelRationale = value.Reason;
         TechnicalSummary = $"{Technical} · {TechnicalRange} · Confidence {Confidence}";
-        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nPre/After market: {ExtendedSession}\nLatest quote: {Price}";
+        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nOvernight: {OvernightGrid}\nPre/After market: {ExtendedSession}\nLatest quote: {Price}";
         IndicatorDetails = value.Indicators is null ? "Indicators were not calculated because live-data validation failed." :
             $"Momentum: {Display(value.Indicators.MomentumPercent)}%\nShort moving average: {Display(value.Indicators.ShortMovingAverage)}\nLong moving average: {Display(value.Indicators.LongMovingAverage)}\nRelative volume: {Display(value.Indicators.RelativeVolume)}\nRSI: {Display(value.Indicators.Rsi)}\nMACD: {Display(value.Indicators.Macd)}\nVWAP: {Display(value.Indicators.Vwap)}\nFresh news sentiment: {Display(value.Indicators.SentimentAverage)}";
         SignalDetails = value.Signals.Count == 0 ? "Signals were not calculated." : string.Join("\n", value.Signals.Select(signal =>
@@ -259,7 +261,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     { ModelResult = "Unavailable"; ModelBrush = DirectionBrushes.Neutral; ModelRationale = message; ModelDetails = message; }
     public void ApplyDataError(string message)
     {
-        Price = ExtendedSession = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
+        Price = ExtendedSession = OvernightGrid = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
         ModelResult = "Unavailable";
         TechnicalBrush = ModelBrush = DirectionBrushes.Neutral;
         ModelRationale = message;
@@ -287,13 +289,15 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         return $"{label} {priceText} ({percentText})";
     }
 
-    private static string SessionGridText(double? sessionPrice, double? sessionPercent, double? regularPrice)
+    private static string SessionGridText(double? sessionPrice, double? sessionChange, double? sessionPercent, double? regularPrice)
     {
-        if (sessionPrice is null) return "Unavailable";
-        var delta = regularPrice is double regular ? sessionPrice.Value - regular : 0.0;
-        var deltaText = regularPrice is null ? "-" : $"{NormalizeSignedPercent(delta):+0.00;-0.00;0.00}";
+        if (sessionPrice is null && sessionChange is null && sessionPercent is null) return "Unavailable";
+        var resolvedPrice = sessionPrice ?? (regularPrice is double regular && sessionChange is double change ? regular + change : null);
+        var delta = sessionChange ?? (resolvedPrice is double price && regularPrice is double baseline ? price - baseline : null);
+        var priceText = resolvedPrice is null ? "-" : resolvedPrice.Value.ToString("C2");
+        var deltaText = delta is null ? "-" : $"{NormalizeSignedPercent(delta.Value):+0.00;-0.00;0.00}";
         var percentText = sessionPercent is null ? "-" : $"{NormalizeSignedPercent(sessionPercent.Value):+0.00;-0.00;0.00}%";
-        return $"{sessionPrice.Value:C2} ({deltaText}, {percentText})";
+        return $"{priceText} ({deltaText}, {percentText})";
     }
 
     private static double NormalizeSignedPercent(double value) => Math.Abs(value) < 0.00005 ? 0.0 : value;

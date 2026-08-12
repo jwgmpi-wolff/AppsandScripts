@@ -274,6 +274,7 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
+            Text(result?.quote?.overnightGridLine() ?: "Overnight: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text(result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
@@ -536,6 +537,7 @@ private fun sourceText(result: AnalysisResult) = buildString {
     appendLine("Latest source timestamp: ${result.lastDataTimestamp.formatTimestamp()}")
     appendLine("Source age: ${result.sourceAgeMinutes?.let { "$it minutes" } ?: "Unavailable"}")
     appendLine("Candle interval: ${result.candleIntervalMinutes} minute(s)")
+    appendLine("Overnight: ${result.quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable"}")
     appendLine("Pre/After market: ${result.quote?.extendedSessionSummary() ?: "Unavailable"}")
     append("Latest quote: ${result.quote?.let { String.format(Locale.US, "$%,.2f at %s", it.price, it.timestamp.formatTimestamp()) } ?: "Unsupported / unavailable"}")
 }
@@ -618,6 +620,9 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): S
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String =
     "Pre-market: ${gridSessionText(preMarketPrice, preMarketChange, preMarketChangePercent)}"
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String =
+    "Overnight: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
     "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"

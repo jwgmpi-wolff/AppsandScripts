@@ -10,6 +10,7 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -37,15 +38,19 @@ class YahooFinanceMarketDataProvider(
             ?: throw MarketDataException.InvalidResponse("current price was unavailable")
         val timestamp = result.meta.regularMarketTime ?: summary?.regularMarketTime
             ?: throw MarketDataException.InvalidResponse("quote timestamp was unavailable")
+        val extended = runCatching { extendedSession(symbol) }.getOrNull()
         val preMarketChange = result.meta.preMarketChange
             ?: summary?.preMarketChange
         val afterHoursChange = result.meta.postMarketChange
             ?: summary?.postMarketChange
+        val overnightPrice = extended?.overnightPrice
         val preMarketPrice = result.meta.preMarketPrice
             ?: summary?.preMarketPrice
+            ?: extended?.preMarketPrice
             ?: preMarketChange?.let { price + it }
         val afterHoursPrice = result.meta.postMarketPrice
             ?: summary?.postMarketPrice
+            ?: extended?.afterHoursPrice
             ?: afterHoursChange?.let { price + it }
         val preMarketChangePercent = result.meta.preMarketChangePercent
             ?: summary?.preMarketChangePercent
@@ -58,6 +63,9 @@ class YahooFinanceMarketDataProvider(
             price = price,
             timestamp = Instant.ofEpochSecond(timestamp),
             provider = PROVIDER,
+            overnightPrice = overnightPrice,
+            overnightChange = overnightPrice?.let { it - price },
+            overnightChangePercent = overnightPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null },
             preMarketPrice = preMarketPrice,
             preMarketChange = preMarketChange ?: preMarketPrice?.let { it - price },
             preMarketChangePercent = preMarketChangePercent,
@@ -125,9 +133,48 @@ class YahooFinanceMarketDataProvider(
             .firstOrNull { item -> item.symbol.equals(symbol, ignoreCase = true) }
     }
 
-    private suspend inline fun <reified T> request(path: String): T = withContext(Dispatchers.IO) {
+    private suspend fun extendedSession(symbol: String): ExtendedSessionPrices {
+        val key = "$symbol:extended-session"
+        val result = cacheMutex.withLock {
+            val now = clock()
+            chartCache[key]?.takeIf { Duration.between(it.retrievedAt, now).seconds in 0..10 }?.result
+                ?: request<YahooChartResponse>(
+                    "/v8/finance/chart/${encode(symbol)}?interval=1m&range=1d&includePrePost=true",
+                    if (baseUrl.contains("query1.finance.yahoo.com")) EXTENDED_HOURS_BASE_URL else baseUrl,
+                ).chart.result?.firstOrNull()
+                    ?.also { chartCache[key] = CachedChart(now, it) }
+                ?: throw MarketDataException.UnsupportedSymbol()
+        }
+        val closes = result.indicators.quote.firstOrNull()?.close.orEmpty()
+        val sessionPrices = result.timestamp.mapIndexedNotNull { index, value ->
+            closes.getOrNull(index)?.let { close -> Instant.ofEpochSecond(value) to close }
+        }
+        fun latestSessionPrice(startMinute: Int, endMinute: Int): Double? = sessionPrices
+            .filter { (instant, _) ->
+                val time = instant.atZone(NEW_YORK).toLocalTime()
+                val minute = time.hour * 60 + time.minute
+                minute in startMinute until endMinute
+            }
+            .maxByOrNull { it.first }
+            ?.second
+        fun latestOvernightPrice(): Double? = sessionPrices
+            .filter { (instant, _) ->
+                val time = instant.atZone(NEW_YORK).toLocalTime()
+                val minute = time.hour * 60 + time.minute
+                minute >= AFTER_HOURS_CLOSE_MINUTE || minute < OVERNIGHT_CLOSE_MINUTE
+            }
+            .maxByOrNull { it.first }
+            ?.second
+        return ExtendedSessionPrices(
+            overnightPrice = latestOvernightPrice(),
+            preMarketPrice = latestSessionPrice(PRE_MARKET_OPEN_MINUTE, REGULAR_MARKET_OPEN_MINUTE),
+            afterHoursPrice = latestSessionPrice(REGULAR_MARKET_CLOSE_MINUTE, AFTER_HOURS_CLOSE_MINUTE),
+        )
+    }
+
+    private suspend inline fun <reified T> request(path: String, requestBaseUrl: String = baseUrl): T = withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url("${baseUrl.trimEnd('/')}$path")
+            .url("${requestBaseUrl.trimEnd('/')}$path")
             .header("Accept", "application/json")
             .header("User-Agent", "StockMovementAnalyzer/1.4")
             .get()
@@ -160,10 +207,22 @@ class YahooFinanceMarketDataProvider(
     private fun encode(value: String): String = URLEncoder.encode(value.trim().uppercase(), Charsets.UTF_8.name())
 
     private data class CachedChart(val retrievedAt: Instant, val result: YahooChartResult)
+    private data class ExtendedSessionPrices(
+        val overnightPrice: Double?,
+        val preMarketPrice: Double?,
+        val afterHoursPrice: Double?,
+    )
 
     private companion object {
         const val PROVIDER = "Yahoo Finance"
         const val TAG = "YahooMarketData"
+        const val EXTENDED_HOURS_BASE_URL = "https://query2.finance.yahoo.com"
+        const val PRE_MARKET_OPEN_MINUTE = 4 * 60
+        const val REGULAR_MARKET_OPEN_MINUTE = 9 * 60 + 30
+        const val REGULAR_MARKET_CLOSE_MINUTE = 16 * 60
+        const val AFTER_HOURS_CLOSE_MINUTE = 20 * 60
+        const val OVERNIGHT_CLOSE_MINUTE = 4 * 60
+        val NEW_YORK: ZoneId = ZoneId.of("America/New_York")
     }
 }
 
