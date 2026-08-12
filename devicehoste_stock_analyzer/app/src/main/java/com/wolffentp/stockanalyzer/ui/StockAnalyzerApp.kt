@@ -117,7 +117,7 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Probabilistic analysis", style = MaterialTheme.typography.headlineLarge, fontSize = 30.sp)
-                Text("Live, timestamped technical signals only. Not financial advice.", color = Color(0xFF55555D))
+                Text("Fresh timestamped trends and sourced news. Not financial advice.", color = Color(0xFF55555D))
                 Text("Time horizon", fontWeight = FontWeight.Bold)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(Horizon.entries) { horizon ->
@@ -351,6 +351,7 @@ private fun AnalysisDetail(row: StockRowState, onBack: () -> Unit) {
                 item { DetailSection("Source", sourceText(result)) }
                 item { DetailSection("Indicators", indicatorText(result)) }
                 item { DetailSection("Signal weights", signalText(result)) }
+                item { DetailSection("News research", newsText(result)) }
                 item { DetailSection("Gaps and limitations", result.warnings.ifEmpty { listOf("None reported") }.joinToString("\n") { "- $it" }) }
                 item { DetailSection("Final reason", result.reason) }
                 item { Spacer(Modifier.height(12.dp)) }
@@ -390,7 +391,7 @@ private fun sourceText(result: AnalysisResult) = buildString {
 private fun indicatorText(result: AnalysisResult): String {
     val values = result.indicators ?: return "Indicators were not calculated because live-data validation failed."
     fun Double?.display() = this?.let { String.format(Locale.US, "%.4f", it) } ?: "Unsupported / unavailable"
-    return "Momentum: ${values.momentumPercent.display()}%\nShort moving average: ${values.shortMovingAverage.display()}\nLong moving average: ${values.longMovingAverage.display()}\nRelative volume: ${values.relativeVolume.display()}\nRSI: ${values.rsi.display()}\nMACD: ${values.macd.display()}\nVWAP: ${values.vwap.display()}\nSentiment: Unsupported / unavailable"
+    return "Momentum: ${values.momentumPercent.display()}%\nShort moving average: ${values.shortMovingAverage.display()}\nLong moving average: ${values.longMovingAverage.display()}\nRelative volume: ${values.relativeVolume.display()}\nRSI: ${values.rsi.display()}\nMACD: ${values.macd.display()}\nVWAP: ${values.vwap.display()}\nFresh news sentiment average: ${values.sentimentAverage.display()}"
 }
 
 private fun signalText(result: AnalysisResult) = buildString {
@@ -398,6 +399,19 @@ private fun signalText(result: AnalysisResult) = buildString {
         appendLine("${signal.name}: value ${signal.value?.let { String.format(Locale.US, "%.3f", it) } ?: "unused"} x weight ${String.format(Locale.US, "%.2f", signal.weight)} = ${signal.contribution?.let { String.format(Locale.US, "%.3f", it) } ?: "unused"}")
     }
     append("Confidence: absolute normalized weighted score x 100 = ${result.confidence}%")
+}
+
+private fun newsText(result: AnalysisResult): String {
+    val news = result.news ?: return "No timestamped news was returned for this refresh."
+    if (news.items.isEmpty()) return "${news.provider} returned no sourced articles at ${news.retrievedAt.formatTimestamp()}."
+    return buildString {
+        appendLine("Provider: ${news.provider} · Retrieved ${news.retrievedAt.formatTimestamp()}")
+        news.items.forEach { article ->
+            appendLine()
+            appendLine(article.headline)
+            append("${article.source} · ${article.publishedAt.formatTimestamp()} · Score ${String.format(Locale.US, "%+.3f", article.score)} · ${article.scoringMethod}")
+        }
+    }
 }
 
 private fun directionLabel(direction: Direction?) = when (direction) {

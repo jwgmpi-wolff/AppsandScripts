@@ -7,7 +7,7 @@ export function createRequestHandler({ fetchImpl = fetch, env = process.env, now
   return async function requestHandler(request, response) {
     try {
       const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
-      const match = url.pathname.match(/^\/v1\/(quote|candles)\/([^/]+)$/);
+      const match = url.pathname.match(/^\/v1\/(quote|candles|news)\/([^/]+)$/);
       if (request.method !== "GET" || !match) return sendError(response, 404, "Not found");
       const symbol = decodeURIComponent(match[2]).trim().toUpperCase();
       if (!SYMBOL.test(symbol)) return sendError(response, 404, "Unsupported symbol");
@@ -29,6 +29,25 @@ export function createRequestHandler({ fetchImpl = fetch, env = process.env, now
 
 async function finnhubRequest(resource, symbol, url, fetchImpl, env, now) {
   const apiKey = requireSecret(env.FINNHUB_API_KEY, "FINNHUB_API_KEY");
+  if (resource === "news") {
+    const to = dateOnly(now());
+    const from = dateOnly(new Date(now().getTime() - 7 * 86_400_000));
+    const endpoint = `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}&token=${encodeURIComponent(apiKey)}`;
+    const data = await providerJson(fetchImpl, endpoint);
+    if (!Array.isArray(data)) providerError(502, "Provider returned invalid news data");
+    return {
+      provider: "Finnhub",
+      retrievedAt: now().toISOString(),
+      items: data.filter(article => article.datetime > 0 && article.headline && article.source).slice(0, 30).map(article => ({
+        score: headlineSentiment(article.headline),
+        source: String(article.source),
+        publishedAt: new Date(article.datetime * 1000).toISOString(),
+        headline: String(article.headline),
+        url: validHttpUrl(article.url),
+        scoringMethod: "Deterministic headline lexicon",
+      })),
+    };
+  }
   if (resource === "quote") {
     const data = await providerJson(fetchImpl, `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey)}`);
     if (!(data.c > 0) || !(data.t > 0)) providerError(404, "Unsupported symbol or quote unavailable");
@@ -57,6 +76,29 @@ async function finnhubRequest(resource, symbol, url, fetchImpl, env, now) {
 
 async function alphaVantageRequest(resource, symbol, url, fetchImpl, env, now) {
   const apiKey = requireSecret(env.ALPHA_VANTAGE_API_KEY, "ALPHA_VANTAGE_API_KEY");
+  if (resource === "news") {
+    const endpoint = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${encodeURIComponent(symbol)}&limit=30&sort=LATEST&apikey=${encodeURIComponent(apiKey)}`;
+    const data = await providerJson(fetchImpl, endpoint);
+    if (data.Note || data.Information) providerError(429, "Provider rate limit exceeded");
+    if (!Array.isArray(data.feed)) providerError(502, "Provider returned invalid news data");
+    return {
+      provider: "Alpha Vantage",
+      retrievedAt: now().toISOString(),
+      items: data.feed.flatMap(article => {
+        const ticker = article.ticker_sentiment?.find(item => String(item.ticker).toUpperCase() === symbol);
+        const score = Number(ticker?.ticker_sentiment_score);
+        if (!Number.isFinite(score) || !article.title || !article.source || !article.time_published) return [];
+        return [{
+          score: Math.max(-1, Math.min(1, score)),
+          source: String(article.source),
+          publishedAt: alphaNewsTimeToIso(article.time_published),
+          headline: String(article.title),
+          url: validHttpUrl(article.url),
+          scoringMethod: "Alpha Vantage ticker sentiment",
+        }];
+      }),
+    };
+  }
   const interval = resource === "candles" ? candleInterval(url) : 1;
   const daily = interval === 1_440;
   const functionName = daily ? "TIME_SERIES_DAILY" : "TIME_SERIES_INTRADAY";
@@ -161,4 +203,27 @@ function candleInterval(url) {
   const interval = boundedInteger(url.searchParams.get("interval"), 1, 1, 1_440);
   if (interval !== 1 && interval !== 1_440) providerError(400, "Unsupported candle interval");
   return interval;
+}
+
+function headlineSentiment(headline) {
+  const positive = new Set(["beat", "beats", "bullish", "gain", "gains", "growth", "higher", "improve", "improves", "profit", "profits", "raise", "raises", "record", "surge", "surges", "upgrade", "upgrades"]);
+  const negative = new Set(["bearish", "cut", "cuts", "decline", "declines", "downgrade", "downgrades", "drop", "drops", "fall", "falls", "fraud", "investigation", "lawsuit", "loss", "losses", "lower", "miss", "misses", "risk", "risks"]);
+  const words = String(headline).toLowerCase().match(/[a-z]+/g) ?? [];
+  const raw = words.reduce((sum, word) => sum + (positive.has(word) ? 1 : 0) - (negative.has(word) ? 1 : 0), 0);
+  return Math.max(-1, Math.min(1, raw / 3));
+}
+
+function alphaNewsTimeToIso(value) {
+  const match = String(value).match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+  if (!match) providerError(502, "Provider news timestamp is invalid");
+  return new Date(Date.UTC(...match.slice(1).map(Number).map((part, index) => index === 1 ? part - 1 : part))).toISOString();
+}
+
+function dateOnly(value) { return value.toISOString().slice(0, 10); }
+
+function validHttpUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : null;
+  } catch { return null; }
 }

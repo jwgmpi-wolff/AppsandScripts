@@ -81,6 +81,21 @@ class StockMovementAnalyzerTest {
         assertTrue(result.warnings.any { it.contains("stale") })
     }
 
+    @Test
+    fun freshTimestampedNewsContributesAndStaleNewsIsExcluded() {
+        val source = snapshot(now.minusSeconds(60))
+        val fresh = TimestampedSentiment(0.8, "Verified test source", now.minusSeconds(600), "Earnings outlook improves", scoringMethod = "Test method")
+        val stale = TimestampedSentiment(-1.0, "Old test source", now.minusSeconds(3 * 24 * 60 * 60), "Old headline", scoringMethod = "Test method")
+        val result = StockMovementAnalyzer().analyze(
+            source.copy(news = NewsSentimentBatch("Mock provider (test only)", now, listOf(fresh, stale))),
+            Horizon.TEN,
+            now,
+        )
+        assertEquals(0.8, result.indicators?.sentimentAverage ?: 0.0, 0.0001)
+        assertTrue(result.signals.any { it.name == "News sentiment" && it.contribution != null })
+        assertEquals(2, result.news?.items?.size)
+    }
+
     private fun snapshot(latest: Instant): MarketSnapshot {
         val candles = candles(latest, includeVolume = true)
         return MarketSnapshot("MSFT", "Mock provider (test only)", now, 1, Quote("MSFT", candles.last().close, latest, "Mock provider (test only)"), candles)

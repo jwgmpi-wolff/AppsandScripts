@@ -3,7 +3,9 @@ package com.wolffentp.stockanalyzer.data
 import android.util.Log
 import com.wolffentp.stockanalyzer.domain.Candle
 import com.wolffentp.stockanalyzer.domain.CandleSeries
+import com.wolffentp.stockanalyzer.domain.NewsSentimentBatch
 import com.wolffentp.stockanalyzer.domain.Quote
+import com.wolffentp.stockanalyzer.domain.TimestampedSentiment
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.Instant
@@ -34,6 +36,24 @@ class ProxyMarketDataProvider(
             intervalMinutes = dto.intervalMinutes,
             candles = dto.candles.map {
                 Candle(parseInstant(it.timestamp), it.open, it.high, it.low, it.close, it.volume)
+            },
+        )
+    }
+
+    override suspend fun getNewsOrSentiment(symbol: String): NewsSentimentBatch {
+        val dto = request<NewsResponse>("v1/news/${encode(symbol)}")
+        return NewsSentimentBatch(
+            provider = dto.provider,
+            retrievedAt = parseInstant(dto.retrievedAt),
+            items = dto.items.map {
+                TimestampedSentiment(
+                    score = it.score.coerceIn(-1.0, 1.0),
+                    source = it.source,
+                    publishedAt = parseInstant(it.publishedAt),
+                    headline = it.headline,
+                    url = it.url,
+                    scoringMethod = it.scoringMethod,
+                )
             },
         )
     }
@@ -100,4 +120,21 @@ private data class CandleDto(
     val low: Double,
     val close: Double,
     val volume: Long? = null,
+)
+
+@Serializable
+private data class NewsResponse(
+    val provider: String,
+    val retrievedAt: String,
+    val items: List<NewsItemDto>,
+)
+
+@Serializable
+private data class NewsItemDto(
+    val score: Double,
+    val source: String,
+    val publishedAt: String,
+    val headline: String,
+    val url: String? = null,
+    val scoringMethod: String,
 )

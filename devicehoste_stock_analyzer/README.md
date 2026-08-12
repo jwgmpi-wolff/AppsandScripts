@@ -5,7 +5,7 @@ A native Android app that produces explainable, probabilistic short-horizon stoc
 ## Architecture
 
 - `app/`: Kotlin, Jetpack Compose, StateFlow/ViewModel, OkHttp, and Kotlin Serialization.
-- `domain/`: indicators, freshness validation, non-hallucination validation, and weighted scoring independent of UI.
+- `domain/`: indicators, news freshness validation, non-hallucination validation, and weighted scoring independent of UI.
 - `data/`: `MarketDataProvider`, HTTPS proxy adapter, provider errors, and repository orchestration.
 - `ui/`: persistent watchlist, locally logged holdings, adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
 - `proxy/`: dependency-free Node 20 service that keeps Finnhub or Alpha Vantage API keys off the Android device and normalizes provider responses.
@@ -38,8 +38,9 @@ The app calls:
 - `GET /v1/quote/{symbol}`
 - `GET /v1/candles/{symbol}?interval=1&range=120` for one-minute candles
 - `GET /v1/candles/{symbol}?interval=1440&range=129600` for daily candles
+- `GET /v1/news/{symbol}` for newly retrieved, timestamped company news
 
-Quote responses contain `symbol`, numeric `price`, ISO-8601 `timestamp`, and `provider`. Candle responses contain `provider`, ISO-8601 `retrievedAt`, `intervalMinutes`, and timestamped OHLC candles with optional volume. Provider errors map to `404` unsupported symbol, `423` market closed/no recent data, `429` rate limit, and `5xx` provider unavailable. Responses use `Cache-Control: no-store`.
+Quote responses contain `symbol`, numeric `price`, ISO-8601 `timestamp`, and `provider`. Candle responses contain `provider`, ISO-8601 `retrievedAt`, `intervalMinutes`, and timestamped OHLC candles with optional volume. News responses contain the provider and retrieval time plus each article's headline, source, publication time, URL, score, and scoring method. Provider errors map to `404` unsupported symbol, `423` market closed/no recent data, `429` rate limit, and `5xx` provider unavailable. Responses use `Cache-Control: no-store`.
 
 ## Run Android
 
@@ -67,15 +68,16 @@ For the selected 10, 20, 30, 40, 50, or 60 minute horizon, the analyzer uses one
 
 | Signal | Default weight | Calculation |
 | --- | ---: | --- |
-| Momentum | 0.35 | Price change across the selected horizon, capped before weighting |
-| Trend | 0.25 | Five-period SMA compared with 12-period SMA |
+| Momentum | 0.30 | Price change across the selected horizon, capped before weighting |
+| Trend | 0.20 | Five-period SMA compared with 12-period SMA |
 | Volume | 0.10 | Latest volume versus its recent average, with price relative to VWAP |
 | RSI | 0.15 | Fourteen-period RSI |
 | MACD | 0.15 | Difference between 12- and 26-period EMAs |
+| News sentiment | 0.10 | Average of fresh, sourced, ticker-specific article scores |
 
 Unavailable indicators are excluded rather than substituted. At least 60% of signal weight must be supported. The score is normalized by available weight. A score at or above `0.2` is `UP`; at or below `-0.2` is `DOWN`; otherwise it is `NEUTRAL / INSUFFICIENT DATA`. Confidence is the absolute normalized score times 100, capped to 0-100. Thresholds can be changed through the non-secret `local.properties` values.
 
-Sentiment is not currently requested or scored. It is explicitly shown as unsupported. It must not be added unless the provider supplies timestamped source data.
+Each refresh independently requests quote, candle, and news data. Intraday projections use articles published within 24 hours; daily projections use articles published within seven days. Stale, future-dated, source-less, headline-less, or provider-mismatched items are excluded. Alpha Vantage supplies ticker-specific sentiment. Finnhub does not return sentiment with company news, so the proxy applies a small deterministic positive/negative headline lexicon and labels every such score `Deterministic headline lexicon`; it does not claim those scores came from Finnhub.
 
 ## Non-hallucination checks
 
@@ -114,5 +116,5 @@ Pop-Location
 - Market data entitlements, delay, coverage, and rate limits depend on the configured provider plan.
 - Day projections use trading-session candles, so 5-day and 10-day labels refer to five and ten observed sessions rather than guaranteed calendar-day outcomes.
 - Alpha Vantage compact intraday output and Finnhub candle availability may limit coverage.
-- News and sentiment are intentionally unsupported until timestamped sources are integrated.
+- Headline sentiment is a limited contextual signal and does not understand sarcasm, nuance, article bodies, or future events.
 - Live refresh is enabled by default every 60 seconds while this app screen and ViewModel remain active; there is no background worker.

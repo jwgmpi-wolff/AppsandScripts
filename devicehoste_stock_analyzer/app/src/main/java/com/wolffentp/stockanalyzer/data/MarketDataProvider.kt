@@ -2,13 +2,13 @@ package com.wolffentp.stockanalyzer.data
 
 import com.wolffentp.stockanalyzer.domain.CandleSeries
 import com.wolffentp.stockanalyzer.domain.Quote
-import com.wolffentp.stockanalyzer.domain.TimestampedSentiment
+import com.wolffentp.stockanalyzer.domain.NewsSentimentBatch
 
 interface MarketDataProvider {
     val displayName: String
     suspend fun getQuote(symbol: String): Quote
     suspend fun getIntradayCandles(symbol: String, intervalMinutes: Int, rangeMinutes: Int): CandleSeries
-    suspend fun getNewsOrSentiment(symbol: String): List<TimestampedSentiment> = emptyList()
+    suspend fun getNewsOrSentiment(symbol: String): NewsSentimentBatch? = null
 }
 
 sealed class MarketDataException(message: String, cause: Throwable? = null) : Exception(message, cause) {

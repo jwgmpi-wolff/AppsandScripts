@@ -4,6 +4,7 @@ import com.wolffentp.stockanalyzer.domain.Candle
 import com.wolffentp.stockanalyzer.domain.CandleSeries
 import com.wolffentp.stockanalyzer.domain.Direction
 import com.wolffentp.stockanalyzer.domain.Horizon
+import com.wolffentp.stockanalyzer.domain.NewsSentimentBatch
 import com.wolffentp.stockanalyzer.domain.Quote
 import java.time.Instant
 import kotlinx.coroutines.runBlocking
@@ -21,7 +22,7 @@ class MarketAnalysisRepositoryTest {
         assertEquals("Mock provider (test only)", result.provider)
         assertEquals(129.0, result.quote?.price ?: 0.0, 0.0)
         assertEquals(Direction.UP, result.direction)
-        assertTrue(provider.quoteCalled && provider.candlesCalled)
+        assertTrue(provider.quoteCalled && provider.candlesCalled && provider.newsCalled)
     }
 
     @Test(expected = MarketDataException.RateLimited::class)
@@ -45,6 +46,7 @@ class MarketAnalysisRepositoryTest {
         override val displayName = "Mock provider (test only)"
         var quoteCalled = false
         var candlesCalled = false
+        var newsCalled = false
         var requestedInterval: Int? = null
         var requestedRange: Int? = null
 
@@ -62,6 +64,11 @@ class MarketAnalysisRepositoryTest {
                 Candle(latest.minusSeconds((29L - index) * intervalMinutes * 60), close, close + 0.5, close - 0.5, close, 1_000L + index * 20)
             }
             return CandleSeries(displayName, latest, intervalMinutes, candles)
+        }
+
+        override suspend fun getNewsOrSentiment(symbol: String): NewsSentimentBatch? {
+            newsCalled = true
+            return null
         }
     }
 }

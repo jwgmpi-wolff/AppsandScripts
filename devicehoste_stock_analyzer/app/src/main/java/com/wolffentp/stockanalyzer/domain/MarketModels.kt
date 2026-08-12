@@ -49,6 +49,8 @@ data class MarketSnapshot(
     val intervalMinutes: Int,
     val quote: Quote?,
     val candles: List<Candle>,
+    val news: NewsSentimentBatch? = null,
+    val newsWarning: String? = null,
 )
 
 data class CandleSeries(
@@ -62,6 +64,15 @@ data class TimestampedSentiment(
     val score: Double,
     val source: String,
     val publishedAt: Instant,
+    val headline: String,
+    val url: String? = null,
+    val scoringMethod: String,
+)
+
+data class NewsSentimentBatch(
+    val provider: String,
+    val retrievedAt: Instant,
+    val items: List<TimestampedSentiment>,
 )
 
 data class IndicatorValues(
@@ -72,6 +83,7 @@ data class IndicatorValues(
     val rsi: Double?,
     val macd: Double?,
     val vwap: Double?,
+    val sentimentAverage: Double?,
 )
 
 data class SignalContribution(val name: String, val value: Double?, val weight: Double, val contribution: Double?)
@@ -91,4 +103,5 @@ data class AnalysisResult(
     val signals: List<SignalContribution>,
     val warnings: List<String>,
     val reason: String,
+    val news: NewsSentimentBatch? = null,
 )

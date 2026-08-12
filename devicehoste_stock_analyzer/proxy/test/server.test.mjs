@@ -74,6 +74,42 @@ test("requests Alpha Vantage daily data and preserves its source date", async ()
   assert.equal(response.body.candles[0].timestamp, "2026-08-10T04:00:00.000Z");
 });
 
+test("normalizes Finnhub news with source time and labeled local scoring", async () => {
+  const providerFetch = async url => {
+    assert.match(url, /company-news/);
+    return jsonResponse([{ datetime: 1786460340, headline: "Profit growth beats outlook", source: "Reuters", url: "https://example.com/story" }]);
+  };
+  const response = await invoke(createRequestHandler({
+    fetchImpl: providerFetch,
+    env: { MARKET_DATA_PROVIDER: "finnhub", FINNHUB_API_KEY: "server-secret" },
+    now: () => new Date("2026-08-11T15:00:00Z"),
+  }), "/v1/news/MSFT");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.items[0].source, "Reuters");
+  assert.equal(response.body.items[0].scoringMethod, "Deterministic headline lexicon");
+  assert.ok(response.body.items[0].score > 0);
+});
+
+test("preserves Alpha Vantage ticker sentiment instead of overall sentiment", async () => {
+  const providerFetch = async url => {
+    assert.match(url, /NEWS_SENTIMENT/);
+    return jsonResponse({ feed: [{
+      title: "Microsoft update", source: "Example Wire", time_published: "20260811T143000", url: "https://example.com/msft",
+      overall_sentiment_score: -0.9,
+      ticker_sentiment: [{ ticker: "MSFT", ticker_sentiment_score: "0.42" }],
+    }] });
+  };
+  const response = await invoke(createRequestHandler({
+    fetchImpl: providerFetch,
+    env: { MARKET_DATA_PROVIDER: "alphavantage", ALPHA_VANTAGE_API_KEY: "server-secret" },
+    now: () => new Date("2026-08-11T15:00:00Z"),
+  }), "/v1/news/MSFT");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.items[0].score, 0.42);
+  assert.equal(response.body.items[0].publishedAt, "2026-08-11T14:30:00.000Z");
+  assert.equal(response.body.items[0].scoringMethod, "Alpha Vantage ticker sentiment");
+});
+
 async function invoke(handler, path) {
   const server = createServer(handler).listen(0, "127.0.0.1");
   await once(server, "listening");

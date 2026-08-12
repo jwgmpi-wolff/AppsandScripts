@@ -28,13 +28,15 @@ class StockMovementAnalyzer(
             rsi = Indicators.rsi(closes),
             macd = Indicators.macd(closes),
             vwap = Indicators.vwap(ordered.takeLast(20)),
+            sentimentAverage = freshSentimentScore(snapshot, horizon, now),
         )
         val signals = listOf(
-            contribution("Momentum", indicators.momentumPercent?.coerceIn(-2.0, 2.0)?.div(2.0), 0.35),
-            contribution("Trend", trendScore(indicators), 0.25),
+            contribution("Momentum", indicators.momentumPercent?.coerceIn(-2.0, 2.0)?.div(2.0), 0.30),
+            contribution("Trend", trendScore(indicators), 0.20),
             contribution("Volume", volumeScore(indicators, closes.last()), 0.10),
             contribution("RSI", rsiScore(indicators.rsi), 0.15),
             contribution("MACD", indicators.macd?.let { if (it > 0) 1.0 else if (it < 0) -1.0 else 0.0 }, 0.15),
+            contribution("News sentiment", indicators.sentimentAverage, 0.10),
         )
         val availableWeight = signals.filter { it.contribution != null }.sumOf { it.weight }
         if (availableWeight < 0.6) {
@@ -48,14 +50,15 @@ class StockMovementAnalyzer(
         }
         val confidence = (abs(score) * 100).roundToInt().coerceIn(0, 100)
         val scope = if (horizon.isDaily) "daily" else "intraday"
-        val reason = "Probabilistic $scope analysis from ${signals.count { it.contribution != null }} supported technical signals; weighted score ${"%.3f".format(score)}. This is not financial advice."
+        val newsSummary = if (indicators.sentimentAverage != null) " Fresh timestamped news sentiment was included." else " News sentiment was unavailable or stale and was excluded."
+        val reason = "Probabilistic $scope analysis from ${signals.count { it.contribution != null }} supported trend, momentum, volume, technical, and sourced news signals; weighted score ${"%.3f".format(score)}.$newsSummary This is not financial advice."
         val limitations = buildList {
             if (indicators.relativeVolume == null || indicators.vwap == null) add("Volume or VWAP was unavailable and was not used.")
             if (indicators.rsi == null) add("RSI was unavailable and was not used.")
             if (indicators.macd == null) add("MACD was unavailable and was not used.")
-            add("Timestamped sentiment was not supplied and was not used.")
+            if (indicators.sentimentAverage == null) add(snapshot.newsWarning ?: "Fresh timestamped sentiment was unavailable and was not used.")
         }
-        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, limitations, reason)
+        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, limitations, reason, snapshot.news)
     }
 
     private fun contribution(name: String, value: Double?, weight: Double) =
@@ -81,6 +84,16 @@ class StockMovementAnalyzer(
         else -> 0.0
     }
 
+    private fun freshSentimentScore(snapshot: MarketSnapshot, horizon: Horizon, now: Instant): Double? {
+        if (snapshot.news?.provider != snapshot.provider) return null
+        val maximumAgeMinutes = if (horizon.isDaily) 10_080L else 1_440L
+        val fresh = snapshot.news?.items.orEmpty().filter { item ->
+            val age = Duration.between(item.publishedAt, now).toMinutes()
+            age in 0..maximumAgeMinutes && item.source.isNotBlank() && item.headline.isNotBlank()
+        }
+        return fresh.takeIf { it.isNotEmpty() }?.map { it.score.coerceIn(-1.0, 1.0) }?.average()
+    }
+
     private fun insufficient(snapshot: MarketSnapshot, horizon: Horizon, timestamp: Instant?, age: Long?, warnings: List<String>, indicators: IndicatorValues? = null, signals: List<SignalContribution> = emptyList()) =
-        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.")
+        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.", snapshot.news)
 }
