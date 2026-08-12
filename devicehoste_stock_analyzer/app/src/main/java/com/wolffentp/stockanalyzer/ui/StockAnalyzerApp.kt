@@ -2,6 +2,7 @@ package com.wolffentp.stockanalyzer.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -50,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,6 +110,7 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
     var deleteSymbol by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var configureModel by remember { mutableStateOf(false) }
+    var tableMode by rememberSaveable { mutableStateOf(false) }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text("Stock Movement Analyzer") },
@@ -170,23 +174,43 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
                     }
                     Switch(checked = state.autoRefresh, onCheckedChange = model::setAutoRefresh)
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !tableMode,
+                        onClick = { tableMode = false },
+                        label = { Text("Cards") },
+                    )
+                    FilterChip(
+                        selected = tableMode,
+                        onClick = { tableMode = true },
+                        label = { Text("Table") },
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             if (state.rows.isNotEmpty()) {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 150.dp),
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    gridItems(state.rows, key = { it.symbol }) { row ->
-                        StockGridCard(
-                            row = row,
-                            horizon = state.horizon,
-                            onClick = { model.select(row.symbol) },
-                            onEditHolding = { holdingEntry = row },
-                            onDelete = { deleteSymbol = row.symbol },
-                        )
+                if (tableMode) {
+                    StockTable(
+                        rows = state.rows,
+                        onSelect = model::select,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 150.dp),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        gridItems(state.rows, key = { it.symbol }) { row ->
+                            StockGridCard(
+                                row = row,
+                                horizon = state.horizon,
+                                onClick = { model.select(row.symbol) },
+                                onEditHolding = { holdingEntry = row },
+                                onDelete = { deleteSymbol = row.symbol },
+                            )
+                        }
                     }
                 }
             } else {
@@ -250,6 +274,72 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
             },
         )
     }
+}
+
+@Composable
+private fun StockTable(rows: List<StockRowState>, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    val scroll = rememberScrollState()
+    LazyColumn(modifier = modifier.horizontalScroll(scroll)) {
+        item { StockTableHeader() }
+        items(rows, key = { it.symbol }) { row ->
+            StockTableRow(row = row, onClick = { onSelect(row.symbol) })
+        }
+    }
+}
+
+@Composable
+private fun StockTableHeader() {
+    Row(
+        Modifier.background(Color(0xFFE7ECE9)).padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TableCell("Symbol", 76.dp, FontWeight.Bold)
+        TableCell("Price", 92.dp, FontWeight.Bold)
+        TableCell("Overnight", 172.dp, FontWeight.Bold)
+        TableCell("Pre-market", 172.dp, FontWeight.Bold)
+        TableCell("After-hours", 172.dp, FontWeight.Bold)
+        TableCell("Technical", 100.dp, FontWeight.Bold)
+        TableCell("Projected range", 146.dp, FontWeight.Bold)
+        TableCell("Confidence", 92.dp, FontWeight.Bold)
+        TableCell("Holding", 138.dp, FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
+    val result = row.analysis
+    val technicalColor = Color(DirectionPalette.argb(result?.direction ?: Direction.NEUTRAL_INSUFFICIENT_DATA))
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TableCell(row.symbol, 76.dp, FontWeight.Bold)
+        TableCell(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Unavailable", 92.dp)
+        TableCell(result?.quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable", 172.dp, color = result?.quote?.overnightColor() ?: Color(0xFF6B6B72))
+        TableCell(result?.quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable", 172.dp)
+        TableCell(result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable", 172.dp)
+        TableCell(recommendationLabel(result?.recommendation), 100.dp, FontWeight.Bold, technicalColor)
+        TableCell(priceRangeText(result), 146.dp, color = technicalColor)
+        TableCell(result?.let { "${it.confidence}%" } ?: "Unavailable", 92.dp, FontWeight.Bold, technicalColor)
+        TableCell(holdingText(row), 138.dp)
+    }
+}
+
+@Composable
+private fun TableCell(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    fontWeight: FontWeight? = null,
+    color: Color = Color(0xFF3F3F45),
+) {
+    Text(
+        text = text,
+        modifier = Modifier.width(width).padding(horizontal = 8.dp),
+        color = color,
+        fontWeight = fontWeight,
+        fontSize = 12.sp,
+        maxLines = 2,
+    )
 }
 
 @Composable
