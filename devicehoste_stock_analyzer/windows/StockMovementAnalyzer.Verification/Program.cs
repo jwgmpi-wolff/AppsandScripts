@@ -76,11 +76,18 @@ Require(IsColor(flashRow.PriceFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
     "Every decreased market value must flash red.");
 
 await Task.Delay(1_300);
+Require(IsColor(flashRow.PriceFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.OvernightFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.PreMarketFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.AfterHoursFlashBrush, 0x66, 0xFF, 0x3B, 0x30),
+    "Market-value flashes must not clear while waiting for the next refresh.");
+
+flashRow.ApplyTechnical(initialFlashResult);
 Require(IsColor(flashRow.PriceFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
         IsColor(flashRow.OvernightFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
         IsColor(flashRow.PreMarketFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
         IsColor(flashRow.AfterHoursFlashBrush, 0x00, 0x00, 0x00, 0x00),
-    "Market-value flashes must clear after the display interval.");
+    "An unchanged next refresh must clear every market-value flash.");
 
 var fallbackFlashRow = new StockRow("MSFT", null, null);
 var changeOnlyResult = rising with

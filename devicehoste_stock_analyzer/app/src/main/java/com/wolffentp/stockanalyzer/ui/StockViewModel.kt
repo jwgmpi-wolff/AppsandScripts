@@ -38,6 +38,10 @@ data class StockRowState(
     val quantity: Double? = null,
     val averageCost: Double? = null,
     val analysis: AnalysisResult? = null,
+    val priceFlashArgb: Long? = null,
+    val overnightFlashArgb: Long? = null,
+    val preMarketFlashArgb: Long? = null,
+    val afterHoursFlashArgb: Long? = null,
     val modelReview: ModelReview? = null,
     val modelError: String? = null,
     val error: String? = null,
@@ -231,17 +235,27 @@ class StockViewModel @JvmOverloads constructor(
                 try {
                     val analysis = repository.analyze(row.symbol, horizon)
                     val mergedAnalysis = analysis.withExtendedSessionFallback(row.analysis)
+                    val refreshedRow = row.withRefreshedAnalysis(mergedAnalysis)
                     if (modelSettings.enabled && analysis.recommendation != com.wolffentp.stockanalyzer.domain.Recommendation.UNAVAILABLE) {
                         runCatching { modelProvider.analyze(mergedAnalysis, modelSettings) }
                             .fold(
-                                onSuccess = { row.copy(analysis = mergedAnalysis, modelReview = it, modelError = null, error = null) },
-                                onFailure = { row.copy(analysis = mergedAnalysis, modelReview = null, modelError = it.message ?: "Local model review unavailable", error = null) },
+                                onSuccess = { refreshedRow.copy(modelReview = it, modelError = null, error = null) },
+                                onFailure = { refreshedRow.copy(modelReview = null, modelError = it.message ?: "Local model review unavailable", error = null) },
                             )
                     } else {
-                        row.copy(analysis = mergedAnalysis, modelReview = null, modelError = null, error = null)
+                        refreshedRow.copy(modelReview = null, modelError = null, error = null)
                     }
                 } catch (error: Exception) {
-                    row.copy(analysis = null, modelReview = null, modelError = null, error = error.displayMessage())
+                    row.copy(
+                        analysis = null,
+                        priceFlashArgb = null,
+                        overnightFlashArgb = null,
+                        preMarketFlashArgb = null,
+                        afterHoursFlashArgb = null,
+                        modelReview = null,
+                        modelError = null,
+                        error = error.displayMessage(),
+                    )
                 }
             }
             mutableState.update { it.copy(rows = updated, isRefreshing = false, lastRefreshAt = Instant.now()) }
@@ -347,6 +361,37 @@ private fun AnalysisResult.withExtendedSessionFallback(previous: AnalysisResult?
     )
     return copy(quote = mergedQuote)
 }
+
+private fun StockRowState.withRefreshedAnalysis(refreshedAnalysis: AnalysisResult): StockRowState {
+    val previousQuote = analysis?.quote
+    val refreshedQuote = refreshedAnalysis.quote
+    return copy(
+        analysis = refreshedAnalysis,
+        priceFlashArgb = changeFlashArgb(previousQuote?.price, refreshedQuote?.price),
+        overnightFlashArgb = changeFlashArgb(
+            previousQuote?.run { sessionFlashValue(overnightPrice, overnightChange) },
+            refreshedQuote?.run { sessionFlashValue(overnightPrice, overnightChange) },
+        ),
+        preMarketFlashArgb = changeFlashArgb(
+            previousQuote?.run { sessionFlashValue(preMarketPrice, preMarketChange) },
+            refreshedQuote?.run { sessionFlashValue(preMarketPrice, preMarketChange) },
+        ),
+        afterHoursFlashArgb = changeFlashArgb(
+            previousQuote?.run { sessionFlashValue(afterHoursPrice, afterHoursChange) },
+            refreshedQuote?.run { sessionFlashValue(afterHoursPrice, afterHoursChange) },
+        ),
+    )
+}
+
+internal fun changeFlashArgb(previousValue: Double?, currentValue: Double?): Long? = when {
+    previousValue == null || currentValue == null -> null
+    currentValue - previousValue > 0.00005 -> 0x6634C759L
+    currentValue - previousValue < -0.00005 -> 0x66FF3B30L
+    else -> null
+}
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.sessionFlashValue(sessionPrice: Double?, sessionChange: Double?): Double? =
+    sessionPrice ?: sessionChange?.let { price + it }
 
 private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
 private fun StockRowState.toWatchlistEntry() = WatchlistEntry(symbol, quantity, averageCost)
