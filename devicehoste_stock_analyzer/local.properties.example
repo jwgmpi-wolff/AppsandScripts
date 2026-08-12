@@ -1,0 +1,4 @@
+# Android Studio normally writes sdk.dir automatically. Do not commit local.properties.
+marketData.baseUrl=https://your-market-proxy.example.com
+analyzer.positiveThreshold=0.2
+analyzer.negativeThreshold=-0.2
