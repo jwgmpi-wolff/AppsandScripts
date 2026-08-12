@@ -73,6 +73,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}" IsReadOnly="True" Width="75"/>
                     <DataGridTextColumn Header="Price" Binding="{Binding Price}" IsReadOnly="True" Width="88"/>
+                    <DataGridTextColumn Header="Pre/After" Binding="{Binding ExtendedSession}" IsReadOnly="True" Width="185"/>
                     <DataGridTextColumn Header="Technical" Binding="{Binding Technical}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="90"/>
                     <DataGridTextColumn Header="Projected range" Binding="{Binding TechnicalRange}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="135"/>
                     <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="85"/>

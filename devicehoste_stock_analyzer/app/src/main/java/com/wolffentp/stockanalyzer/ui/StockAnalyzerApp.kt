@@ -69,6 +69,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 
 private val AppColors = lightColorScheme(
     primary = Color(0xFF1565C0),
@@ -265,6 +266,7 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
+            Text(result?.quote?.extendedSessionSummary() ?: "Pre/After: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
             Text(
@@ -464,6 +466,7 @@ private fun sourceText(result: AnalysisResult) = buildString {
     appendLine("Latest source timestamp: ${result.lastDataTimestamp.formatTimestamp()}")
     appendLine("Source age: ${result.sourceAgeMinutes?.let { "$it minutes" } ?: "Unavailable"}")
     appendLine("Candle interval: ${result.candleIntervalMinutes} minute(s)")
+    appendLine("Pre/After market: ${result.quote?.extendedSessionSummary() ?: "Unavailable"}")
     append("Latest quote: ${result.quote?.let { String.format(Locale.US, "$%,.2f at %s", it.price, it.timestamp.formatTimestamp()) } ?: "Unsupported / unavailable"}")
 }
 
@@ -531,6 +534,29 @@ private fun Double.displayNumber(): String = String.format(Locale.US, "%.4f", th
 
 private fun Instant?.formatTimestamp(): String = this?.atZone(ZoneId.systemDefault())?.format(TIMESTAMP_FORMAT) ?: "Not available"
 private fun Instant?.formatTimeOnly(): String = this?.atZone(ZoneId.systemDefault())?.format(TIME_FORMAT) ?: "not yet"
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): String {
+    val pre = sessionText("Pre", preMarketPrice, preMarketChangePercent)
+    val after = sessionText("After", afterHoursPrice, afterHoursChangePercent)
+    return when {
+        pre != null && after != null -> "$pre | $after"
+        pre != null -> pre
+        after != null -> after
+        else -> "Unavailable"
+    }
+}
+
+private fun sessionText(label: String, price: Double?, changePercent: Double?): String? {
+    if (price == null && changePercent == null) return null
+    val priceText = price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "-"
+    val percentText = changePercent?.let { formatSignedPercent(it) } ?: "-"
+    return "$label $priceText ($percentText)"
+}
+
+private fun formatSignedPercent(value: Double): String {
+    val normalized = if (abs(value) < 0.00005) 0.0 else value
+    return String.format(Locale.US, "%+.2f%%", normalized)
+}
 
 private val TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
 private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")

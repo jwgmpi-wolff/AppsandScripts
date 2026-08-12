@@ -36,6 +36,10 @@ class YahooFinanceMarketDataProviderTest {
         assertEquals("Yahoo Finance", quote.provider)
         assertEquals(503.81, quote.price, 0.0)
         assertEquals(Instant.ofEpochSecond(1_786_478_400), quote.timestamp)
+        assertEquals(502.90, quote.preMarketPrice ?: 0.0, 0.0)
+        assertEquals(-0.18, quote.preMarketChangePercent ?: 0.0, 0.0001)
+        assertEquals(504.72, quote.afterHoursPrice ?: 0.0, 0.0)
+        assertEquals(0.18, quote.afterHoursChangePercent ?: 0.0, 0.0001)
         assertEquals(2, candles.candles.size)
         assertEquals(1, server.requestCount)
         assertTrue(server.takeRequest().path.orEmpty().contains("interval=1m"))
@@ -65,7 +69,7 @@ class YahooFinanceMarketDataProviderTest {
     )
 
     private companion object {
-        const val CHART_JSON = """{"chart":{"result":[{"meta":{"regularMarketPrice":503.81,"regularMarketTime":1786478400},"timestamp":[1786478340,1786478400],"indicators":{"quote":[{"open":[503.1,503.2],"high":[503.5,504.0],"low":[502.9,503.0],"close":[503.2,503.81],"volume":[1000,1200]}]}}],"error":null}}"""
+        const val CHART_JSON = """{"chart":{"result":[{"meta":{"regularMarketPrice":503.81,"regularMarketTime":1786478400,"preMarketPrice":502.90,"preMarketChangePercent":-0.18,"postMarketPrice":504.72,"postMarketChangePercent":0.18},"timestamp":[1786478340,1786478400],"indicators":{"quote":[{"open":[503.1,503.2],"high":[503.5,504.0],"low":[502.9,503.0],"close":[503.2,503.81],"volume":[1000,1200]}]}}],"error":null}}"""
         const val NEWS_JSON = """{"news":[{"title":"Profit growth beats outlook","publisher":"Reuters","link":"https://example.com/msft","providerPublishTime":1786478000,"relatedTickers":["MSFT"]},{"title":"Other company falls","publisher":"Wire","providerPublishTime":1786477000,"relatedTickers":["OTHER"]}]}"""
     }
 }

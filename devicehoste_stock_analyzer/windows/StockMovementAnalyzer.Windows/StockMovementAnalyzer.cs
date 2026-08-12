@@ -30,7 +30,15 @@ public enum Direction { Up, Down, Neutral, NeutralInsufficientData }
 public enum Recommendation { Buy, Sell, Hold, Unavailable }
 
 public sealed record ProjectedPriceRange(double Low, double High);
-public sealed record Quote(string Symbol, double Price, DateTimeOffset Timestamp, string Provider);
+public sealed record Quote(
+    string Symbol,
+    double Price,
+    DateTimeOffset Timestamp,
+    string Provider,
+    double? PreMarketPrice = null,
+    double? PreMarketChangePercent = null,
+    double? AfterHoursPrice = null,
+    double? AfterHoursChangePercent = null);
 public sealed record Candle(DateTimeOffset Timestamp, double Open, double High, double Low, double Close, long? Volume);
 public sealed record TimestampedSentiment(double Score, string Source, DateTimeOffset PublishedAt, string Headline, string? Url, string ScoringMethod);
 public sealed record NewsSentimentBatch(string Provider, DateTimeOffset RetrievedAt, IReadOnlyList<TimestampedSentiment> Items);

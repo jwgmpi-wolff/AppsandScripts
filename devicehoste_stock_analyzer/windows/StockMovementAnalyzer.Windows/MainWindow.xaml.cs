@@ -196,7 +196,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
 {
-    private string price = "-", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
+    private string price = "-", extendedSession = "-", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
     private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
     private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
@@ -204,6 +204,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     private decimal? quantity = quantity, averageCost = averageCost;
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
+    public string ExtendedSession { get => extendedSession; private set => Set(ref extendedSession, value); }
     public string Technical { get => technical; private set => Set(ref technical, value); }
     public string TechnicalRange { get => technicalRange; private set => Set(ref technicalRange, value); }
     public string Confidence { get => confidence; private set => Set(ref confidence, value); }
@@ -225,13 +226,14 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public void ApplyTechnical(AnalysisResult value)
     {
         Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
+        ExtendedSession = ExtendedSessionSummary(value.Quote);
         Technical = value.Recommendation.ToString().ToUpperInvariant();
         TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
         Confidence = $"{value.Confidence}%";
         TechnicalBrush = DirectionBrushes.For(value.Direction);
         ModelRationale = value.Reason;
         TechnicalSummary = $"{Technical} · {TechnicalRange} · Confidence {Confidence}";
-        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nLatest quote: {Price}";
+        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nPre/After market: {ExtendedSession}\nLatest quote: {Price}";
         IndicatorDetails = value.Indicators is null ? "Indicators were not calculated because live-data validation failed." :
             $"Momentum: {Display(value.Indicators.MomentumPercent)}%\nShort moving average: {Display(value.Indicators.ShortMovingAverage)}\nLong moving average: {Display(value.Indicators.LongMovingAverage)}\nRelative volume: {Display(value.Indicators.RelativeVolume)}\nRSI: {Display(value.Indicators.Rsi)}\nMACD: {Display(value.Indicators.Macd)}\nVWAP: {Display(value.Indicators.Vwap)}\nFresh news sentiment: {Display(value.Indicators.SentimentAverage)}";
         SignalDetails = value.Signals.Count == 0 ? "Signals were not calculated." : string.Join("\n", value.Signals.Select(signal =>
@@ -253,7 +255,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     { ModelResult = "Unavailable"; ModelBrush = DirectionBrushes.Neutral; ModelRationale = message; ModelDetails = message; }
     public void ApplyDataError(string message)
     {
-        Price = Technical = TechnicalRange = Confidence = "Unavailable";
+        Price = ExtendedSession = Technical = TechnicalRange = Confidence = "Unavailable";
         ModelResult = "Unavailable";
         TechnicalBrush = ModelBrush = DirectionBrushes.Neutral;
         ModelRationale = message;
@@ -262,6 +264,26 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         ModelDetails = "No local-model review was requested because the validated baseline was unavailable.";
         WarningDetails = FinalReason = message;
     }
+
+    private static string ExtendedSessionSummary(Quote? quote)
+    {
+        if (quote is null) return "Unavailable";
+        var pre = SessionText("Pre", quote.PreMarketPrice, quote.PreMarketChangePercent);
+        var after = SessionText("After", quote.AfterHoursPrice, quote.AfterHoursChangePercent);
+        return pre is not null && after is not null
+            ? $"{pre} | {after}"
+            : pre ?? after ?? "Unavailable";
+    }
+
+    private static string? SessionText(string label, double? price, double? changePercent)
+    {
+        if (price is null && changePercent is null) return null;
+        var priceText = price is null ? "-" : price.Value.ToString("C2");
+        var percentText = changePercent is null ? "-" : $"{NormalizeSignedPercent(changePercent.Value):+0.00;-0.00;0.00}%";
+        return $"{label} {priceText} ({percentText})";
+    }
+
+    private static double NormalizeSignedPercent(double value) => Math.Abs(value) < 0.00005 ? 0.0 : value;
 
     private static string Display(double? value) => value?.ToString("F4") ?? "Unsupported / unavailable";
 

@@ -36,7 +36,22 @@ class YahooFinanceMarketDataProvider(
             ?: throw MarketDataException.InvalidResponse("current price was unavailable")
         val timestamp = result.meta.regularMarketTime
             ?: throw MarketDataException.InvalidResponse("quote timestamp was unavailable")
-        return Quote(symbol, price, Instant.ofEpochSecond(timestamp), PROVIDER)
+        val preMarketPrice = result.meta.preMarketPrice
+        val afterHoursPrice = result.meta.postMarketPrice
+        val preMarketChangePercent = result.meta.preMarketChangePercent
+            ?: preMarketPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
+        val afterHoursChangePercent = result.meta.postMarketChangePercent
+            ?: afterHoursPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
+        return Quote(
+            symbol = symbol,
+            price = price,
+            timestamp = Instant.ofEpochSecond(timestamp),
+            provider = PROVIDER,
+            preMarketPrice = preMarketPrice,
+            preMarketChangePercent = preMarketChangePercent,
+            afterHoursPrice = afterHoursPrice,
+            afterHoursChangePercent = afterHoursChangePercent,
+        )
     }
 
     override suspend fun getIntradayCandles(symbol: String, intervalMinutes: Int, rangeMinutes: Int): CandleSeries {
@@ -159,6 +174,10 @@ private data class YahooChartResult(
 private data class YahooChartMeta(
     val regularMarketPrice: Double? = null,
     val regularMarketTime: Long? = null,
+    val preMarketPrice: Double? = null,
+    val preMarketChangePercent: Double? = null,
+    val postMarketPrice: Double? = null,
+    val postMarketChangePercent: Double? = null,
 )
 
 @Serializable

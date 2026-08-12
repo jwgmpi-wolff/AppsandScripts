@@ -33,7 +33,22 @@ public sealed class AnalysisService(HttpClient httpClient)
             throw new InvalidOperationException("Current price was unavailable.");
         if (!meta.TryGetProperty("regularMarketTime", out var timestampValue) || !timestampValue.TryGetInt64(out var timestamp))
             throw new InvalidOperationException("Quote timestamp was unavailable.");
-        return new Quote(symbol, priceValue.GetDouble(), DateTimeOffset.FromUnixTimeSeconds(timestamp), Provider);
+        var regularPrice = priceValue.GetDouble();
+        var preMarketPrice = OptionalDouble(meta, "preMarketPrice");
+        var afterHoursPrice = OptionalDouble(meta, "postMarketPrice");
+        var preMarketChangePercent = OptionalDouble(meta, "preMarketChangePercent")
+            ?? (preMarketPrice is double prePrice && regularPrice != 0.0 ? ((prePrice - regularPrice) / regularPrice) * 100.0 : null);
+        var afterHoursChangePercent = OptionalDouble(meta, "postMarketChangePercent")
+            ?? (afterHoursPrice is double postPrice && regularPrice != 0.0 ? ((postPrice - regularPrice) / regularPrice) * 100.0 : null);
+        return new Quote(
+            symbol,
+            regularPrice,
+            DateTimeOffset.FromUnixTimeSeconds(timestamp),
+            Provider,
+            preMarketPrice,
+            preMarketChangePercent,
+            afterHoursPrice,
+            afterHoursChangePercent);
     }
 
     private async Task<IReadOnlyList<Candle>> GetCandlesAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)
@@ -96,6 +111,13 @@ public sealed class AnalysisService(HttpClient httpClient)
         if (results.ValueKind != JsonValueKind.Array || results.GetArrayLength() == 0)
             throw new InvalidOperationException("Unsupported symbol.");
         return results[0];
+    }
+
+    private static double? OptionalDouble(JsonElement parent, string propertyName)
+    {
+        return parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble()
+            : null;
     }
 
     private static double? NullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
