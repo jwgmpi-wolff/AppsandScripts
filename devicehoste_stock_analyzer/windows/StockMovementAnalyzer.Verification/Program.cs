@@ -19,6 +19,12 @@ var stale = engine.Analyze(Snapshot(now.AddHours(-1), index => 100.0 + index), h
 Require(stale.Direction == Direction.NeutralInsufficientData && stale.Recommendation == Recommendation.Unavailable && stale.ProjectedPriceRange is null,
     "Stale fixture must fail closed.");
 
+var offHoursNow = DateTimeOffset.Parse("2026-08-12T01:30:00Z");
+var offHoursLatest = offHoursNow.AddHours(-4);
+var offHours = engine.Analyze(Snapshot(offHoursLatest, index => 100.0 + index), horizon, offHoursNow);
+Require(offHours.Direction is not Direction.NeutralInsufficientData && offHours.Recommendation is not Recommendation.Unavailable,
+    "Off-hours intraday analysis should use recent session data instead of failing closed.");
+
 var newsSnapshot = Snapshot(now.AddMinutes(-1), index => 100.0 + index) with
 {
     News = new NewsSentimentBatch("Mock provider (test only)", now,

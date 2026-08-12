@@ -74,6 +74,12 @@ public sealed record AnalysisResult(
 
 public sealed class StockAnalyzerEngine(double positiveThreshold = 0.2, double negativeThreshold = -0.2)
 {
+    private static readonly TimeZoneInfo EasternTime = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+    private const int OpenMinutes = 9 * 60 + 30;
+    private const int CloseMinutes = 16 * 60;
+    private const long OffHoursIntradayFreshness = 18L * 60L;
+    private const long WeekendIntradayFreshness = 72L * 60L;
+
     public AnalysisResult Analyze(MarketSnapshot snapshot, HorizonDefinition horizon, DateTimeOffset? currentTime = null)
     {
         var now = currentTime ?? DateTimeOffset.UtcNow;
@@ -148,15 +154,16 @@ public sealed class StockAnalyzerEngine(double positiveThreshold = 0.2, double n
             return warnings;
         }
         var age = MinutesBetween(latest.Timestamp, now);
+        var freshnessMinutes = EffectiveFreshnessMinutes(horizon, now);
         if (age < 0) warnings.Add("Source timestamp is in the future.");
-        if (age > horizon.FreshnessMinutes) warnings.Add($"Market data is stale ({age} minutes old).");
+        if (age > freshnessMinutes) warnings.Add($"Market data is stale ({age} minutes old).");
         if (snapshot.IntervalMinutes != horizon.CandleIntervalMinutes) warnings.Add($"Candle interval does not match the {horizon.Label} horizon.");
         if (snapshot.Candles.Count < horizon.Periods + 1) warnings.Add($"Insufficient candles for the {horizon.Label} horizon.");
         if (snapshot.Quote is not null)
         {
             var quoteAge = MinutesBetween(snapshot.Quote.Timestamp, now);
             if (quoteAge < 0) warnings.Add("Quote timestamp is in the future.");
-            if (quoteAge > horizon.FreshnessMinutes) warnings.Add($"Latest quote is stale ({quoteAge} minutes old).");
+            if (quoteAge > freshnessMinutes) warnings.Add($"Latest quote is stale ({quoteAge} minutes old).");
             if (snapshot.Quote.Provider != snapshot.Provider) warnings.Add("Quote provider does not match candle provider.");
             if (snapshot.Quote.Price <= 0.0) warnings.Add("Provider returned an invalid quote price.");
         }
@@ -252,6 +259,15 @@ public sealed class StockAnalyzerEngine(double positiveThreshold = 0.2, double n
     }
     private static double? RsiScore(double? rsi) => rsi is null ? null : rsi >= 70.0 ? -1.0 : rsi <= 30.0 ? 1.0 : 0.0;
     private static long MinutesBetween(DateTimeOffset start, DateTimeOffset end) => (long)(end - start).TotalMinutes;
+
+    public static long EffectiveFreshnessMinutes(HorizonDefinition horizon, DateTimeOffset now)
+    {
+        if (horizon.IsDaily) return horizon.FreshnessMinutes;
+        var easternNow = TimeZoneInfo.ConvertTime(now, EasternTime);
+        if (easternNow.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return WeekendIntradayFreshness;
+        var minuteOfDay = easternNow.Hour * 60 + easternNow.Minute;
+        return minuteOfDay >= OpenMinutes && minuteOfDay < CloseMinutes ? horizon.FreshnessMinutes : OffHoursIntradayFreshness;
+    }
 
     private static AnalysisResult Insufficient(MarketSnapshot snapshot, HorizonDefinition horizon, DateTimeOffset? timestamp, long? age,
         IReadOnlyList<string> warnings, IndicatorValues? indicators = null, IReadOnlyList<SignalContribution>? signals = null, NewsSentimentBatch? news = null) =>

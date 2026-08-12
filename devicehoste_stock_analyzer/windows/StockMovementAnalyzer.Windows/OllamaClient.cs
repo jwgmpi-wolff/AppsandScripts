@@ -24,13 +24,14 @@ public sealed class OllamaClient(HttpClient httpClient, Func<DateTimeOffset>? cl
         if (analysis.Recommendation == Recommendation.Unavailable)
             throw new InvalidOperationException("Validated analysis unavailable.");
         var promptTime = (clock ?? (() => DateTimeOffset.UtcNow))();
+        var freshnessMinutes = StockAnalyzerEngine.EffectiveFreshnessMinutes(analysis.Horizon, promptTime);
         var latestTimestamp = analysis.LastDataTimestamp ?? throw new InvalidOperationException("Validated market timestamp unavailable.");
         var sourceAgeMinutes = (long)(promptTime - latestTimestamp).TotalMinutes;
-        if (sourceAgeMinutes < 0 || sourceAgeMinutes > analysis.Horizon.FreshnessMinutes)
+        if (sourceAgeMinutes < 0 || sourceAgeMinutes > freshnessMinutes)
             throw new InvalidOperationException("Validated analysis is no longer current.");
         var quote = analysis.Quote ?? throw new InvalidOperationException("Validated quote unavailable.");
         var quoteAgeMinutes = (long)(promptTime - quote.Timestamp).TotalMinutes;
-        if (quoteAgeMinutes < 0 || quoteAgeMinutes > analysis.Horizon.FreshnessMinutes)
+        if (quoteAgeMinutes < 0 || quoteAgeMinutes > freshnessMinutes)
             throw new InvalidOperationException("Validated quote is no longer current.");
         var signals = string.Join("\n", analysis.Signals.Where(signal => signal.Contribution is not null)
             .Select(signal => $"{signal.Name}: value={signal.Value}, weight={signal.Weight}, contribution={signal.Contribution}"));

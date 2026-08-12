@@ -17,9 +17,10 @@ class AnalysisValidator {
             warnings += "Timestamped intraday candles are unavailable."
             return warnings
         }
+        val freshnessMinutes = MarketHoursPolicy.effectiveFreshnessMinutes(horizon, now)
         val age = Duration.between(latest.timestamp, now).toMinutes()
         if (age < 0) warnings += "Source timestamp is in the future."
-        if (age > horizon.freshnessMinutes) warnings += "Market data is stale (${age} minutes old)."
+        if (age > freshnessMinutes) warnings += "Market data is stale (${age} minutes old)."
         if (snapshot.intervalMinutes != horizon.candleIntervalMinutes) {
             warnings += "Candle interval does not match the ${horizon.label} horizon."
         }
@@ -30,7 +31,7 @@ class AnalysisValidator {
         snapshot.quote?.let { quote ->
             val quoteAge = Duration.between(quote.timestamp, now).toMinutes()
             if (quoteAge < 0) warnings += "Quote timestamp is in the future."
-            if (quoteAge > horizon.freshnessMinutes) warnings += "Latest quote is stale (${quoteAge} minutes old)."
+            if (quoteAge > freshnessMinutes) warnings += "Latest quote is stale (${quoteAge} minutes old)."
             if (quote.provider != snapshot.provider) warnings += "Quote provider does not match candle provider."
             if (quote.price <= 0.0) warnings += "Provider returned an invalid quote price."
         }

@@ -1,6 +1,7 @@
 package com.wolffentp.stockanalyzer.data
 
 import com.wolffentp.stockanalyzer.domain.AnalysisResult
+import com.wolffentp.stockanalyzer.domain.MarketHoursPolicy
 import com.wolffentp.stockanalyzer.domain.Recommendation
 import java.io.IOException
 import java.time.Duration
@@ -32,12 +33,13 @@ class OllamaModelAnalysisProvider(
         require(settings.enabled && settings.endpoint.isNotBlank() && settings.model.isNotBlank())
         require(result.recommendation != Recommendation.UNAVAILABLE) { "Validated analysis unavailable" }
         val promptTime = clock()
+        val freshnessMinutes = MarketHoursPolicy.effectiveFreshnessMinutes(result.horizon, promptTime)
         val latestTimestamp = result.lastDataTimestamp ?: error("Validated market timestamp unavailable")
-        require(Duration.between(latestTimestamp, promptTime).toMinutes() in 0..result.horizon.freshnessMinutes) {
+        require(Duration.between(latestTimestamp, promptTime).toMinutes() in 0..freshnessMinutes) {
             "Validated analysis is no longer current"
         }
         val quote = result.quote ?: error("Validated quote unavailable")
-        require(Duration.between(quote.timestamp, promptTime).toMinutes() in 0..result.horizon.freshnessMinutes) {
+        require(Duration.between(quote.timestamp, promptTime).toMinutes() in 0..freshnessMinutes) {
             "Validated quote is no longer current"
         }
         val signals = result.signals.filter { it.contribution != null }.joinToString("\n") { signal ->
