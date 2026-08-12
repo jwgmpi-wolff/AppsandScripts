@@ -7,7 +7,7 @@ A native Android app that produces explainable, probabilistic short-horizon stoc
 - `app/`: Kotlin, Jetpack Compose, StateFlow/ViewModel, OkHttp, and Kotlin Serialization.
 - `domain/`: indicators, freshness validation, non-hallucination validation, and weighted scoring independent of UI.
 - `data/`: `MarketDataProvider`, HTTPS proxy adapter, provider errors, and repository orchestration.
-- `ui/`: adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
+- `ui/`: persistent watchlist, locally logged holdings, adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
 - `proxy/`: dependency-free Node 20 service that keeps Finnhub or Alpha Vantage API keys off the Android device and normalizes provider responses.
 
 The Android client contains no provider API key. Putting a key in `BuildConfig`, resources, native code, or an APK is not secure because it can be extracted. The proxy must inject keys from server-side environment variables.
@@ -54,6 +54,12 @@ Prerequisites: Android Studio or JDK 17, Android SDK 35, and an Android 8.0 (API
 The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
 Without a configured reachable proxy, the app intentionally displays **Live data unavailable** and generates no prediction.
+
+## Watchlist and holdings
+
+Entering a valid symbol and tapping the add icon saves it to the device watchlist. Use the pencil icon on a stock card to log positive whole or fractional shares and an optional nonnegative average cost. Use the trash icon to remove one symbol, or the clear-watchlist icon in the top bar to remove all symbols. Destructive actions require confirmation.
+
+Watchlist and holding records are stored only in Android DataStore for this app. They are not uploaded to the market-data proxy and do not affect prediction scoring. A live holding value is displayed only when a real validated quote is available; otherwise no value is estimated. Reinstalling with `adb install -r` preserves this data, while uninstalling or clearing app storage removes it.
 
 ## Prediction model
 

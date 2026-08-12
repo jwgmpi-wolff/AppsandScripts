@@ -25,8 +25,8 @@ android {
         applicationId = "com.wolffentp.stockanalyzer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
         buildConfigField("String", "MARKET_DATA_BASE_URL", "\"$marketDataBaseUrl\"")
         buildConfigField("double", "POSITIVE_THRESHOLD", positiveThreshold.toString())
         buildConfigField("double", "NEGATIVE_THRESHOLD", negativeThreshold.toString())
@@ -66,6 +66,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.icons)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)

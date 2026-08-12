@@ -1,14 +1,19 @@
 package com.wolffentp.stockanalyzer.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wolffentp.stockanalyzer.BuildConfig
 import com.wolffentp.stockanalyzer.data.MarketAnalysisRepository
 import com.wolffentp.stockanalyzer.data.MarketDataException
 import com.wolffentp.stockanalyzer.data.ProxyMarketDataProvider
+import com.wolffentp.stockanalyzer.data.DataStoreWatchlistStore
+import com.wolffentp.stockanalyzer.data.WatchlistEntry
+import com.wolffentp.stockanalyzer.data.WatchlistStore
 import com.wolffentp.stockanalyzer.domain.AnalysisResult
 import com.wolffentp.stockanalyzer.domain.AnalyzerConfig
 import com.wolffentp.stockanalyzer.domain.Horizon
+import com.wolffentp.stockanalyzer.domain.HoldingInputParser
 import com.wolffentp.stockanalyzer.domain.StockMovementAnalyzer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -16,37 +21,54 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
 
-data class StockRowState(val symbol: String, val analysis: AnalysisResult? = null, val error: String? = null)
+data class StockRowState(
+    val symbol: String,
+    val quantity: Double? = null,
+    val averageCost: Double? = null,
+    val analysis: AnalysisResult? = null,
+    val error: String? = null,
+)
 
 data class StockUiState(
     val horizon: Horizon = Horizon.TEN,
-    val rows: List<StockRowState> = listOf("MSFT", "AAPL", "NVDA").map(::StockRowState),
+    val rows: List<StockRowState> = emptyList(),
     val isRefreshing: Boolean = false,
     val autoRefresh: Boolean = true,
     val lastRefreshAt: Instant? = null,
     val selectedSymbol: String? = null,
 )
 
-class StockViewModel(
+class StockViewModel @JvmOverloads constructor(
+    application: Application,
     private val repository: MarketAnalysisRepository = MarketAnalysisRepository(
         provider = ProxyMarketDataProvider(BuildConfig.MARKET_DATA_BASE_URL),
         analyzer = StockMovementAnalyzer(
             config = AnalyzerConfig(BuildConfig.POSITIVE_THRESHOLD, BuildConfig.NEGATIVE_THRESHOLD),
         ),
     ),
-) : ViewModel() {
+    private val watchlistStore: WatchlistStore = DataStoreWatchlistStore(application),
+) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(StockUiState())
     val state: StateFlow<StockUiState> = mutableState.asStateFlow()
     private var autoRefreshJob: Job? = null
     private var refreshJob: Job? = null
 
     init {
-        refresh()
+        loadWatchlist()
         startAutoRefresh()
+    }
+
+    private fun loadWatchlist() {
+        viewModelScope.launch {
+            val entries = watchlistStore.entries.first()
+            mutableState.update { state -> state.copy(rows = entries.map(WatchlistEntry::toRowState)) }
+            refresh()
+        }
     }
 
     fun setHorizon(horizon: Horizon) {
@@ -61,8 +83,45 @@ class StockViewModel(
             if (current.rows.any { it.symbol == symbol }) current
             else current.copy(rows = current.rows + StockRowState(symbol))
         }
+        persistWatchlist()
         refresh()
         return true
+    }
+
+    fun deleteSymbol(symbol: String) {
+        mutableState.update { state ->
+            state.copy(
+                rows = state.rows.filterNot { it.symbol == symbol },
+                selectedSymbol = state.selectedSymbol.takeUnless { it == symbol },
+            )
+        }
+        persistWatchlist()
+    }
+
+    fun clearWatchlist() {
+        refreshJob?.cancel()
+        mutableState.update { it.copy(rows = emptyList(), selectedSymbol = null, isRefreshing = false) }
+        persistWatchlist()
+    }
+
+    fun saveHolding(symbol: String, quantityText: String, averageCostText: String): Boolean {
+        val holding = HoldingInputParser.parse(quantityText, averageCostText) ?: return false
+        mutableState.update { state ->
+            state.copy(rows = state.rows.map { row ->
+                if (row.symbol == symbol) row.copy(quantity = holding.quantity, averageCost = holding.averageCost) else row
+            })
+        }
+        persistWatchlist()
+        return true
+    }
+
+    fun clearHolding(symbol: String) {
+        mutableState.update { state ->
+            state.copy(rows = state.rows.map { row ->
+                if (row.symbol == symbol) row.copy(quantity = null, averageCost = null) else row
+            })
+        }
+        persistWatchlist()
     }
 
     fun select(symbol: String?) { mutableState.update { it.copy(selectedSymbol = symbol) } }
@@ -98,6 +157,11 @@ class StockViewModel(
         }
     }
 
+    private fun persistWatchlist() {
+        val entries = mutableState.value.rows.map(StockRowState::toWatchlistEntry)
+        viewModelScope.launch { watchlistStore.save(entries) }
+    }
+
     private fun Exception.displayMessage(): String = when (this) {
         is MarketDataException -> "Live data unavailable. $message"
         is IllegalArgumentException -> "Live data unavailable. Unsupported symbol."
@@ -106,3 +170,6 @@ class StockViewModel(
 
     private companion object { const val AUTO_REFRESH_MILLIS = 60_000L }
 }
+
+private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
+private fun StockRowState.toWatchlistEntry() = WatchlistEntry(symbol, quantity, averageCost)
