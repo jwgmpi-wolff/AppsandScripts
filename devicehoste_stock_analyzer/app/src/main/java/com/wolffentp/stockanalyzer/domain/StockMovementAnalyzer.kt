@@ -19,7 +19,7 @@ class StockMovementAnalyzer(
 
         val ordered = snapshot.candles.sortedBy { it.timestamp }
         val closes = ordered.map { it.close }
-        val horizonPeriods = horizon.minutes / snapshot.intervalMinutes
+        val horizonPeriods = horizon.periods
         val indicators = IndicatorValues(
             momentumPercent = Indicators.momentumPercent(closes, horizonPeriods),
             shortMovingAverage = Indicators.simpleMovingAverage(closes, 5),
@@ -47,7 +47,8 @@ class StockMovementAnalyzer(
             else -> Direction.NEUTRAL_INSUFFICIENT_DATA
         }
         val confidence = (abs(score) * 100).roundToInt().coerceIn(0, 100)
-        val reason = "Probabilistic intraday analysis from ${signals.count { it.contribution != null }} supported technical signals; weighted score ${"%.3f".format(score)}. This is not financial advice."
+        val scope = if (horizon.isDaily) "daily" else "intraday"
+        val reason = "Probabilistic $scope analysis from ${signals.count { it.contribution != null }} supported technical signals; weighted score ${"%.3f".format(score)}. This is not financial advice."
         val limitations = buildList {
             if (indicators.relativeVolume == null || indicators.vwap == null) add("Volume or VWAP was unavailable and was not used.")
             if (indicators.rsi == null) add("RSI was unavailable and was not used.")

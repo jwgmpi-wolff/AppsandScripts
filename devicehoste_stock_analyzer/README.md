@@ -7,7 +7,7 @@ A native Android app that produces explainable, probabilistic short-horizon stoc
 - `app/`: Kotlin, Jetpack Compose, StateFlow/ViewModel, OkHttp, and Kotlin Serialization.
 - `domain/`: indicators, freshness validation, non-hallucination validation, and weighted scoring independent of UI.
 - `data/`: `MarketDataProvider`, HTTPS proxy adapter, provider errors, and repository orchestration.
-- `ui/`: stock dashboard, 10-60 minute horizon controls, refresh/auto-refresh, and evidence detail view.
+- `ui/`: adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
 - `proxy/`: dependency-free Node 20 service that keeps Finnhub or Alpha Vantage API keys off the Android device and normalizes provider responses.
 
 The Android client contains no provider API key. Putting a key in `BuildConfig`, resources, native code, or an APK is not secure because it can be extracted. The proxy must inject keys from server-side environment variables.
@@ -36,7 +36,8 @@ The Android adapter requires HTTPS. Use a trusted development tunnel or local TL
 The app calls:
 
 - `GET /v1/quote/{symbol}`
-- `GET /v1/candles/{symbol}?interval=1m&range=120m`
+- `GET /v1/candles/{symbol}?interval=1&range=120` for one-minute candles
+- `GET /v1/candles/{symbol}?interval=1440&range=129600` for daily candles
 
 Quote responses contain `symbol`, numeric `price`, ISO-8601 `timestamp`, and `provider`. Candle responses contain `provider`, ISO-8601 `retrievedAt`, `intervalMinutes`, and timestamped OHLC candles with optional volume. Provider errors map to `404` unsupported symbol, `423` market closed/no recent data, `429` rate limit, and `5xx` provider unavailable. Responses use `Cache-Control: no-store`.
 
@@ -56,7 +57,7 @@ Without a configured reachable proxy, the app intentionally displays **Live data
 
 ## Prediction model
 
-For the selected 10, 20, 30, 40, 50, or 60 minute horizon, the analyzer uses only supported values calculated from retrieved candles:
+For the selected 10, 20, 30, 40, 50, or 60 minute horizon, the analyzer uses one-minute candles. The 1, 5, and 10-day projections use provider daily candles. In both cases, only supported values calculated from retrieved candles are used:
 
 | Signal | Default weight | Calculation |
 | --- | ---: | --- |
@@ -75,7 +76,7 @@ Sentiment is not currently requested or scored. It is explicitly shown as unsupp
 Before a directional result is allowed, the app verifies:
 
 - provider identity and a timestamped quote are present;
-- quote and candle timestamps are not future-dated or older than 15 minutes;
+- quote and candle timestamps are not future-dated or older than 15 minutes for intraday analysis or five calendar days for daily analysis;
 - quote and candle provider identities match;
 - enough candles exist for the selected horizon;
 - candle interval and numeric values are valid;
@@ -105,6 +106,7 @@ Pop-Location
 
 - This is a technical-signal model, not a trained predictive AI model, and it cannot account for future events.
 - Market data entitlements, delay, coverage, and rate limits depend on the configured provider plan.
+- Day projections use trading-session candles, so 5-day and 10-day labels refer to five and ten observed sessions rather than guaranteed calendar-day outcomes.
 - Alpha Vantage compact intraday output and Finnhub candle availability may limit coverage.
 - News and sentiment are intentionally unsupported until timestamped sources are integrated.
-- Auto-refresh runs while this app screen and ViewModel remain active; there is no background worker.
+- Live refresh is enabled by default every 60 seconds while this app screen and ViewModel remain active; there is no background worker.

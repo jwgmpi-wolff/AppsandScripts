@@ -9,11 +9,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
@@ -96,27 +100,22 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
             },
         )
     }) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Probabilistic analysis", style = MaterialTheme.typography.headlineLarge, fontSize = 30.sp)
                 Text("Live, timestamped technical signals only. Not financial advice.", color = Color(0xFF55555D))
-            }
-            item {
                 Text("Time horizon", fontWeight = FontWeight.Bold)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(Horizon.entries) { horizon ->
                         FilterChip(
                             selected = state.horizon == horizon,
                             onClick = { model.setHorizon(horizon) },
-                            label = { Text("${horizon.minutes}m") },
+                            label = { Text(horizon.label) },
                         )
                     }
                 }
-            }
-            item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = symbolInput,
@@ -137,47 +136,53 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
                         if (!inputError) symbolInput = ""
                     }) { Icon(Icons.Default.Add, contentDescription = "Add symbol") }
                 }
-            }
-            item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
-                        Text("Auto-refresh", fontWeight = FontWeight.Bold)
-                        Text("Every 60 seconds", color = Color(0xFF66666D), fontSize = 13.sp)
+                        Text(if (state.isRefreshing) "Refreshing live data" else "Live refresh", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Every 60 seconds · Last ${state.lastRefreshAt.formatTimeOnly()}",
+                            color = Color(0xFF66666D),
+                            fontSize = 13.sp,
+                        )
                     }
                     Switch(checked = state.autoRefresh, onCheckedChange = model::setAutoRefresh)
                 }
             }
-            items(state.rows, key = { it.symbol }) { row ->
-                StockRow(row, state.horizon, onClick = { model.select(row.symbol) })
+            Spacer(Modifier.height(12.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 150.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                gridItems(state.rows, key = { it.symbol }) { row ->
+                    StockGridCard(row, state.horizon, onClick = { model.select(row.symbol) })
+                }
             }
-            item { Spacer(Modifier.height(12.dp)) }
         }
     }
 }
 
 @Composable
-private fun StockRow(row: StockRowState, horizon: Horizon, onClick: () -> Unit) {
+private fun StockGridCard(row: StockRowState, horizon: Horizon, onClick: () -> Unit) {
     val result = row.analysis
     val color = Color(DirectionPalette.argb(result?.direction ?: Direction.NEUTRAL_INSUFFICIENT_DATA))
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 250.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(row.symbol, style = MaterialTheme.typography.titleLarge)
-                Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable")
-                Text("${horizon.minutes}-minute horizon", color = Color(0xFF606067), fontSize = 13.sp)
+                Spacer(Modifier.weight(1f))
+                Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(directionLabel(result?.direction), color = color, fontWeight = FontWeight.Bold)
-                Text(result?.let { "Confidence ${it.confidence}%" } ?: "Not calculated", color = color)
-                Text(result?.lastDataTimestamp.formatTimestamp(), color = Color(0xFF606067), fontSize = 12.sp)
-            }
-        }
-        if (row.error != null) {
-            Text(row.error, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), color = color)
+            Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
+            Text(directionLabel(result?.direction), color = color, fontWeight = FontWeight.Bold)
+            Text(result?.let { "Confidence ${it.confidence}%" } ?: "Not calculated", color = color)
+            Text("Source ${result?.lastDataTimestamp.formatTimestamp()}", color = Color(0xFF606067), fontSize = 12.sp)
+            if (row.error != null) Text(row.error, color = color, fontSize = 13.sp)
         }
     }
 }
@@ -218,7 +223,7 @@ private fun DetailHeader(result: AnalysisResult) {
     Column {
         Text(directionLabel(result.direction), style = MaterialTheme.typography.headlineLarge, color = color)
         Text("Confidence ${result.confidence}%", color = color, fontWeight = FontWeight.Bold)
-        Text("Probabilistic ${result.horizon.minutes}-minute analysis. Not financial advice.")
+        Text("Probabilistic ${result.horizon.label} projection. Not financial advice.")
     }
 }
 
@@ -261,5 +266,7 @@ private fun directionLabel(direction: Direction?) = when (direction) {
 }
 
 private fun Instant?.formatTimestamp(): String = this?.atZone(ZoneId.systemDefault())?.format(TIMESTAMP_FORMAT) ?: "Not available"
+private fun Instant?.formatTimeOnly(): String = this?.atZone(ZoneId.systemDefault())?.format(TIME_FORMAT) ?: "not yet"
 
 private val TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
+private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")

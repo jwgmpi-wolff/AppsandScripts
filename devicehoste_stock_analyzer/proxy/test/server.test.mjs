@@ -33,6 +33,47 @@ test("rejects unsupported symbols before calling a provider", async () => {
   assert.equal(called, false);
 });
 
+test("requests and normalizes Finnhub daily candles for day projections", async () => {
+  const providerFetch = async url => {
+    assert.match(url, /resolution=D/);
+    return jsonResponse({
+      s: "ok",
+      t: [1786233600, 1786320000],
+      o: [100, 101], h: [102, 103], l: [99, 100], c: [101, 102], v: [1000, 1200],
+    });
+  };
+  const response = await invoke(createRequestHandler({
+    fetchImpl: providerFetch,
+    env: { MARKET_DATA_PROVIDER: "finnhub", FINNHUB_API_KEY: "server-secret" },
+    now: () => new Date("2026-08-11T15:00:00Z"),
+  }), "/v1/candles/MSFT?interval=1440&range=129600");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.intervalMinutes, 1440);
+  assert.equal(response.body.candles.length, 2);
+  assert.match(response.body.candles[1].timestamp, /^2026-/);
+});
+
+test("requests Alpha Vantage daily data and preserves its source date", async () => {
+  const providerFetch = async url => {
+    assert.match(url, /function=TIME_SERIES_DAILY/);
+    assert.doesNotMatch(url, /interval=1min/);
+    return jsonResponse({
+      "Meta Data": { "6. Time Zone": "America/New_York" },
+      "Time Series (Daily)": {
+        "2026-08-10": { "1. open": "100", "2. high": "102", "3. low": "99", "4. close": "101", "5. volume": "1200" },
+      },
+    });
+  };
+  const response = await invoke(createRequestHandler({
+    fetchImpl: providerFetch,
+    env: { MARKET_DATA_PROVIDER: "alphavantage", ALPHA_VANTAGE_API_KEY: "server-secret" },
+    now: () => new Date("2026-08-11T15:00:00Z"),
+  }), "/v1/candles/MSFT?interval=1440&range=129600");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.intervalMinutes, 1440);
+  assert.equal(response.body.candles[0].timestamp, "2026-08-10T04:00:00.000Z");
+});
+
 async function invoke(handler, path) {
   const server = createServer(handler).listen(0, "127.0.0.1");
   await once(server, "listening");

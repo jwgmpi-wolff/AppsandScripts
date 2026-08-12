@@ -14,7 +14,7 @@ export function createRequestHandler({ fetchImpl = fetch, env = process.env, now
 
       const provider = (env.MARKET_DATA_PROVIDER ?? "finnhub").toLowerCase();
       const result = provider === "alphavantage"
-        ? await alphaVantageRequest(match[1], symbol, fetchImpl, env)
+        ? await alphaVantageRequest(match[1], symbol, url, fetchImpl, env, now)
         : provider === "finnhub"
           ? await finnhubRequest(match[1], symbol, url, fetchImpl, env, now)
           : providerError(503, "Configured provider is unsupported");
@@ -35,17 +35,19 @@ async function finnhubRequest(resource, symbol, url, fetchImpl, env, now) {
     return { symbol, price: data.c, timestamp: new Date(data.t * 1000).toISOString(), provider: "Finnhub" };
   }
 
-  const range = boundedInteger(url.searchParams.get("range"), 120, 10, 1_440);
+  const interval = candleInterval(url);
+  const range = boundedInteger(url.searchParams.get("range"), 120, 10, 525_600);
   const to = Math.floor(now().getTime() / 1000);
   const from = to - range * 60;
-  const endpoint = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=1&from=${from}&to=${to}&token=${encodeURIComponent(apiKey)}`;
+  const resolution = interval === 1_440 ? "D" : "1";
+  const endpoint = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}&token=${encodeURIComponent(apiKey)}`;
   const data = await providerJson(fetchImpl, endpoint);
   if (data.s === "no_data") providerError(423, "Market closed or no recent candles available");
   if (data.s !== "ok" || !sameLength(data.c, data.h, data.l, data.o, data.t, data.v)) providerError(502, "Provider returned invalid candle data");
   return {
     provider: "Finnhub",
     retrievedAt: now().toISOString(),
-    intervalMinutes: 1,
+    intervalMinutes: interval,
     candles: data.t.map((timestamp, index) => ({
       timestamp: new Date(timestamp * 1000).toISOString(),
       open: data.o[index], high: data.h[index], low: data.l[index], close: data.c[index], volume: data.v[index],
@@ -53,18 +55,22 @@ async function finnhubRequest(resource, symbol, url, fetchImpl, env, now) {
   };
 }
 
-async function alphaVantageRequest(resource, symbol, fetchImpl, env) {
+async function alphaVantageRequest(resource, symbol, url, fetchImpl, env, now) {
   const apiKey = requireSecret(env.ALPHA_VANTAGE_API_KEY, "ALPHA_VANTAGE_API_KEY");
-  const endpoint = `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${encodeURIComponent(symbol)}&interval=1min&outputsize=compact&apikey=${encodeURIComponent(apiKey)}`;
+  const interval = resource === "candles" ? candleInterval(url) : 1;
+  const daily = interval === 1_440;
+  const functionName = daily ? "TIME_SERIES_DAILY" : "TIME_SERIES_INTRADAY";
+  const intervalParameter = daily ? "" : "&interval=1min";
+  const endpoint = `https://www.alphavantage.co/query?function=${functionName}&symbol=${encodeURIComponent(symbol)}${intervalParameter}&outputsize=compact&apikey=${encodeURIComponent(apiKey)}`;
   const data = await providerJson(fetchImpl, endpoint);
   if (data.Note || data.Information) providerError(429, "Provider rate limit exceeded");
   if (data["Error Message"]) providerError(404, "Unsupported symbol");
   const metadata = data["Meta Data"];
-  const series = data["Time Series (1min)"];
+  const series = data[daily ? "Time Series (Daily)" : "Time Series (1min)"];
   if (!metadata || !series) providerError(502, "Provider returned invalid candle data");
   const timeZone = metadata["6. Time Zone"];
   const candles = Object.entries(series).map(([timestamp, values]) => ({
-    timestamp: localMarketTimeToIso(timestamp, timeZone),
+    timestamp: daily ? dailyDateToIso(timestamp, timeZone) : localMarketTimeToIso(timestamp, timeZone),
     open: positiveNumber(values["1. open"]),
     high: positiveNumber(values["2. high"]),
     low: positiveNumber(values["3. low"]),
@@ -76,7 +82,7 @@ async function alphaVantageRequest(resource, symbol, fetchImpl, env) {
     const latest = candles.at(-1);
     return { symbol, price: latest.close, timestamp: latest.timestamp, provider: "Alpha Vantage" };
   }
-  return { provider: "Alpha Vantage", retrievedAt: new Date().toISOString(), intervalMinutes: 1, candles };
+  return { provider: "Alpha Vantage", retrievedAt: now().toISOString(), intervalMinutes: interval, candles };
 }
 
 async function providerJson(fetchImpl, endpoint) {
@@ -144,4 +150,15 @@ function sendError(response, status, message) { sendJson(response, status, { err
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = boundedInteger(process.env.PORT, 8787, 1, 65_535);
   createServer(createRequestHandler()).listen(port, () => console.log(`Market data proxy listening on port ${port}`));
+}
+
+function dailyDateToIso(value, timeZone) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) providerError(502, "Provider daily timestamp is invalid");
+  return localMarketTimeToIso(`${value} 00:00:00`, timeZone);
+}
+
+function candleInterval(url) {
+  const interval = boundedInteger(url.searchParams.get("interval"), 1, 1, 1_440);
+  if (interval !== 1 && interval !== 1_440) providerError(400, "Unsupported candle interval");
+  return interval;
 }

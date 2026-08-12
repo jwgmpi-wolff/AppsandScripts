@@ -33,10 +33,20 @@ class MarketAnalysisRepositoryTest {
         }, clock = { now }).analyze("MSFT", Horizon.TEN)
     }
 
+    @Test
+    fun dailyHorizonRequestsDailyCandles() = runBlocking {
+        val provider = TestProvider(now.minusSeconds(60))
+        MarketAnalysisRepository(provider, clock = { now }).analyze("MSFT", Horizon.ONE_DAY)
+        assertEquals(1_440, provider.requestedInterval)
+        assertEquals(129_600, provider.requestedRange)
+    }
+
     private class TestProvider(private val latest: Instant) : MarketDataProvider {
         override val displayName = "Mock provider (test only)"
         var quoteCalled = false
         var candlesCalled = false
+        var requestedInterval: Int? = null
+        var requestedRange: Int? = null
 
         override suspend fun getQuote(symbol: String): Quote {
             quoteCalled = true
@@ -45,9 +55,11 @@ class MarketAnalysisRepositoryTest {
 
         override suspend fun getIntradayCandles(symbol: String, intervalMinutes: Int, rangeMinutes: Int): CandleSeries {
             candlesCalled = true
+            requestedInterval = intervalMinutes
+            requestedRange = rangeMinutes
             val candles = (0 until 30).map { index ->
                 val close = 100.0 + index
-                Candle(latest.minusSeconds((29L - index) * 60), close, close + 0.5, close - 0.5, close, 1_000L + index * 20)
+                Candle(latest.minusSeconds((29L - index) * intervalMinutes * 60), close, close + 0.5, close - 0.5, close, 1_000L + index * 20)
             }
             return CandleSeries(displayName, latest, intervalMinutes, candles)
         }

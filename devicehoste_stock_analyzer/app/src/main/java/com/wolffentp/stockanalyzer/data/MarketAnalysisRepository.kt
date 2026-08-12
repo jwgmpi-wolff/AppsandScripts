@@ -15,7 +15,11 @@ class MarketAnalysisRepository(
         val normalized = symbol.trim().uppercase()
         require(SYMBOL.matches(normalized)) { "Symbol must contain 1-10 letters, digits, dot, or hyphen." }
         val quote = provider.getQuote(normalized)
-        val series = provider.getIntradayCandles(normalized, intervalMinutes = 1, rangeMinutes = 120)
+        val series = provider.getIntradayCandles(
+            normalized,
+            intervalMinutes = horizon.candleIntervalMinutes,
+            rangeMinutes = horizon.rangeMinutes,
+        )
         val snapshot = MarketSnapshot(normalized, series.provider, series.retrievedAt, series.intervalMinutes, quote, series.candles)
         return analyzer.analyze(snapshot, horizon, clock())
     }

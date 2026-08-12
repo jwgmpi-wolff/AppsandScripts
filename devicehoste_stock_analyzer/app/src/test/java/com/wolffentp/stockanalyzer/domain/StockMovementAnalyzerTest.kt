@@ -67,6 +67,20 @@ class StockMovementAnalyzerTest {
         assertTrue(result.warnings.any { it.contains("interval") })
     }
 
+    @Test
+    fun dailyProjectionUsesDailyCandlesAndFailsClosedWhenTooOld() {
+        val latest = now.minusSeconds(6 * 24 * 60 * 60L)
+        val daily = snapshot(latest).copy(
+            intervalMinutes = 1_440,
+            candles = candles(latest, includeVolume = true).mapIndexed { index, candle ->
+                candle.copy(timestamp = latest.minusSeconds((29L - index) * 24 * 60 * 60))
+            },
+        )
+        val result = StockMovementAnalyzer().analyze(daily, Horizon.FIVE_DAYS, now)
+        assertEquals(Direction.NEUTRAL_INSUFFICIENT_DATA, result.direction)
+        assertTrue(result.warnings.any { it.contains("stale") })
+    }
+
     private fun snapshot(latest: Instant): MarketSnapshot {
         val candles = candles(latest, includeVolume = true)
         return MarketSnapshot("MSFT", "Mock provider (test only)", now, 1, Quote("MSFT", candles.last().close, latest, "Mock provider (test only)"), candles)

@@ -27,7 +27,7 @@ class ProxyMarketDataProvider(
     }
 
     override suspend fun getIntradayCandles(symbol: String, intervalMinutes: Int, rangeMinutes: Int): CandleSeries {
-        val dto = request<CandleResponse>("v1/candles/${encode(symbol)}?interval=${intervalMinutes}m&range=${rangeMinutes}m")
+        val dto = request<CandleResponse>("v1/candles/${encode(symbol)}?interval=$intervalMinutes&range=$rangeMinutes")
         return CandleSeries(
             provider = dto.provider,
             retrievedAt = parseInstant(dto.retrievedAt),

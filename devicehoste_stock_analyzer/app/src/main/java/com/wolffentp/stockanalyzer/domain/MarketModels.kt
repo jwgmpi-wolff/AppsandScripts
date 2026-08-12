@@ -2,8 +2,26 @@ package com.wolffentp.stockanalyzer.domain
 
 import java.time.Instant
 
-enum class Horizon(val minutes: Int) {
-    TEN(10), TWENTY(20), THIRTY(30), FORTY(40), FIFTY(50), SIXTY(60)
+enum class Horizon(
+    val durationMinutes: Int,
+    val candleIntervalMinutes: Int,
+    val rangeMinutes: Int,
+    val label: String,
+    val freshnessMinutes: Long,
+) {
+    TEN(10, 1, 120, "10m", 15),
+    TWENTY(20, 1, 120, "20m", 15),
+    THIRTY(30, 1, 120, "30m", 15),
+    FORTY(40, 1, 120, "40m", 15),
+    FIFTY(50, 1, 120, "50m", 15),
+    SIXTY(60, 1, 120, "60m", 15),
+    ONE_DAY(1_440, 1_440, 129_600, "1d", 7_200),
+    FIVE_DAYS(7_200, 1_440, 129_600, "5d", 7_200),
+    TEN_DAYS(14_400, 1_440, 129_600, "10d", 7_200),
+    ;
+
+    val periods: Int get() = durationMinutes / candleIntervalMinutes
+    val isDaily: Boolean get() = candleIntervalMinutes == 1_440
 }
 
 enum class Direction { UP, DOWN, NEUTRAL_INSUFFICIENT_DATA }
