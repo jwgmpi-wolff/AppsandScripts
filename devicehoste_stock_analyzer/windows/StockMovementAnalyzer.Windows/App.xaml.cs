@@ -67,6 +67,7 @@ public partial class App : Application
 		dynamic shortcut = shell.CreateShortcut(path);
 		shortcut.TargetPath = target;
 		shortcut.WorkingDirectory = InstallDirectory;
+		shortcut.IconLocation = target;
 		shortcut.Description = ProductName;
 		shortcut.Save();
 		Marshal.FinalReleaseComObject(shortcut);
