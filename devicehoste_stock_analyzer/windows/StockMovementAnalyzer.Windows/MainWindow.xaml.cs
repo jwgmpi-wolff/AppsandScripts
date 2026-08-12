@@ -219,7 +219,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
     private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
     private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
-    private Brush technicalBrush = DirectionBrushes.Neutral, overnightBrush = DirectionBrushes.Neutral, modelBrush = DirectionBrushes.Neutral;
+    private Brush technicalBrush = DirectionBrushes.Neutral, overnightBrush = DirectionBrushes.Neutral, preMarketBrush = DirectionBrushes.Neutral, modelBrush = DirectionBrushes.Neutral;
     private decimal? quantity = quantity, averageCost = averageCost;
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
@@ -242,6 +242,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public string FinalReason { get => finalReason; private set => Set(ref finalReason, value); }
     public Brush TechnicalBrush { get => technicalBrush; private set => Set(ref technicalBrush, value); }
     public Brush OvernightBrush { get => overnightBrush; private set => Set(ref overnightBrush, value); }
+    public Brush PreMarketBrush { get => preMarketBrush; private set => Set(ref preMarketBrush, value); }
     public Brush ModelBrush { get => modelBrush; private set => Set(ref modelBrush, value); }
     public decimal? Quantity { get => quantity; set => Set(ref quantity, value); }
     public decimal? AverageCost { get => averageCost; set => Set(ref averageCost, value); }
@@ -254,6 +255,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         OvernightBrush = DirectionBrushes.ForSessionChange(value.Quote?.OvernightChange ??
             (value.Quote?.OvernightPrice is double overnight && value.Quote?.Price is double regular ? overnight - regular : null));
         PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
+        PreMarketBrush = DirectionBrushes.ForPreMarketChange(value.Quote?.PreMarketChange ??
+            (value.Quote?.PreMarketPrice is double pre && value.Quote?.Price is double baseline ? pre - baseline : null));
         var refreshedAfterHours = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
         AfterHoursGrid = refreshedAfterHours == "Unavailable" && AfterHoursGrid != "Unavailable" ? AfterHoursGrid : refreshedAfterHours;
         Technical = value.Recommendation.ToString().ToUpperInvariant();
@@ -286,7 +289,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     {
         Price = ExtendedSession = OvernightGrid = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
         ModelResult = "Unavailable";
-        TechnicalBrush = OvernightBrush = ModelBrush = DirectionBrushes.Neutral;
+        TechnicalBrush = OvernightBrush = PreMarketBrush = ModelBrush = DirectionBrushes.Neutral;
         ModelRationale = message;
         TechnicalSummary = "UNAVAILABLE · No projection generated";
         SourceDetails = IndicatorDetails = SignalDetails = NewsDetails = "Not available because live-data validation failed.";
@@ -339,6 +342,7 @@ internal static class DirectionBrushes
     public static readonly Brush Neutral = FrozenBrush(0x6B, 0x6B, 0x72);
     public static readonly Brush Positive = FrozenBrush(0x16, 0x80, 0x3C);
     public static readonly Brush Negative = FrozenBrush(0xC6, 0x28, 0x28);
+    public static readonly Brush Active = FrozenBrush(0xC2, 0x8C, 0x00);
 
     public static Brush For(Direction direction) => direction switch
     {
@@ -358,6 +362,13 @@ internal static class DirectionBrushes
     {
         > 0.00005 => Positive,
         < -0.00005 => Negative,
+        _ => Neutral,
+    };
+
+    public static Brush ForPreMarketChange(double? change) => change switch
+    {
+        > 0.00005 => Active,
+        < -0.00005 => Active,
         _ => Neutral,
     };
 
