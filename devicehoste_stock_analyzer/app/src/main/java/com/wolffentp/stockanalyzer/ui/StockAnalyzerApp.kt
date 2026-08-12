@@ -274,7 +274,11 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
-            Text(result?.quote?.overnightGridLine() ?: "Overnight: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
+            Text(
+                result?.quote?.overnightGridLine() ?: "Overnight: unavailable",
+                color = result?.quote?.overnightColor() ?: Color(0xFF6B6B72),
+                fontSize = 12.sp,
+            )
             Text(result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
@@ -623,6 +627,12 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String =
     "Overnight: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.overnightColor(): Color = when {
+    (overnightChange ?: overnightPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFF16803C)
+    (overnightChange ?: overnightPrice?.minus(price) ?: 0.0) < -0.00005 -> Color(0xFFC62828)
+    else -> Color(0xFF6B6B72)
+}
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
     "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
