@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +76,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 private val AppColors = lightColorScheme(
@@ -315,7 +317,7 @@ private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
     ) {
         TableCell(row.symbol, 76.dp, FontWeight.Bold)
         TableCell(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Unavailable", 92.dp)
-        TableCell(result?.quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable", 172.dp, color = result?.quote?.overnightColor() ?: Color(0xFF6B6B72))
+        OvernightTableCell(result?.quote, 172.dp)
         TableCell(result?.quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable", 172.dp)
         TableCell(result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable", 172.dp)
         TableCell(recommendationLabel(result?.recommendation), 100.dp, FontWeight.Bold, technicalColor)
@@ -343,6 +345,43 @@ private fun TableCell(
 }
 
 @Composable
+private fun OvernightTableCell(quote: com.wolffentp.stockanalyzer.domain.Quote?, width: androidx.compose.ui.unit.Dp) {
+    OvernightRefreshText(
+        quote = quote,
+        modifier = Modifier.width(width).padding(horizontal = 8.dp),
+        label = false,
+    )
+}
+
+@Composable
+private fun OvernightRefreshText(
+    quote: com.wolffentp.stockanalyzer.domain.Quote?,
+    modifier: Modifier = Modifier,
+    label: Boolean = true,
+) {
+    var previousPrice by remember(quote?.symbol) { mutableStateOf<Double?>(null) }
+    var flashColor by remember(quote?.symbol) { mutableStateOf(Color.Transparent) }
+    val currentPrice = quote?.overnightPrice
+    LaunchedEffect(currentPrice) {
+        val previous = previousPrice
+        if (previous != null && currentPrice != null && abs(currentPrice - previous) > 0.00005) {
+            flashColor = if (currentPrice > previous) Color(0x5534C759) else Color(0x55FF3B30)
+            delay(1_200)
+            flashColor = Color.Transparent
+        }
+        if (currentPrice != null) previousPrice = currentPrice
+    }
+    Text(
+        text = if (label) quote?.overnightGridLine() ?: "Overnight: unavailable"
+        else quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable",
+        modifier = modifier.background(flashColor).padding(vertical = 2.dp),
+        color = quote?.overnightColor() ?: Color(0xFF6B6B72),
+        fontSize = 12.sp,
+        maxLines = 2,
+    )
+}
+
+@Composable
 private fun StockGridCard(
     row: StockRowState,
     horizon: Horizon,
@@ -364,11 +403,7 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
-            Text(
-                result?.quote?.overnightGridLine() ?: "Overnight: unavailable",
-                color = result?.quote?.overnightColor() ?: Color(0xFF6B6B72),
-                fontSize = 12.sp,
-            )
+            OvernightRefreshText(result?.quote)
             Text(result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
