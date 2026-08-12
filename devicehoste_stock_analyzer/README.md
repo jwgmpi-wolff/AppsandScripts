@@ -83,7 +83,9 @@ For the selected 10, 20, 30, 40, 50, or 60 minute horizon, the analyzer uses one
 | MACD | 0.15 | Difference between 12- and 26-period EMAs |
 | News sentiment | 0.10 | Average of fresh, sourced, ticker-specific article scores |
 
-Unavailable indicators are excluded rather than substituted. At least 60% of signal weight must be supported. The score is normalized by available weight. A score at or above `0.2` is `UP`; at or below `-0.2` is `DOWN`; otherwise it is `NEUTRAL / INSUFFICIENT DATA`. Confidence is the absolute normalized score times 100, capped to 0-100. Thresholds can be changed through the non-secret `local.properties` values.
+Unavailable indicators are excluded rather than substituted. At least 60% of signal weight must be supported. The score is normalized by available weight. A score at or above `0.2` is `UP / BUY`; at or below `-0.2` is `DOWN / SELL`; otherwise valid data produces `NEUTRAL / HOLD`. Confidence is the absolute normalized score times 100, capped to 0-100. Thresholds can be changed through the non-secret `local.properties` values.
+
+Every validated result also includes a projected price range for the selected horizon. The analyzer calculates recent close-to-close return volatility from up to 21 candles, scales it by the square root of the horizon periods, caps the modeled span at 35%, and tilts the range center by half of the normalized signal score. This is a probabilistic interval based on recent behavior, not a guaranteed target, limit-order price, or promise that the market will remain inside the range. Invalid, stale, or insufficient data produces `UNAVAILABLE` with no price range.
 
 Each refresh independently requests quote, candle, and news data. Intraday projections use articles published within 24 hours; daily projections use articles published within seven days. Stale, future-dated, source-less, headline-less, ticker-unrelated, or provider-mismatched items are excluded. Yahoo Finance does not return sentiment in the public search response, so the app applies a small deterministic positive/negative headline lexicon and labels every score `Deterministic headline lexicon`; it does not claim those scores came from Yahoo.
 
@@ -98,7 +100,7 @@ Before a directional result is allowed, the app verifies:
 - candle interval and numeric values are valid;
 - at least 60% of weighted signals can be calculated from retrieved values.
 
-If any required check fails, confidence is zero, direction is `NEUTRAL / INSUFFICIENT DATA`, and the reason is displayed. Provider/network/configuration failures do not create an `AnalysisResult`; the UI displays **Live data unavailable** and `Not calculated` instead. The detail view exposes provider, pull timestamp, latest source timestamp, age, candle interval, quote timestamp, indicator values, each signal weight/contribution, missing inputs, confidence calculation, and final reason.
+If any required check fails, confidence is zero, direction is `NEUTRAL / INSUFFICIENT DATA`, recommendation and price range are `UNAVAILABLE`, and the reason is displayed. Provider/network/configuration failures do not create an `AnalysisResult`; the UI displays **Live data unavailable** and `Not calculated` instead. The detail view exposes the predictive action and range, provider, pull timestamp, latest source timestamp, age, candle interval, quote timestamp, indicator values, each signal weight/contribution, missing inputs, confidence calculation, and final reason.
 
 Run both test suites to verify these behaviors:
 
@@ -120,6 +122,7 @@ Pop-Location
 ## Known limitations
 
 - This is a technical-signal model, not a trained predictive AI model, and it cannot account for future events.
+- `BUY`, `SELL`, and `HOLD` are model classifications, not personalized investment advice or trade instructions. The range can be exceeded, especially around gaps, earnings, and breaking news.
 - Yahoo Finance public endpoints are free and keyless but are unofficial for this application use and can change, throttle, delay, or become unavailable without notice.
 - Day projections use trading-session candles, so 5-day and 10-day labels refer to five and ten observed sessions rather than guaranteed calendar-day outcomes.
 - Alpha Vantage compact intraday output and Finnhub candle availability may limit coverage.

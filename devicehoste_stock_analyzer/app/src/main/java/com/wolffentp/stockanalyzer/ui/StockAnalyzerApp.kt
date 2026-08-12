@@ -62,6 +62,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wolffentp.stockanalyzer.domain.AnalysisResult
 import com.wolffentp.stockanalyzer.domain.Direction
 import com.wolffentp.stockanalyzer.domain.Horizon
+import com.wolffentp.stockanalyzer.domain.Recommendation
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -247,6 +248,8 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
+            Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
+            Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
             Text(directionLabel(result?.direction), color = color, fontWeight = FontWeight.Bold)
             Text(result?.let { "Confidence ${it.confidence}%" } ?: "Not calculated", color = color)
             Text(holdingText(row), color = Color(0xFF3F3F45), fontSize = 13.sp)
@@ -348,6 +351,7 @@ private fun AnalysisDetail(row: StockRowState, onBack: () -> Unit) {
                 val result = row.analysis
                 item { DetailHeader(result) }
                 item { DetailSection("Holding", holdingText(row)) }
+                item { DetailSection("Predictive action and range", recommendationText(result)) }
                 item { DetailSection("Source", sourceText(result)) }
                 item { DetailSection("Indicators", indicatorText(result)) }
                 item { DetailSection("Signal weights", signalText(result)) }
@@ -417,8 +421,26 @@ private fun newsText(result: AnalysisResult): String {
 private fun directionLabel(direction: Direction?) = when (direction) {
     Direction.UP -> "UP (probabilistic)"
     Direction.DOWN -> "DOWN (probabilistic)"
+    Direction.NEUTRAL -> "NEUTRAL (probabilistic)"
     Direction.NEUTRAL_INSUFFICIENT_DATA -> "NEUTRAL / INSUFFICIENT DATA"
     null -> "LIVE DATA UNAVAILABLE"
+}
+
+private fun recommendationLabel(recommendation: Recommendation?) = when (recommendation) {
+    Recommendation.BUY -> "BUY"
+    Recommendation.SELL -> "SELL"
+    Recommendation.HOLD -> "HOLD"
+    Recommendation.UNAVAILABLE, null -> "UNAVAILABLE"
+}
+
+private fun priceRangeText(result: AnalysisResult?): String = result?.projectedPriceRange?.let { range ->
+    String.format(Locale.US, "$%,.2f - $%,.2f", range.low, range.high)
+} ?: "Unavailable"
+
+private fun recommendationText(result: AnalysisResult) = buildString {
+    appendLine("Analysis: ${recommendationLabel(result.recommendation)}")
+    appendLine("Projected ${result.horizon.label} price range: ${priceRangeText(result)}")
+    append("The action follows the validated weighted signal score. The range estimates recent realized movement over the selected horizon and is not a guaranteed target or order price.")
 }
 
 private fun holdingText(row: StockRowState): String {

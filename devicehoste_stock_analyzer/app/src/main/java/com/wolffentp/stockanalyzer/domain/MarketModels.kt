@@ -24,7 +24,14 @@ enum class Horizon(
     val isDaily: Boolean get() = candleIntervalMinutes == 1_440
 }
 
-enum class Direction { UP, DOWN, NEUTRAL_INSUFFICIENT_DATA }
+enum class Direction { UP, DOWN, NEUTRAL, NEUTRAL_INSUFFICIENT_DATA }
+
+enum class Recommendation { BUY, SELL, HOLD, UNAVAILABLE }
+
+data class ProjectedPriceRange(
+    val low: Double,
+    val high: Double,
+)
 
 data class Quote(
     val symbol: String,
@@ -101,6 +108,8 @@ data class AnalysisResult(
     val quote: Quote?,
     val indicators: IndicatorValues?,
     val signals: List<SignalContribution>,
+    val recommendation: Recommendation,
+    val projectedPriceRange: ProjectedPriceRange?,
     val warnings: List<String>,
     val reason: String,
     val news: NewsSentimentBatch? = null,

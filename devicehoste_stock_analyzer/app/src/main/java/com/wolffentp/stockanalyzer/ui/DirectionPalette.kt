@@ -10,6 +10,7 @@ object DirectionPalette {
     fun argb(direction: Direction): Long = when (direction) {
         Direction.UP -> RISE
         Direction.DOWN -> DROP
+        Direction.NEUTRAL,
         Direction.NEUTRAL_INSUFFICIENT_DATA -> NEUTRAL
     }
 }

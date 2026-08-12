@@ -4,6 +4,7 @@ import java.time.Duration
 import java.time.Instant
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 data class AnalyzerConfig(val positiveThreshold: Double = 0.2, val negativeThreshold: Double = -0.2)
 
@@ -46,19 +47,42 @@ class StockMovementAnalyzer(
         val direction = when {
             score >= config.positiveThreshold -> Direction.UP
             score <= config.negativeThreshold -> Direction.DOWN
-            else -> Direction.NEUTRAL_INSUFFICIENT_DATA
+            else -> Direction.NEUTRAL
         }
         val confidence = (abs(score) * 100).roundToInt().coerceIn(0, 100)
+        val recommendation = when (direction) {
+            Direction.UP -> Recommendation.BUY
+            Direction.DOWN -> Recommendation.SELL
+            Direction.NEUTRAL -> Recommendation.HOLD
+            Direction.NEUTRAL_INSUFFICIENT_DATA -> Recommendation.UNAVAILABLE
+        }
+        val projectedPriceRange = projectedPriceRange(ordered, snapshot.quote!!.price, horizon, score)
         val scope = if (horizon.isDaily) "daily" else "intraday"
         val newsSummary = if (indicators.sentimentAverage != null) " Fresh timestamped news sentiment was included." else " News sentiment was unavailable or stale and was excluded."
-        val reason = "Probabilistic $scope analysis from ${signals.count { it.contribution != null }} supported trend, momentum, volume, technical, and sourced news signals; weighted score ${"%.3f".format(score)}.$newsSummary This is not financial advice."
+        val reason = "Probabilistic $scope analysis from ${signals.count { it.contribution != null }} supported trend, momentum, volume, technical, and sourced news signals; weighted score ${"%.3f".format(score)}. The ${recommendation.name.lowercase()} classification and projected range use validated recent price behavior, not a guaranteed target.$newsSummary This is not financial advice."
         val limitations = buildList {
             if (indicators.relativeVolume == null || indicators.vwap == null) add("Volume or VWAP was unavailable and was not used.")
             if (indicators.rsi == null) add("RSI was unavailable and was not used.")
             if (indicators.macd == null) add("MACD was unavailable and was not used.")
             if (indicators.sentimentAverage == null) add(snapshot.newsWarning ?: "Fresh timestamped sentiment was unavailable and was not used.")
         }
-        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, limitations, reason, snapshot.news)
+        return AnalysisResult(snapshot.symbol, horizon, direction, confidence, snapshot.provider, latestTimestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, recommendation, projectedPriceRange, limitations, reason, snapshot.news)
+    }
+
+    private fun projectedPriceRange(candles: List<Candle>, currentPrice: Double, horizon: Horizon, score: Double): ProjectedPriceRange? {
+        val returns = candles.takeLast(21).zipWithNext { first, second ->
+            if (first.close > 0.0) (second.close - first.close) / first.close else null
+        }.filterNotNull()
+        if (returns.size < 5) return null
+        val averageReturn = returns.average()
+        val variance = returns.sumOf { (it - averageReturn) * (it - averageReturn) } / returns.size
+        val projectedVolatility = sqrt(variance).coerceAtLeast(0.001) * sqrt(horizon.periods.toDouble())
+        val halfSpan = currentPrice * projectedVolatility.coerceAtMost(0.35)
+        val center = currentPrice + (score.coerceIn(-1.0, 1.0) * halfSpan * 0.5)
+        return ProjectedPriceRange(
+            low = (center - halfSpan).coerceAtLeast(0.01),
+            high = center + halfSpan,
+        )
     }
 
     private fun contribution(name: String, value: Double?, weight: Double) =
@@ -95,5 +119,5 @@ class StockMovementAnalyzer(
     }
 
     private fun insufficient(snapshot: MarketSnapshot, horizon: Horizon, timestamp: Instant?, age: Long?, warnings: List<String>, indicators: IndicatorValues? = null, signals: List<SignalContribution> = emptyList()) =
-        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.", snapshot.news)
+        AnalysisResult(snapshot.symbol, horizon, Direction.NEUTRAL_INSUFFICIENT_DATA, 0, snapshot.provider.ifBlank { "Unknown" }, timestamp, snapshot.retrievedAt, age, snapshot.intervalMinutes, snapshot.quote, indicators, signals, Recommendation.UNAVAILABLE, null, warnings, "Insufficient live data. ${warnings.joinToString(" ")} No directional prediction was generated.", snapshot.news)
 }

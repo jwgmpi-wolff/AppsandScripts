@@ -12,6 +12,8 @@ class StockMovementAnalyzerTest {
     fun staleDataNeverProducesDirectionalPrediction() {
         val result = StockMovementAnalyzer().analyze(snapshot(now.minusSeconds(3600)), Horizon.TEN, now)
         assertEquals(Direction.NEUTRAL_INSUFFICIENT_DATA, result.direction)
+        assertEquals(Recommendation.UNAVAILABLE, result.recommendation)
+        assertEquals(null, result.projectedPriceRange)
         assertEquals(0, result.confidence)
         assertTrue(result.warnings.any { it.contains("stale") })
     }
@@ -28,6 +30,9 @@ class StockMovementAnalyzerTest {
     fun risingTimestampedCandlesProduceExplainableResult() {
         val result = StockMovementAnalyzer().analyze(snapshot(now.minusSeconds(60)), Horizon.TEN, now)
         assertEquals(Direction.UP, result.direction)
+        assertEquals(Recommendation.BUY, result.recommendation)
+        assertTrue(result.projectedPriceRange!!.low < result.quote!!.price)
+        assertTrue(result.projectedPriceRange!!.high > result.quote!!.price)
         assertTrue(result.confidence in 1..100)
         assertTrue(result.signals.any { it.name == "Momentum" && it.contribution != null })
     }
@@ -57,7 +62,27 @@ class StockMovementAnalyzerTest {
             candles = falling,
         ), Horizon.TEN, now)
         assertEquals(Direction.DOWN, result.direction)
+        assertEquals(Recommendation.SELL, result.recommendation)
+        assertTrue(result.projectedPriceRange!!.low < result.projectedPriceRange!!.high)
         assertTrue(result.reason.contains("weighted score"))
+    }
+
+    @Test
+    fun flatValidatedCandlesProduceHoldWithProjectedRange() {
+        val source = snapshot(now.minusSeconds(60))
+        val flat = source.candles.map { candle ->
+            candle.copy(open = 100.0, high = 100.1, low = 99.9, close = 100.0)
+        }
+        val result = StockMovementAnalyzer().analyze(
+            source.copy(quote = source.quote?.copy(price = 100.0), candles = flat),
+            Horizon.TEN,
+            now,
+        )
+
+        assertEquals(Recommendation.HOLD, result.recommendation)
+        assertEquals(Direction.NEUTRAL, result.direction)
+        assertTrue(result.projectedPriceRange!!.low < 100.0)
+        assertTrue(result.projectedPriceRange!!.high > 100.0)
     }
 
     @Test
