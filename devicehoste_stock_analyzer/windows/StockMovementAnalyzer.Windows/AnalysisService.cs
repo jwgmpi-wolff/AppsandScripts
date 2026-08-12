@@ -27,35 +27,47 @@ public sealed class AnalysisService(HttpClient httpClient)
     private async Task<Quote> GetQuoteAsync(string symbol, CancellationToken cancellationToken)
     {
         using var chart = await GetJsonAsync($"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d", cancellationToken);
-        using var quoteSummary = await GetJsonAsync($"/v7/finance/quote?symbols={Uri.EscapeDataString(symbol)}", cancellationToken);
+        JsonDocument? quoteSummary = null;
+        try { quoteSummary = await GetJsonAsync($"/v7/finance/quote?symbols={Uri.EscapeDataString(symbol)}", cancellationToken); }
+        catch { quoteSummary = null; }
         var result = GetChartResult(chart);
         var meta = result.GetProperty("meta");
-        var summary = GetQuoteResult(quoteSummary, symbol);
+        var summary = quoteSummary is null ? null : GetQuoteResult(quoteSummary, symbol);
         var regularPrice = OptionalDouble(meta, "regularMarketPrice") ?? OptionalDouble(summary, "regularMarketPrice");
         if (regularPrice is null)
             throw new InvalidOperationException("Current price was unavailable.");
         var regularMarketTime = OptionalLong(meta, "regularMarketTime") ?? OptionalLong(summary, "regularMarketTime");
         if (regularMarketTime is null)
             throw new InvalidOperationException("Quote timestamp was unavailable.");
+        var preMarketChange = OptionalDouble(meta, "preMarketChange")
+            ?? OptionalDouble(summary, "preMarketChange");
+        var afterHoursChange = OptionalDouble(meta, "postMarketChange")
+            ?? OptionalDouble(summary, "postMarketChange");
         var preMarketPrice = OptionalDouble(meta, "preMarketPrice")
             ?? OptionalDouble(summary, "preMarketPrice");
+        if (preMarketPrice is null && preMarketChange is not null) preMarketPrice = regularPrice + preMarketChange;
         var afterHoursPrice = OptionalDouble(meta, "postMarketPrice")
             ?? OptionalDouble(summary, "postMarketPrice");
+        if (afterHoursPrice is null && afterHoursChange is not null) afterHoursPrice = regularPrice + afterHoursChange;
         var preMarketChangePercent = OptionalDouble(meta, "preMarketChangePercent")
             ?? OptionalDouble(summary, "preMarketChangePercent")
             ?? (preMarketPrice is double prePrice && regularPrice != 0.0 ? ((prePrice - regularPrice) / regularPrice) * 100.0 : null);
         var afterHoursChangePercent = OptionalDouble(meta, "postMarketChangePercent")
             ?? OptionalDouble(summary, "postMarketChangePercent")
             ?? (afterHoursPrice is double postPrice && regularPrice != 0.0 ? ((postPrice - regularPrice) / regularPrice) * 100.0 : null);
-        return new Quote(
+        var quote = new Quote(
             symbol,
             regularPrice.Value,
             DateTimeOffset.FromUnixTimeSeconds(regularMarketTime.Value),
             Provider,
             preMarketPrice,
+            preMarketChange ?? (preMarketPrice is double resolvedPre ? resolvedPre - regularPrice.Value : null),
             preMarketChangePercent,
             afterHoursPrice,
+            afterHoursChange ?? (afterHoursPrice is double resolvedAfter ? resolvedAfter - regularPrice.Value : null),
             afterHoursChangePercent);
+        quoteSummary?.Dispose();
+        return quote;
     }
 
     private async Task<IReadOnlyList<Candle>> GetCandlesAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)

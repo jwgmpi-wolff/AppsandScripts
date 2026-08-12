@@ -39,8 +39,10 @@ data class Quote(
     val timestamp: Instant,
     val provider: String,
     val preMarketPrice: Double? = null,
+    val preMarketChange: Double? = null,
     val preMarketChangePercent: Double? = null,
     val afterHoursPrice: Double? = null,
+    val afterHoursChange: Double? = null,
     val afterHoursChangePercent: Double? = null,
 )
 

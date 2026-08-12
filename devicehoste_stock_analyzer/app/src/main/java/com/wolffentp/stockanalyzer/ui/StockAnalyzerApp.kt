@@ -617,16 +617,17 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): S
 }
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String =
-    "Pre-market: ${gridSessionText(preMarketPrice, preMarketChangePercent)}"
+    "Pre-market: ${gridSessionText(preMarketPrice, preMarketChange, preMarketChangePercent)}"
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
-    "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChangePercent)}"
+    "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
 
-private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPrice: Double?, percent: Double?): String {
-    if (sessionPrice == null) return "unavailable"
-    val delta = sessionPrice - price
-    val priceText = String.format(Locale.US, "$%,.2f", sessionPrice)
-    val deltaText = String.format(Locale.US, "%+$,.2f", delta)
+private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPrice: Double?, change: Double?, percent: Double?): String {
+    if (sessionPrice == null && change == null && percent == null) return "unavailable"
+    val resolvedChange = change ?: sessionPrice?.let { it - price }
+    val resolvedPrice = sessionPrice ?: resolvedChange?.let { price + it }
+    val priceText = resolvedPrice?.let { String.format(Locale.US, "$%,.2f", it) } ?: "-"
+    val deltaText = resolvedChange?.let { String.format(Locale.US, "%+$,.2f", it) } ?: "-"
     val percentText = percent?.let { formatSignedPercent(it) } ?: "-"
     return "$priceText ($deltaText, $percentText)"
 }

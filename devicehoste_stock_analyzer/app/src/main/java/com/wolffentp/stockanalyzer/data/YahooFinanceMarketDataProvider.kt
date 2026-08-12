@@ -32,15 +32,21 @@ class YahooFinanceMarketDataProvider(
 
     override suspend fun getQuote(symbol: String): Quote {
         val result = chart(symbol, interval = "1m", range = "1d")
-        val summary = quoteSummary(symbol)
+        val summary = runCatching { quoteSummary(symbol) }.getOrNull()
         val price = result.meta.regularMarketPrice ?: summary?.regularMarketPrice
             ?: throw MarketDataException.InvalidResponse("current price was unavailable")
         val timestamp = result.meta.regularMarketTime ?: summary?.regularMarketTime
             ?: throw MarketDataException.InvalidResponse("quote timestamp was unavailable")
+        val preMarketChange = result.meta.preMarketChange
+            ?: summary?.preMarketChange
+        val afterHoursChange = result.meta.postMarketChange
+            ?: summary?.postMarketChange
         val preMarketPrice = result.meta.preMarketPrice
             ?: summary?.preMarketPrice
+            ?: preMarketChange?.let { price + it }
         val afterHoursPrice = result.meta.postMarketPrice
             ?: summary?.postMarketPrice
+            ?: afterHoursChange?.let { price + it }
         val preMarketChangePercent = result.meta.preMarketChangePercent
             ?: summary?.preMarketChangePercent
             ?: preMarketPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
@@ -53,8 +59,10 @@ class YahooFinanceMarketDataProvider(
             timestamp = Instant.ofEpochSecond(timestamp),
             provider = PROVIDER,
             preMarketPrice = preMarketPrice,
+            preMarketChange = preMarketChange ?: preMarketPrice?.let { it - price },
             preMarketChangePercent = preMarketChangePercent,
             afterHoursPrice = afterHoursPrice,
+            afterHoursChange = afterHoursChange ?: afterHoursPrice?.let { it - price },
             afterHoursChangePercent = afterHoursChangePercent,
         )
     }
@@ -188,8 +196,10 @@ private data class YahooChartMeta(
     val regularMarketPrice: Double? = null,
     val regularMarketTime: Long? = null,
     val preMarketPrice: Double? = null,
+    val preMarketChange: Double? = null,
     val preMarketChangePercent: Double? = null,
     val postMarketPrice: Double? = null,
+    val postMarketChange: Double? = null,
     val postMarketChangePercent: Double? = null,
 )
 
@@ -220,8 +230,10 @@ private data class YahooQuoteResult(
     val regularMarketPrice: Double? = null,
     val regularMarketTime: Long? = null,
     val preMarketPrice: Double? = null,
+    val preMarketChange: Double? = null,
     val preMarketChangePercent: Double? = null,
     val postMarketPrice: Double? = null,
+    val postMarketChange: Double? = null,
     val postMarketChangePercent: Double? = null,
 )
 

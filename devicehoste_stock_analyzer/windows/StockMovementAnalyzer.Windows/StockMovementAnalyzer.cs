@@ -36,8 +36,10 @@ public sealed record Quote(
     DateTimeOffset Timestamp,
     string Provider,
     double? PreMarketPrice = null,
+    double? PreMarketChange = null,
     double? PreMarketChangePercent = null,
     double? AfterHoursPrice = null,
+    double? AfterHoursChange = null,
     double? AfterHoursChangePercent = null);
 public sealed record Candle(DateTimeOffset Timestamp, double Open, double High, double Low, double Close, long? Volume);
 public sealed record TimestampedSentiment(double Score, string Source, DateTimeOffset PublishedAt, string Headline, string? Url, string ScoringMethod);
