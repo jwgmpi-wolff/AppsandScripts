@@ -320,7 +320,11 @@ private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
         TableCell(row.symbol, 76.dp, FontWeight.Bold)
         TableCell(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Unavailable", 92.dp)
         OvernightTableCell(result?.quote, 172.dp)
-        TableCell(result?.quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable", 172.dp)
+        TableCell(
+            result?.quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable",
+            172.dp,
+            color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
+        )
         TableCell(result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable", 172.dp)
         TableCell(recommendationLabel(result?.recommendation), 100.dp, FontWeight.Bold, technicalColor)
         TableCell(priceRangeText(result), 146.dp, color = technicalColor)
@@ -406,7 +410,11 @@ private fun StockGridCard(
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
             OvernightRefreshText(result?.quote)
-            Text(result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
+            Text(
+                result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable",
+                color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
+                fontSize = 12.sp,
+            )
             Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
@@ -771,6 +779,12 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String
 private fun com.wolffentp.stockanalyzer.domain.Quote.overnightColor(): Color = when {
     (overnightChange ?: overnightPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFF16803C)
     (overnightChange ?: overnightPrice?.minus(price) ?: 0.0) < -0.00005 -> Color(0xFFC62828)
+    else -> Color(0xFF6B6B72)
+}
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketColor(): Color = when {
+    (preMarketChange ?: preMarketPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFFC28C00)
+    (preMarketChange ?: preMarketPrice?.minus(price) ?: 0.0) < -0.00005 -> Color(0xFFC28C00)
     else -> Color(0xFF6B6B72)
 }
 
