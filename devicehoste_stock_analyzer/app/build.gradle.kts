@@ -11,9 +11,6 @@ val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use(::load)
 }
-val marketDataBaseUrl = localProperties.getProperty("marketData.baseUrl", "")
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"")
 val positiveThreshold = localProperties.getProperty("analyzer.positiveThreshold", "0.2").toDoubleOrNull() ?: 0.2
 val negativeThreshold = localProperties.getProperty("analyzer.negativeThreshold", "-0.2").toDoubleOrNull() ?: -0.2
 
@@ -25,9 +22,8 @@ android {
         applicationId = "com.wolffentp.stockanalyzer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3.0"
-        buildConfigField("String", "MARKET_DATA_BASE_URL", "\"$marketDataBaseUrl\"")
+        versionCode = 5
+        versionName = "1.4.0"
         buildConfigField("double", "POSITIVE_THRESHOLD", positiveThreshold.toString())
         buildConfigField("double", "NEGATIVE_THRESHOLD", negativeThreshold.toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -71,5 +67,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

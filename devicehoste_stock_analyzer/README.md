@@ -6,19 +6,27 @@ A native Android app that produces explainable, probabilistic short-horizon stoc
 
 - `app/`: Kotlin, Jetpack Compose, StateFlow/ViewModel, OkHttp, and Kotlin Serialization.
 - `domain/`: indicators, news freshness validation, non-hallucination validation, and weighted scoring independent of UI.
-- `data/`: `MarketDataProvider`, HTTPS proxy adapter, provider errors, and repository orchestration.
+- `data/`: keyless Yahoo Finance adapter, optional HTTPS proxy adapter, provider errors, and repository orchestration.
 - `ui/`: persistent watchlist, locally logged holdings, adaptive stock-card grid, 10-60 minute and 1/5/10-day horizon controls, live refresh, and evidence detail view.
-- `proxy/`: dependency-free Node 20 service that keeps Finnhub or Alpha Vantage API keys off the Android device and normalizes provider responses.
+- `proxy/`: optional dependency-free Node 20 adapter for deployments that already use Finnhub or Alpha Vantage.
 
-The Android client contains no provider API key. Putting a key in `BuildConfig`, resources, native code, or an APK is not secure because it can be extracted. The proxy must inject keys from server-side environment variables.
+The default Android client calls Yahoo Finance public HTTPS endpoints directly. It requires no account, API key, paid plan, proxy deployment, or `marketData.baseUrl` setting. Yahoo Finance is a best-effort public source rather than a contracted application API, so availability, throttling, and response compatibility are not guaranteed. Provider failures never generate substituted market values.
 
-## Configure live data
+## Live data provider
 
-1. Deploy `proxy/` behind HTTPS on a trusted server.
-2. Set `MARKET_DATA_PROVIDER` to `finnhub` or `alphavantage`.
-3. Set only the corresponding server secret: `FINNHUB_API_KEY` or `ALPHA_VANTAGE_API_KEY`.
-4. Copy `local.properties.example` to the untracked `local.properties` file.
-5. Set `marketData.baseUrl` to the proxy's HTTPS origin, without a trailing API key or secret.
+The app retrieves:
+
+- current price and source timestamp from `query1.finance.yahoo.com/v8/finance/chart`;
+- one-minute OHLCV for intraday horizons and daily OHLCV for 1/5/10-day horizons from the same chart endpoint;
+- ticker-related headlines, publishers, links, and publication timestamps from `query1.finance.yahoo.com/v1/finance/search`.
+
+Quote and candle calls share a short in-memory response cache to avoid duplicate chart requests during one refresh. Responses are not persisted by the app. News is filtered to articles whose `relatedTickers` contains the requested symbol. Yahoo does not provide a sentiment score in this response, so the app labels its deterministic local headline score rather than attributing that score to Yahoo.
+
+No setup is required beyond normal Android internet access. `local.properties` remains optional and may contain only Android SDK settings or non-secret analyzer thresholds.
+
+## Optional proxy adapter
+
+The repository retains `proxy/` for users who separately choose Finnhub or Alpha Vantage. It is not used by the default app and is not required for free updates.
 
 For local proxy development in PowerShell:
 
@@ -29,7 +37,7 @@ $env:FINNHUB_API_KEY = '<enter in your terminal; never commit it>'
 npm start
 ```
 
-The Android adapter requires HTTPS. Use a trusted development tunnel or local TLS endpoint when testing from a device. Never put an API key in `local.properties`; this file only holds the non-secret proxy URL and optional scoring thresholds.
+The optional proxy adapter requires HTTPS. Never put an API key in `local.properties` or the APK.
 
 ### Proxy contract
 
@@ -54,7 +62,7 @@ Prerequisites: Android Studio or JDK 17, Android SDK 35, and an Android 8.0 (API
 
 The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
-Without a configured reachable proxy, the app intentionally displays **Live data unavailable** and generates no prediction.
+If Yahoo Finance is unreachable, throttles the device, changes its response contract, or returns stale/insufficient data, the app displays **Live data unavailable** or `NEUTRAL / INSUFFICIENT DATA` and generates no directional prediction.
 
 ## Watchlist and holdings
 
@@ -77,7 +85,7 @@ For the selected 10, 20, 30, 40, 50, or 60 minute horizon, the analyzer uses one
 
 Unavailable indicators are excluded rather than substituted. At least 60% of signal weight must be supported. The score is normalized by available weight. A score at or above `0.2` is `UP`; at or below `-0.2` is `DOWN`; otherwise it is `NEUTRAL / INSUFFICIENT DATA`. Confidence is the absolute normalized score times 100, capped to 0-100. Thresholds can be changed through the non-secret `local.properties` values.
 
-Each refresh independently requests quote, candle, and news data. Intraday projections use articles published within 24 hours; daily projections use articles published within seven days. Stale, future-dated, source-less, headline-less, or provider-mismatched items are excluded. Alpha Vantage supplies ticker-specific sentiment. Finnhub does not return sentiment with company news, so the proxy applies a small deterministic positive/negative headline lexicon and labels every such score `Deterministic headline lexicon`; it does not claim those scores came from Finnhub.
+Each refresh independently requests quote, candle, and news data. Intraday projections use articles published within 24 hours; daily projections use articles published within seven days. Stale, future-dated, source-less, headline-less, ticker-unrelated, or provider-mismatched items are excluded. Yahoo Finance does not return sentiment in the public search response, so the app applies a small deterministic positive/negative headline lexicon and labels every score `Deterministic headline lexicon`; it does not claim those scores came from Yahoo.
 
 ## Non-hallucination checks
 
@@ -103,9 +111,8 @@ Pop-Location
 
 ## Troubleshooting
 
-- **API key missing:** configure it on the proxy host, never in Android.
-- **Rate limit exceeded:** wait for the provider window or use an appropriately provisioned provider account.
-- **No internet/provider unavailable:** verify Android connectivity, proxy HTTPS/TLS, and provider health.
+- **Rate limit exceeded:** wait for Yahoo Finance to accept requests again; the app does not bypass provider throttling.
+- **No internet/provider unavailable:** verify Android connectivity and Yahoo Finance availability.
 - **Market closed/stale data:** no directional result is generated after the 15-minute freshness limit.
 - **Unsupported symbol:** use an exchange symbol accepted by the configured provider.
 - **Insufficient candles:** wait for enough current one-minute candles or choose a shorter horizon.
@@ -113,7 +120,7 @@ Pop-Location
 ## Known limitations
 
 - This is a technical-signal model, not a trained predictive AI model, and it cannot account for future events.
-- Market data entitlements, delay, coverage, and rate limits depend on the configured provider plan.
+- Yahoo Finance public endpoints are free and keyless but are unofficial for this application use and can change, throttle, delay, or become unavailable without notice.
 - Day projections use trading-session candles, so 5-day and 10-day labels refer to five and ten observed sessions rather than guaranteed calendar-day outcomes.
 - Alpha Vantage compact intraday output and Finnhub candle availability may limit coverage.
 - Headline sentiment is a limited contextual signal and does not understand sarcasm, nuance, article bodies, or future events.

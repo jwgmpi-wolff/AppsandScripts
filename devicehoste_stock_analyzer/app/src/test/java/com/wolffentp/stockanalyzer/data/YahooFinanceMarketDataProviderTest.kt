@@ -1,0 +1,71 @@
+package com.wolffentp.stockanalyzer.data
+
+import java.time.Instant
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+class YahooFinanceMarketDataProviderTest {
+    private lateinit var server: MockWebServer
+    private val now = Instant.parse("2026-08-11T15:00:00Z")
+
+    @Before
+    fun setUp() {
+        server = MockWebServer()
+        server.start()
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    @Test
+    fun decodesTimestampedQuoteAndCandlesWithoutCredentials() = runBlocking {
+        server.enqueue(MockResponse().setBody(CHART_JSON).setHeader("Content-Type", "application/json"))
+        val provider = provider()
+
+        val quote = provider.getQuote("MSFT")
+        val candles = provider.getIntradayCandles("MSFT", 1, 120)
+
+        assertEquals("Yahoo Finance", quote.provider)
+        assertEquals(503.81, quote.price, 0.0)
+        assertEquals(Instant.ofEpochSecond(1_786_478_400), quote.timestamp)
+        assertEquals(2, candles.candles.size)
+        assertEquals(1, server.requestCount)
+        assertTrue(server.takeRequest().path.orEmpty().contains("interval=1m"))
+    }
+
+    @Test
+    fun keepsOnlyTickerRelatedSourcedNewsAndLabelsLocalScoring() = runBlocking {
+        server.enqueue(MockResponse().setBody(NEWS_JSON).setHeader("Content-Type", "application/json"))
+        val news = provider().getNewsOrSentiment("MSFT")
+
+        assertEquals(1, news.items.size)
+        assertEquals("Reuters", news.items.single().source)
+        assertEquals("Deterministic headline lexicon", news.items.single().scoringMethod)
+        assertTrue(news.items.single().score > 0)
+    }
+
+    @Test
+    fun headlineScorerIsDeterministicAndBounded() {
+        assertEquals(1.0, HeadlineSentimentScorer.score("profit growth beats record and surges"), 0.0)
+        assertEquals(-1.0, HeadlineSentimentScorer.score("fraud loss misses and stock falls"), 0.0)
+        assertEquals(0.0, HeadlineSentimentScorer.score("company schedules annual meeting"), 0.0)
+    }
+
+    private fun provider() = YahooFinanceMarketDataProvider(
+        baseUrl = server.url("/").toString(),
+        clock = { now },
+    )
+
+    private companion object {
+        const val CHART_JSON = """{"chart":{"result":[{"meta":{"regularMarketPrice":503.81,"regularMarketTime":1786478400},"timestamp":[1786478340,1786478400],"indicators":{"quote":[{"open":[503.1,503.2],"high":[503.5,504.0],"low":[502.9,503.0],"close":[503.2,503.81],"volume":[1000,1200]}]}}],"error":null}}"""
+        const val NEWS_JSON = """{"news":[{"title":"Profit growth beats outlook","publisher":"Reuters","link":"https://example.com/msft","providerPublishTime":1786478000,"relatedTickers":["MSFT"]},{"title":"Other company falls","publisher":"Wire","providerPublishTime":1786477000,"relatedTickers":["OTHER"]}]}"""
+    }
+}

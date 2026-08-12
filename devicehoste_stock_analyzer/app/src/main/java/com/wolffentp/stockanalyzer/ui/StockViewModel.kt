@@ -6,7 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.wolffentp.stockanalyzer.BuildConfig
 import com.wolffentp.stockanalyzer.data.MarketAnalysisRepository
 import com.wolffentp.stockanalyzer.data.MarketDataException
-import com.wolffentp.stockanalyzer.data.ProxyMarketDataProvider
+import com.wolffentp.stockanalyzer.data.YahooFinanceMarketDataProvider
 import com.wolffentp.stockanalyzer.data.DataStoreWatchlistStore
 import com.wolffentp.stockanalyzer.data.WatchlistEntry
 import com.wolffentp.stockanalyzer.data.WatchlistStore
@@ -46,7 +46,7 @@ data class StockUiState(
 class StockViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: MarketAnalysisRepository = MarketAnalysisRepository(
-        provider = ProxyMarketDataProvider(BuildConfig.MARKET_DATA_BASE_URL),
+        provider = YahooFinanceMarketDataProvider(),
         analyzer = StockMovementAnalyzer(
             config = AnalyzerConfig(BuildConfig.POSITIVE_THRESHOLD, BuildConfig.NEGATIVE_THRESHOLD),
         ),
