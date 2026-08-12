@@ -732,7 +732,7 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPric
     val resolvedChange = change ?: sessionPrice?.let { it - price }
     val resolvedPrice = sessionPrice ?: resolvedChange?.let { price + it }
     val priceText = resolvedPrice?.let { String.format(Locale.US, "$%,.2f", it) } ?: "-"
-    val deltaText = resolvedChange?.let { String.format(Locale.US, "%+$,.2f", it) } ?: "-"
+    val deltaText = resolvedChange?.let { String.format(Locale.US, "%+.2f", it).replace("+", "+$").replace("-", "-$") } ?: "-"
     val percentText = percent?.let { formatSignedPercent(it) } ?: "-"
     return "$priceText ($deltaText, $percentText)"
 }
