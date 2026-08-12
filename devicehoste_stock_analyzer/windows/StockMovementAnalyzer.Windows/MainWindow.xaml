@@ -5,7 +5,6 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Stock Movement Analyzer" Height="760" Width="1240" MinHeight="620" MinWidth="940"
-        Icon="Assets/AppIcon.ico"
         Background="#F5F5F2" FontFamily="Segoe UI">
     <Window.Resources>
         <Style TargetType="Button">
