@@ -39,7 +39,7 @@
         </Grid>
         <Border Grid.Row="1" Background="White" BorderBrush="#D8DDD9" BorderThickness="1" Padding="12" CornerRadius="5" Margin="0,0,0,14">
             <Grid>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <WrapPanel>
                     <TextBox Width="130" Text="{Binding NewSymbol, UpdateSourceTrigger=PropertyChanged}" ToolTip="Ticker symbol"/>
                     <Button Content="Add symbol" Click="AddSymbol_Click"/>
@@ -50,11 +50,18 @@
                 </WrapPanel>
                 <WrapPanel Grid.Row="1" Margin="0,8,0,0">
                     <CheckBox Content="Use free local Ollama model" IsChecked="{Binding UseLocalModel}" VerticalAlignment="Center" Margin="6"/>
-                    <TextBox Width="245" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" ToolTip="Ollama endpoint"/>
-                    <ComboBox Width="190" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" ToolTip="Installed Ollama model"/>
+                    <ComboBox Width="245" IsEditable="True" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" ItemsSource="{Binding EndpointOptions}" ToolTip="Ollama endpoint"/>
+                    <Button Content="Find endpoints" Click="FindEndpoints_Click"/>
+                    <ComboBox Width="210" IsEditable="True" Text="{Binding SelectedModel, UpdateSourceTrigger=PropertyChanged}" ItemsSource="{Binding ModelOptions}" ToolTip="Installed or example model"/>
                     <Button Content="Discover models" Click="DiscoverModels_Click"/>
                     <TextBlock Text="Models run locally; no API key or paid endpoint." VerticalAlignment="Center" Foreground="#52625E" Margin="10,0"/>
                 </WrapPanel>
+                <StackPanel Grid.Row="2" Margin="6,8,0,0">
+                    <TextBlock Foreground="#52625E" TextWrapping="Wrap"
+                               Text="Endpoint examples: http://127.0.0.1:11434 (same PC), http://localhost:11434, or http://[this-PC-LAN-IP]:11434 for Android on the same Wi-Fi. Click Find endpoints to auto-populate this machine's options."/>
+                    <TextBlock Foreground="#52625E" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Model options: choose any discovered installed model, or enter an example ID such as qwen3:4b, qwen3:8b, llama3.1:8b, mistral:7b, or phi4:latest after pulling it with Ollama."/>
+                </StackPanel>
             </Grid>
         </Border>
         <Grid Grid.Row="2">

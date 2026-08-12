@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -28,6 +30,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         InitializeComponent();
         DataContext = this;
+        PopulateEndpointOptions();
+        PopulateModelOptions([]);
         var settings = store.Load();
         OllamaEndpoint = settings.OllamaEndpoint;
         SelectedModel = settings.Model;
@@ -40,6 +44,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<StockRow> Rows { get; } = [];
     public ObservableCollection<string> Models { get; } = [];
+    public ObservableCollection<string> EndpointOptions { get; } = [];
+    public ObservableCollection<string> ModelOptions { get; } = [];
     public IReadOnlyList<HorizonDefinition> Horizons { get; } = HorizonDefinition.All;
     public string Status { get => status; set => Set(ref status, value); }
     public string NewSymbol { get => newSymbol; set => Set(ref newSymbol, value); }
@@ -61,6 +67,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void DiscoverModels_Click(object sender, RoutedEventArgs e) => await DiscoverModelsAsync(true);
+    private void FindEndpoints_Click(object sender, RoutedEventArgs e)
+    {
+        PopulateEndpointOptions();
+        Status = $"Loaded {EndpointOptions.Count} endpoint option(s) from localhost and active LAN adapters.";
+    }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
@@ -81,11 +92,65 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var discovered = await new OllamaClient(httpClient).GetModelsAsync(OllamaEndpoint, lifetime.Token);
             Models.Clear();
             foreach (var model in discovered) Models.Add(model);
-            if (SelectedModel is null || !Models.Contains(SelectedModel)) SelectedModel = Models.FirstOrDefault();
+            PopulateModelOptions(discovered);
+            if (string.IsNullOrWhiteSpace(SelectedModel)) SelectedModel = ModelOptions.FirstOrDefault();
             Status = Models.Count == 0 ? "Ollama found; install a free model" : reportSuccess ? $"Found {Models.Count} local model(s)" : Status;
         }
-        catch { Status = "Ollama unavailable; technical analysis remains active"; }
+        catch
+        {
+            PopulateModelOptions([]);
+            Status = "Ollama unavailable; technical analysis remains active";
+        }
     }
+
+    private void PopulateEndpointOptions()
+    {
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "http://127.0.0.1:11434",
+            "http://localhost:11434",
+            "http://host.docker.internal:11434",
+            $"http://{Environment.MachineName}:11434",
+        };
+
+        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces()
+                     .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
+                                       adapter.NetworkInterfaceType is not NetworkInterfaceType.Loopback and not NetworkInterfaceType.Tunnel))
+        {
+            var ipProperties = networkInterface.GetIPProperties();
+            foreach (var address in ipProperties.UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork))
+            {
+                values.Add($"http://{address.Address}:11434");
+            }
+        }
+
+        ReplaceCollection(EndpointOptions, values.OrderBy(item => item));
+        if (!EndpointOptions.Contains(OllamaEndpoint)) EndpointOptions.Insert(0, OllamaEndpoint);
+    }
+
+    private void PopulateModelOptions(IEnumerable<string> discovered)
+    {
+        var values = new List<string>();
+        values.AddRange(discovered.Where(item => !string.IsNullOrWhiteSpace(item)));
+        values.AddRange(DefaultModelExamples);
+        ReplaceCollection(ModelOptions, values.Distinct(StringComparer.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(SelectedModel) && !ModelOptions.Contains(SelectedModel)) ModelOptions.Insert(0, SelectedModel);
+    }
+
+    private static void ReplaceCollection(ObservableCollection<string> target, IEnumerable<string> values)
+    {
+        target.Clear();
+        foreach (var value in values) target.Add(value);
+    }
+
+    private static readonly string[] DefaultModelExamples =
+    [
+        "qwen3:4b",
+        "qwen3:8b",
+        "llama3.1:8b",
+        "mistral:7b",
+        "phi4:latest",
+    ];
 
     private async Task RefreshAsync()
     {
