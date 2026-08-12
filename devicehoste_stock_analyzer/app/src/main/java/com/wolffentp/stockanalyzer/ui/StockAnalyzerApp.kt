@@ -62,6 +62,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +71,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wolffentp.stockanalyzer.domain.AnalysisResult
 import com.wolffentp.stockanalyzer.domain.Direction
 import com.wolffentp.stockanalyzer.domain.Horizon
+import com.wolffentp.stockanalyzer.domain.MarketSession
 import com.wolffentp.stockanalyzer.domain.Recommendation
 import com.wolffentp.stockanalyzer.data.ModelSettings
 import java.time.Instant
@@ -269,8 +271,8 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
             onDismiss = { configureModel = false },
             onFindEndpoints = { model.refreshEndpointOptions() },
             onDiscoverModels = { model.refreshModelOptions() },
-            onSave = { enabled, endpoint, modelName ->
-                model.saveModelSettings(enabled, endpoint, modelName).also { saved ->
+            onSave = { enabled, endpoint, modelName, finnhubApiKey ->
+                model.saveModelSettings(enabled, endpoint, modelName, finnhubApiKey).also { saved ->
                     if (saved) configureModel = false
                 }
             },
@@ -442,11 +444,12 @@ private fun ModelSettingsDialog(
     onDismiss: () -> Unit,
     onFindEndpoints: () -> Unit,
     onDiscoverModels: () -> Unit,
-    onSave: (Boolean, String, String) -> Boolean,
+    onSave: (Boolean, String, String, String) -> Boolean,
 ) {
     var enabled by remember { mutableStateOf(settings.enabled) }
     var endpoint by remember { mutableStateOf(settings.endpoint) }
     var model by remember { mutableStateOf(settings.model) }
+    var finnhubApiKey by remember { mutableStateOf(settings.finnhubApiKey) }
     var invalid by remember { mutableStateOf(false) }
     var endpointExpanded by remember { mutableStateOf(false) }
     var modelExpanded by remember { mutableStateOf(false) }
@@ -528,11 +531,20 @@ private fun ModelSettingsDialog(
                 status?.takeIf { it.isNotBlank() }?.let {
                     Text(it, fontSize = 13.sp, color = Color(0xFF52625E))
                 }
+                OutlinedTextField(
+                    value = finnhubApiKey,
+                    onValueChange = { finnhubApiKey = it },
+                    label = { Text("Finnhub API key (optional)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Finnhub requires your own key. Its quote API supplies regular quote data, but does not publish a separate overnight field.", fontSize = 13.sp)
                 Text("Analysis stays on your devices. The validated technical result remains available when Ollama is offline.", fontSize = 13.sp)
             }
         },
         confirmButton = {
-            TextButton(onClick = { invalid = !onSave(enabled, endpoint, model) }) { Text("Save") }
+            TextButton(onClick = { invalid = !onSave(enabled, endpoint, model, finnhubApiKey) }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -748,10 +760,13 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): S
 }
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String =
-    "Pre-market: ${gridSessionText(preMarketPrice, preMarketChange, preMarketChangePercent)}"
+    "${if (marketSession == MarketSession.PRE_MARKET) "Pre-market" else "Pre-market (prior)"}: ${gridSessionText(preMarketPrice, preMarketChange, preMarketChangePercent)}"
 
-private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String =
-    "Overnight: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
+private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String = when {
+    overnightPrice != null -> "Overnight: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
+    marketSession == MarketSession.OVERNIGHT -> "Overnight: not published by Yahoo"
+    else -> "Overnight: unavailable"
+}
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.overnightColor(): Color = when {
     (overnightChange ?: overnightPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFF16803C)
@@ -760,7 +775,7 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.overnightColor(): Color = w
 }
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
-    "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
+    "${if (marketSession == MarketSession.AFTER_HOURS) "After-hours" else "After-hours (prior)"}: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPrice: Double?, change: Double?, percent: Double?): String {
     if (sessionPrice == null && change == null && percent == null) return "unavailable"

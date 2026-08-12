@@ -28,6 +28,8 @@ enum class Direction { UP, DOWN, NEUTRAL, NEUTRAL_INSUFFICIENT_DATA }
 
 enum class Recommendation { BUY, SELL, HOLD, UNAVAILABLE }
 
+enum class MarketSession { OVERNIGHT, PRE_MARKET, REGULAR, AFTER_HOURS, CLOSED }
+
 data class ProjectedPriceRange(
     val low: Double,
     val high: Double,
@@ -38,6 +40,7 @@ data class Quote(
     val price: Double,
     val timestamp: Instant,
     val provider: String,
+    val marketSession: MarketSession = MarketSession.CLOSED,
     val overnightPrice: Double? = null,
     val overnightChange: Double? = null,
     val overnightChangePercent: Double? = null,

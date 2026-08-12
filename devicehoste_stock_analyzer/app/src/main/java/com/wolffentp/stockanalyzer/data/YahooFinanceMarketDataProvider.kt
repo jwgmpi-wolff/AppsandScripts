@@ -4,6 +4,7 @@ import android.util.Log
 import com.wolffentp.stockanalyzer.domain.Candle
 import com.wolffentp.stockanalyzer.domain.CandleSeries
 import com.wolffentp.stockanalyzer.domain.NewsSentimentBatch
+import com.wolffentp.stockanalyzer.domain.MarketSession
 import com.wolffentp.stockanalyzer.domain.Quote
 import com.wolffentp.stockanalyzer.domain.TimestampedSentiment
 import java.io.IOException
@@ -63,6 +64,7 @@ class YahooFinanceMarketDataProvider(
             price = price,
             timestamp = Instant.ofEpochSecond(timestamp),
             provider = PROVIDER,
+            marketSession = marketSession(clock()),
             overnightPrice = overnightPrice,
             overnightChange = overnightPrice?.let { it - price },
             overnightChangePercent = overnightPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null },
@@ -205,6 +207,18 @@ class YahooFinanceMarketDataProvider(
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value.trim().uppercase(), Charsets.UTF_8.name())
+
+    private fun marketSession(now: Instant): MarketSession {
+        val dateTime = now.atZone(NEW_YORK)
+        if (dateTime.dayOfWeek.value >= 6) return MarketSession.CLOSED
+        val minute = dateTime.hour * 60 + dateTime.minute
+        return when {
+            minute < OVERNIGHT_CLOSE_MINUTE || minute >= AFTER_HOURS_CLOSE_MINUTE -> MarketSession.OVERNIGHT
+            minute < REGULAR_MARKET_OPEN_MINUTE -> MarketSession.PRE_MARKET
+            minute < REGULAR_MARKET_CLOSE_MINUTE -> MarketSession.REGULAR
+            else -> MarketSession.AFTER_HOURS
+        }
+    }
 
     private data class CachedChart(val retrievedAt: Instant, val result: YahooChartResult)
     private data class ExtendedSessionPrices(

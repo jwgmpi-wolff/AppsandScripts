@@ -13,6 +13,7 @@ data class ModelSettings(
     val enabled: Boolean = false,
     val endpoint: String = "",
     val model: String = "qwen3:4b",
+    val finnhubApiKey: String = "",
 )
 
 interface ModelSettingsStore {
@@ -26,6 +27,7 @@ class DataStoreModelSettingsStore(private val context: Context) : ModelSettingsS
             enabled = preferences[ENABLED] ?: false,
             endpoint = preferences[ENDPOINT].orEmpty(),
             model = preferences[MODEL] ?: "qwen3:4b",
+            finnhubApiKey = preferences[FINNHUB_API_KEY].orEmpty(),
         )
     }
 
@@ -34,6 +36,7 @@ class DataStoreModelSettingsStore(private val context: Context) : ModelSettingsS
             preferences[ENABLED] = settings.enabled
             preferences[ENDPOINT] = settings.endpoint.trim().trimEnd('/')
             preferences[MODEL] = settings.model.trim()
+            preferences[FINNHUB_API_KEY] = settings.finnhubApiKey.trim()
         }
     }
 
@@ -41,6 +44,7 @@ class DataStoreModelSettingsStore(private val context: Context) : ModelSettingsS
         val ENABLED = booleanPreferencesKey("ollama_enabled")
         val ENDPOINT = stringPreferencesKey("ollama_endpoint")
         val MODEL = stringPreferencesKey("ollama_model")
+        val FINNHUB_API_KEY = stringPreferencesKey("finnhub_api_key")
     }
 }
 

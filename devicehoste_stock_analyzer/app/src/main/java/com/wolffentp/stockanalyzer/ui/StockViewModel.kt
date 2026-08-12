@@ -157,11 +157,11 @@ class StockViewModel @JvmOverloads constructor(
         if (enabled) startAutoRefresh()
     }
 
-    fun saveModelSettings(enabled: Boolean, endpoint: String, model: String): Boolean {
+    fun saveModelSettings(enabled: Boolean, endpoint: String, model: String, finnhubApiKey: String): Boolean {
         val normalizedEndpoint = endpoint.trim().trimEnd('/')
         val normalizedModel = model.trim()
         if (enabled && (!normalizedEndpoint.matches(Regex("^https?://[^\\s]+$")) || normalizedModel.isBlank())) return false
-        val settings = ModelSettings(enabled, normalizedEndpoint, normalizedModel.ifBlank { "qwen3:4b" })
+        val settings = ModelSettings(enabled, normalizedEndpoint, normalizedModel.ifBlank { "qwen3:4b" }, finnhubApiKey.trim())
         mutableState.update {
             it.copy(
                 modelSettings = settings,
