@@ -230,14 +230,15 @@ class StockViewModel @JvmOverloads constructor(
             val updated = mutableState.value.rows.map { row ->
                 try {
                     val analysis = repository.analyze(row.symbol, horizon)
+                    val mergedAnalysis = analysis.withExtendedSessionFallback(row.analysis)
                     if (modelSettings.enabled && analysis.recommendation != com.wolffentp.stockanalyzer.domain.Recommendation.UNAVAILABLE) {
-                        runCatching { modelProvider.analyze(analysis, modelSettings) }
+                        runCatching { modelProvider.analyze(mergedAnalysis, modelSettings) }
                             .fold(
-                                onSuccess = { row.copy(analysis = analysis, modelReview = it, modelError = null, error = null) },
-                                onFailure = { row.copy(analysis = analysis, modelReview = null, modelError = it.message ?: "Local model review unavailable", error = null) },
+                                onSuccess = { row.copy(analysis = mergedAnalysis, modelReview = it, modelError = null, error = null) },
+                                onFailure = { row.copy(analysis = mergedAnalysis, modelReview = null, modelError = it.message ?: "Local model review unavailable", error = null) },
                             )
                     } else {
-                        row.copy(analysis = analysis, modelReview = null, modelError = null, error = null)
+                        row.copy(analysis = mergedAnalysis, modelReview = null, modelError = null, error = null)
                     }
                 } catch (error: Exception) {
                     row.copy(analysis = null, modelReview = null, modelError = null, error = error.displayMessage())
@@ -320,6 +321,31 @@ private fun normalizeRequestedModel(model: String): String {
         "gpt-5.3-codex", "gpt-5-codex", "gpt-5", "ghcp", "copilot" -> "qwen3:8b"
         else -> model.trim()
     }
+}
+
+private fun AnalysisResult.withExtendedSessionFallback(previous: AnalysisResult?): AnalysisResult {
+    val currentQuote = quote ?: return this
+    val previousQuote = previous?.quote ?: return this
+
+    val mergedOvernightPrice = currentQuote.overnightPrice ?: previousQuote.overnightPrice
+    val mergedPreMarketPrice = currentQuote.preMarketPrice ?: previousQuote.preMarketPrice
+    val mergedAfterHoursPrice = currentQuote.afterHoursPrice ?: previousQuote.afterHoursPrice
+
+    val mergedQuote = currentQuote.copy(
+        overnightPrice = mergedOvernightPrice,
+        overnightChange = currentQuote.overnightChange ?: mergedOvernightPrice?.minus(currentQuote.price),
+        overnightChangePercent = currentQuote.overnightChangePercent
+            ?: mergedOvernightPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
+        preMarketPrice = mergedPreMarketPrice,
+        preMarketChange = currentQuote.preMarketChange ?: mergedPreMarketPrice?.minus(currentQuote.price),
+        preMarketChangePercent = currentQuote.preMarketChangePercent
+            ?: mergedPreMarketPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
+        afterHoursPrice = mergedAfterHoursPrice,
+        afterHoursChange = currentQuote.afterHoursChange ?: mergedAfterHoursPrice?.minus(currentQuote.price),
+        afterHoursChangePercent = currentQuote.afterHoursChangePercent
+            ?: mergedAfterHoursPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
+    )
+    return copy(quote = mergedQuote)
 }
 
 private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
