@@ -140,10 +140,7 @@ class YahooFinanceMarketDataProvider(
         val result = cacheMutex.withLock {
             val now = clock()
             chartCache[key]?.takeIf { Duration.between(it.retrievedAt, now).seconds in 0..10 }?.result
-                ?: request<YahooChartResponse>(
-                    "/v8/finance/chart/${encode(symbol)}?interval=1m&range=1d&includePrePost=true",
-                    if (baseUrl.contains("query1.finance.yahoo.com")) EXTENDED_HOURS_BASE_URL else baseUrl,
-                ).chart.result?.firstOrNull()
+                ?: requestExtendedSessionChart(symbol)
                     ?.also { chartCache[key] = CachedChart(now, it) }
                 ?: throw MarketDataException.UnsupportedSymbol()
         }
@@ -172,6 +169,21 @@ class YahooFinanceMarketDataProvider(
             preMarketPrice = latestSessionPrice(PRE_MARKET_OPEN_MINUTE, REGULAR_MARKET_OPEN_MINUTE),
             afterHoursPrice = latestSessionPrice(REGULAR_MARKET_CLOSE_MINUTE, AFTER_HOURS_CLOSE_MINUTE),
         )
+    }
+
+    private suspend fun requestExtendedSessionChart(symbol: String): YahooChartResult? {
+        val path = "/v8/finance/chart/${encode(symbol)}?interval=1m&range=1d&includePrePost=true"
+        val candidateBaseUrls = listOf(
+            if (baseUrl.contains("query1.finance.yahoo.com")) EXTENDED_HOURS_BASE_URL else baseUrl,
+            baseUrl,
+        ).distinct()
+        for (candidateBaseUrl in candidateBaseUrls) {
+            val chartResult = runCatching {
+                request<YahooChartResponse>(path, candidateBaseUrl).chart.result?.firstOrNull()
+            }.getOrNull()
+            if (chartResult != null) return chartResult
+        }
+        return null
     }
 
     private suspend inline fun <reified T> request(path: String, requestBaseUrl: String = baseUrl): T = withContext(Dispatchers.IO) {
