@@ -40,6 +40,7 @@ public partial class App : Application
 			File.Copy(Environment.ProcessPath!, Path.Combine(InstallDirectory, "Uninstall.exe"), true);
 			CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", $"{ProductName}.lnk"), InstalledApp);
 			CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{ProductName}.lnk"), InstalledApp);
+			RefreshShellIcons();
 			if (!silent)
 			{
 				MessageBox.Show("Installed for the current user. Ollama and model downloads remain separate, explicit free local components.", $"{ProductName} setup");
@@ -53,6 +54,7 @@ public partial class App : Application
 	{
 		DeleteShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", $"{ProductName}.lnk"));
 		DeleteShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{ProductName}.lnk"));
+		RefreshShellIcons();
 		var cleanup = Path.Combine(Path.GetTempPath(), $"stock-analyzer-uninstall-{Guid.NewGuid():N}.cmd");
 		File.WriteAllText(cleanup, $"@echo off\r\nping 127.0.0.1 -n 2 > nul\r\nrmdir /s /q \"{InstallDirectory}\"\r\ndel /q \"%~f0\"\r\n");
 		Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{cleanup}\"") { CreateNoWindow = true, UseShellExecute = false });
@@ -67,7 +69,7 @@ public partial class App : Application
 		dynamic shortcut = shell.CreateShortcut(path);
 		shortcut.TargetPath = target;
 		shortcut.WorkingDirectory = InstallDirectory;
-		shortcut.IconLocation = target;
+		shortcut.IconLocation = $"{target},0";
 		shortcut.Description = ProductName;
 		shortcut.Save();
 		Marshal.FinalReleaseComObject(shortcut);
@@ -75,5 +77,18 @@ public partial class App : Application
 	}
 
 	private static void DeleteShortcut(string path) { if (File.Exists(path)) File.Delete(path); }
+
+	private static void RefreshShellIcons()
+	{
+		const uint SHCNE_ASSOCCHANGED = 0x08000000;
+		const uint SHCNF_IDLIST = 0x0000;
+		NativeMethods.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+	}
+
+	private static class NativeMethods
+	{
+		[DllImport("shell32.dll")]
+		internal static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
+	}
 }
 
