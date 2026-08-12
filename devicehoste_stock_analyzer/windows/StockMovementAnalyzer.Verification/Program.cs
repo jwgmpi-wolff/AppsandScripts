@@ -1,4 +1,5 @@
 using StockMovementAnalyzer.Windows;
+using System.Windows.Media;
 
 var now = DateTimeOffset.Parse("2026-08-11T15:00:00Z");
 var horizon = HorizonDefinition.All.Single(item => item.Id == "TEN");
@@ -38,6 +39,73 @@ var currentNews = engine.Analyze(newsSnapshot, horizon, now);
 Require(currentNews.News?.Items.Count == 1 && currentNews.News.Items[0].Headline == "Current headline" &&
         Math.Abs((currentNews.Indicators?.SentimentAverage ?? 0.0) - 0.8) < 0.0001,
     "Only news current at analysis time may remain in the result or affect sentiment.");
+
+var flashRow = new StockRow("MSFT", null, null);
+var initialFlashResult = rising with
+{
+    Quote = rising.Quote! with { OvernightPrice = 130.0, PreMarketPrice = 131.0, AfterHoursPrice = 132.0 }
+};
+flashRow.ApplyTechnical(initialFlashResult);
+Require(IsColor(flashRow.PriceFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.OvernightFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.PreMarketFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.AfterHoursFlashBrush, 0x00, 0x00, 0x00, 0x00),
+    "The first quote must establish a baseline without flashing.");
+
+flashRow.ApplyTechnical(initialFlashResult with
+{
+    Quote = initialFlashResult.Quote! with
+    {
+        Price = initialFlashResult.Quote.Price + 1.0,
+        OvernightPrice = initialFlashResult.Quote.OvernightPrice + 1.0,
+        PreMarketPrice = initialFlashResult.Quote.PreMarketPrice + 1.0,
+        AfterHoursPrice = initialFlashResult.Quote.AfterHoursPrice + 1.0,
+    }
+});
+Require(IsColor(flashRow.PriceFlashBrush, 0x66, 0x34, 0xC7, 0x59) &&
+        IsColor(flashRow.OvernightFlashBrush, 0x66, 0x34, 0xC7, 0x59) &&
+        IsColor(flashRow.PreMarketFlashBrush, 0x66, 0x34, 0xC7, 0x59) &&
+        IsColor(flashRow.AfterHoursFlashBrush, 0x66, 0x34, 0xC7, 0x59),
+    "Every increased market value must flash green.");
+
+flashRow.ApplyTechnical(initialFlashResult);
+Require(IsColor(flashRow.PriceFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.OvernightFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.PreMarketFlashBrush, 0x66, 0xFF, 0x3B, 0x30) &&
+        IsColor(flashRow.AfterHoursFlashBrush, 0x66, 0xFF, 0x3B, 0x30),
+    "Every decreased market value must flash red.");
+
+await Task.Delay(1_300);
+Require(IsColor(flashRow.PriceFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.OvernightFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.PreMarketFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(flashRow.AfterHoursFlashBrush, 0x00, 0x00, 0x00, 0x00),
+    "Market-value flashes must clear after the display interval.");
+
+var fallbackFlashRow = new StockRow("MSFT", null, null);
+var changeOnlyResult = rising with
+{
+    Quote = rising.Quote! with
+    {
+        OvernightChange = 1.0,
+        PreMarketChange = 2.0,
+        AfterHoursChange = 3.0,
+    }
+};
+fallbackFlashRow.ApplyTechnical(changeOnlyResult);
+fallbackFlashRow.ApplyTechnical(changeOnlyResult with
+{
+    Quote = changeOnlyResult.Quote! with
+    {
+        OvernightPrice = changeOnlyResult.Quote.Price + 1.0,
+        PreMarketPrice = changeOnlyResult.Quote.Price + 2.0,
+        AfterHoursPrice = changeOnlyResult.Quote.Price + 3.0,
+    }
+});
+Require(IsColor(fallbackFlashRow.OvernightFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(fallbackFlashRow.PreMarketFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
+        IsColor(fallbackFlashRow.AfterHoursFlashBrush, 0x00, 0x00, 0x00, 0x00),
+    "Equivalent change-only and explicit session prices must not produce a false flash.");
 
 var temporaryRoot = Path.Combine(Path.GetTempPath(), $"stock-analyzer-verification-{Guid.NewGuid():N}");
 Directory.CreateDirectory(temporaryRoot);
@@ -87,3 +155,6 @@ static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
 }
+
+static bool IsColor(Brush brush, byte alpha, byte red, byte green, byte blue) =>
+    brush is SolidColorBrush solid && solid.Color == Color.FromArgb(alpha, red, green, blue);

@@ -215,11 +215,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
 {
+    private static readonly TimeSpan ChangeFlashDuration = TimeSpan.FromMilliseconds(1_200);
     private string price = "-", extendedSession = "-", overnightGrid = "Unavailable", preMarketGrid = "Unavailable", afterHoursGrid = "Unavailable", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
     private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
     private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
     private Brush technicalBrush = DirectionBrushes.Neutral, overnightBrush = DirectionBrushes.Neutral, preMarketBrush = DirectionBrushes.Neutral, modelBrush = DirectionBrushes.Neutral;
+    private Brush priceFlashBrush = DirectionBrushes.Transparent, overnightFlashBrush = DirectionBrushes.Transparent, preMarketFlashBrush = DirectionBrushes.Transparent, afterHoursFlashBrush = DirectionBrushes.Transparent;
+    private double? previousPrice, previousOvernightPrice, previousPreMarketPrice, previousAfterHoursPrice;
+    private CancellationTokenSource? priceFlashReset, overnightFlashReset, preMarketFlashReset, afterHoursFlashReset;
     private decimal? quantity = quantity, averageCost = averageCost;
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
@@ -244,11 +248,19 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public Brush OvernightBrush { get => overnightBrush; private set => Set(ref overnightBrush, value); }
     public Brush PreMarketBrush { get => preMarketBrush; private set => Set(ref preMarketBrush, value); }
     public Brush ModelBrush { get => modelBrush; private set => Set(ref modelBrush, value); }
+    public Brush PriceFlashBrush { get => priceFlashBrush; private set => Set(ref priceFlashBrush, value); }
+    public Brush OvernightFlashBrush { get => overnightFlashBrush; private set => Set(ref overnightFlashBrush, value); }
+    public Brush PreMarketFlashBrush { get => preMarketFlashBrush; private set => Set(ref preMarketFlashBrush, value); }
+    public Brush AfterHoursFlashBrush { get => afterHoursFlashBrush; private set => Set(ref afterHoursFlashBrush, value); }
     public decimal? Quantity { get => quantity; set => Set(ref quantity, value); }
     public decimal? AverageCost { get => averageCost; set => Set(ref averageCost, value); }
 
     public void ApplyTechnical(AnalysisResult value)
     {
+        UpdateFlash(value.Quote?.Price, ref previousPrice, ref priceFlashReset, brush => PriceFlashBrush = brush);
+        UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.OvernightPrice, value.Quote?.OvernightChange), ref previousOvernightPrice, ref overnightFlashReset, brush => OvernightFlashBrush = brush);
+        UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange), ref previousPreMarketPrice, ref preMarketFlashReset, brush => PreMarketFlashBrush = brush);
+        UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange), ref previousAfterHoursPrice, ref afterHoursFlashReset, brush => AfterHoursFlashBrush = brush);
         Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
         ExtendedSession = ExtendedSessionSummary(value.Quote);
         OvernightGrid = SessionGridText(value.Quote?.OvernightPrice, value.Quote?.OvernightChange, value.Quote?.OvernightChangePercent, value.Quote?.Price);
@@ -287,6 +299,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     { ModelResult = "Unavailable"; ModelBrush = DirectionBrushes.Neutral; ModelRationale = message; ModelDetails = message; }
     public void ApplyDataError(string message)
     {
+        ResetFlashes();
         Price = ExtendedSession = OvernightGrid = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
         ModelResult = "Unavailable";
         TechnicalBrush = OvernightBrush = PreMarketBrush = ModelBrush = DirectionBrushes.Neutral;
@@ -295,6 +308,40 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         SourceDetails = IndicatorDetails = SignalDetails = NewsDetails = "Not available because live-data validation failed.";
         ModelDetails = "No local-model review was requested because the validated baseline was unavailable.";
         WarningDetails = FinalReason = message;
+    }
+
+    private static void UpdateFlash(double? currentValue, ref double? previousValue, ref CancellationTokenSource? pendingReset, Action<Brush> setBrush)
+    {
+        if (currentValue is null) return;
+        var previous = previousValue;
+        previousValue = currentValue;
+        if (previous is null || Math.Abs(currentValue.Value - previous.Value) <= 0.00005) return;
+
+        pendingReset?.Cancel();
+        pendingReset?.Dispose();
+        pendingReset = new CancellationTokenSource();
+        setBrush(currentValue > previous ? DirectionBrushes.FlashRise : DirectionBrushes.FlashDrop);
+        _ = ClearFlashAsync(pendingReset.Token, setBrush);
+    }
+
+    private static async Task ClearFlashAsync(CancellationToken cancellationToken, Action<Brush> setBrush)
+    {
+        try
+        {
+            await Task.Delay(ChangeFlashDuration, cancellationToken);
+            setBrush(DirectionBrushes.Transparent);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private static double? SessionFlashValue(Quote? quote, double? sessionPrice, double? sessionChange) =>
+        sessionPrice ?? (quote is not null && sessionChange is not null ? quote.Price + sessionChange : null);
+
+    private void ResetFlashes()
+    {
+        foreach (var reset in new[] { priceFlashReset, overnightFlashReset, preMarketFlashReset, afterHoursFlashReset }) reset?.Cancel();
+        previousPrice = previousOvernightPrice = previousPreMarketPrice = previousAfterHoursPrice = null;
+        PriceFlashBrush = OvernightFlashBrush = PreMarketFlashBrush = AfterHoursFlashBrush = DirectionBrushes.Transparent;
     }
 
     private static string ExtendedSessionSummary(Quote? quote)
@@ -337,6 +384,9 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
 
 internal static class DirectionBrushes
 {
+    public static readonly Brush Transparent = FrozenBrush(0x00, 0x00, 0x00, 0x00);
+    public static readonly Brush FlashRise = FrozenBrush(0x66, 0x34, 0xC7, 0x59);
+    public static readonly Brush FlashDrop = FrozenBrush(0x66, 0xFF, 0x3B, 0x30);
     public static readonly Brush Rise = FrozenBrush(0x15, 0x65, 0xC0);
     public static readonly Brush Drop = FrozenBrush(0x7B, 0x1F, 0xA2);
     public static readonly Brush Neutral = FrozenBrush(0x6B, 0x6B, 0x72);
@@ -373,8 +423,11 @@ internal static class DirectionBrushes
     };
 
     private static Brush FrozenBrush(byte red, byte green, byte blue)
+        => FrozenBrush(0xFF, red, green, blue);
+
+    private static Brush FrozenBrush(byte alpha, byte red, byte green, byte blue)
     {
-        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, red, green, blue));
         brush.Freeze();
         return brush;
     }

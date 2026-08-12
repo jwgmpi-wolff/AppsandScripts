@@ -312,23 +312,33 @@ private fun StockTableHeader() {
 @Composable
 private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
     val result = row.analysis
+    val quote = result?.quote
     val technicalColor = Color(DirectionPalette.argb(result?.direction ?: Direction.NEUTRAL_INSUFFICIENT_DATA))
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TableCell(row.symbol, 76.dp, FontWeight.Bold)
-        TableCell(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Unavailable", 92.dp)
-        OvernightTableCell(result?.quote, 172.dp)
         TableCell(
-            result?.quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable",
+            quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Unavailable",
+            92.dp,
+            flashKey = row.symbol,
+            flashValue = quote?.price,
+        )
+        OvernightTableCell(quote, 172.dp)
+        TableCell(
+            quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable",
             172.dp,
-            color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
+            color = quote?.preMarketColor() ?: Color(0xFF6B6B72),
+            flashKey = row.symbol,
+            flashValue = quote?.run { sessionFlashValue(preMarketPrice, preMarketChange) },
         )
         TableCell(
-            result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable",
+            quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable",
             172.dp,
-            color = result?.quote?.afterHoursColor() ?: Color(0xFF6B6B72),
+            color = quote?.afterHoursColor() ?: Color(0xFF6B6B72),
+            flashKey = row.symbol,
+            flashValue = quote?.run { sessionFlashValue(afterHoursPrice, afterHoursChange) },
         )
         TableCell(recommendationLabel(result?.recommendation), 100.dp, FontWeight.Bold, technicalColor)
         TableCell(priceRangeText(result), 146.dp, color = technicalColor)
@@ -343,10 +353,13 @@ private fun TableCell(
     width: androidx.compose.ui.unit.Dp,
     fontWeight: FontWeight? = null,
     color: Color = Color(0xFF3F3F45),
+    flashKey: String? = null,
+    flashValue: Double? = null,
 ) {
+    val flashColor = rememberChangeFlashColor(flashKey, flashValue)
     Text(
         text = text,
-        modifier = Modifier.width(width).padding(horizontal = 8.dp),
+        modifier = Modifier.width(width).background(flashColor).padding(horizontal = 8.dp, vertical = 2.dp),
         color = color,
         fontWeight = fontWeight,
         fontSize = 12.sp,
@@ -369,18 +382,8 @@ private fun OvernightRefreshText(
     modifier: Modifier = Modifier,
     label: Boolean = true,
 ) {
-    var previousPrice by remember(quote?.symbol) { mutableStateOf<Double?>(null) }
-    var flashColor by remember(quote?.symbol) { mutableStateOf(Color.Transparent) }
-    val currentPrice = quote?.overnightPrice
-    LaunchedEffect(currentPrice) {
-        val previous = previousPrice
-        if (previous != null && currentPrice != null && abs(currentPrice - previous) > 0.00005) {
-            flashColor = if (currentPrice > previous) Color(0x5534C759) else Color(0x55FF3B30)
-            delay(1_200)
-            flashColor = Color.Transparent
-        }
-        if (currentPrice != null) previousPrice = currentPrice
-    }
+    val currentPrice = quote?.run { sessionFlashValue(overnightPrice, overnightChange) }
+    val flashColor = rememberChangeFlashColor(quote?.symbol, currentPrice)
     Text(
         text = if (label) quote?.overnightGridLine() ?: "Overnight: unavailable"
         else quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable",
@@ -392,6 +395,24 @@ private fun OvernightRefreshText(
 }
 
 @Composable
+private fun rememberChangeFlashColor(key: String?, currentValue: Double?): Color {
+    var previousValue by remember(key) { mutableStateOf<Double?>(null) }
+    var flashColor by remember(key) { mutableStateOf(Color.Transparent) }
+    LaunchedEffect(currentValue) {
+        val previous = previousValue
+        if (currentValue == null) return@LaunchedEffect
+        previousValue = currentValue
+        val flashArgb = changeFlashArgb(previous, currentValue)
+        if (flashArgb != null) {
+            flashColor = Color(flashArgb)
+            delay(1_200)
+            flashColor = Color.Transparent
+        }
+    }
+    return flashColor
+}
+
+@Composable
 private fun StockGridCard(
     row: StockRowState,
     horizon: Horizon,
@@ -400,6 +421,7 @@ private fun StockGridCard(
     onDelete: () -> Unit,
 ) {
     val result = row.analysis
+    val quote = result?.quote
     val color = Color(DirectionPalette.argb(result?.direction ?: Direction.NEUTRAL_INSUFFICIENT_DATA))
     Card(
         modifier = Modifier.fillMaxWidth().heightIn(min = 250.dp).clickable(onClick = onClick),
@@ -412,17 +434,24 @@ private fun StockGridCard(
                 Spacer(Modifier.weight(1f))
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
-            Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
-            OvernightRefreshText(result?.quote)
-            Text(
-                result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable",
-                color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
-                fontSize = 12.sp,
+            RefreshingMarketText(
+                text = quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable",
+                symbol = row.symbol,
+                value = quote?.price,
+                fontSize = 21,
             )
-            Text(
-                result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable",
-                color = result?.quote?.afterHoursColor() ?: Color(0xFF6B6B72),
-                fontSize = 12.sp,
+            OvernightRefreshText(quote)
+            RefreshingMarketText(
+                text = quote?.preMarketGridLine() ?: "Pre-market: unavailable",
+                symbol = row.symbol,
+                value = quote?.run { sessionFlashValue(preMarketPrice, preMarketChange) },
+                color = quote?.preMarketColor() ?: Color(0xFF6B6B72),
+            )
+            RefreshingMarketText(
+                text = quote?.afterHoursGridLine() ?: "After-hours: unavailable",
+                symbol = row.symbol,
+                value = quote?.run { sessionFlashValue(afterHoursPrice, afterHoursChange) },
+                color = quote?.afterHoursColor() ?: Color(0xFF6B6B72),
             )
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
@@ -449,6 +478,32 @@ private fun StockGridCard(
         }
     }
 }
+
+@Composable
+private fun RefreshingMarketText(
+    text: String,
+    symbol: String,
+    value: Double?,
+    color: Color = Color(0xFF3F3F45),
+    fontSize: Int = 12,
+) {
+    Text(
+        text = text,
+        modifier = Modifier.background(rememberChangeFlashColor(symbol, value)).padding(vertical = 2.dp),
+        color = color,
+        fontSize = fontSize.sp,
+    )
+}
+
+internal fun changeFlashArgb(previousValue: Double?, currentValue: Double?): Long? = when {
+    previousValue == null || currentValue == null -> null
+    currentValue - previousValue > 0.00005 -> 0x6634C759L
+    currentValue - previousValue < -0.00005 -> 0x66FF3B30L
+    else -> null
+}
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.sessionFlashValue(sessionPrice: Double?, sessionChange: Double?): Double? =
+    sessionPrice ?: sessionChange?.let { price + it }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
