@@ -28,6 +28,7 @@ class YahooFinanceMarketDataProviderTest {
     @Test
     fun decodesTimestampedQuoteAndCandlesWithoutCredentials() = runBlocking {
         server.enqueue(MockResponse().setBody(CHART_JSON).setHeader("Content-Type", "application/json"))
+        server.enqueue(MockResponse().setBody(QUOTE_JSON).setHeader("Content-Type", "application/json"))
         val provider = provider()
 
         val quote = provider.getQuote("MSFT")
@@ -41,8 +42,9 @@ class YahooFinanceMarketDataProviderTest {
         assertEquals(504.72, quote.afterHoursPrice ?: 0.0, 0.0)
         assertEquals(0.18, quote.afterHoursChangePercent ?: 0.0, 0.0001)
         assertEquals(2, candles.candles.size)
-        assertEquals(1, server.requestCount)
-        assertTrue(server.takeRequest().path.orEmpty().contains("interval=1m"))
+        assertEquals(2, server.requestCount)
+        assertTrue(server.takeRequest().path.orEmpty().contains("/v8/finance/chart"))
+        assertTrue(server.takeRequest().path.orEmpty().contains("/v7/finance/quote"))
     }
 
     @Test
@@ -69,7 +71,8 @@ class YahooFinanceMarketDataProviderTest {
     )
 
     private companion object {
-        const val CHART_JSON = """{"chart":{"result":[{"meta":{"regularMarketPrice":503.81,"regularMarketTime":1786478400,"preMarketPrice":502.90,"preMarketChangePercent":-0.18,"postMarketPrice":504.72,"postMarketChangePercent":0.18},"timestamp":[1786478340,1786478400],"indicators":{"quote":[{"open":[503.1,503.2],"high":[503.5,504.0],"low":[502.9,503.0],"close":[503.2,503.81],"volume":[1000,1200]}]}}],"error":null}}"""
+        const val CHART_JSON = """{"chart":{"result":[{"meta":{"regularMarketPrice":503.81,"regularMarketTime":1786478400},"timestamp":[1786478340,1786478400],"indicators":{"quote":[{"open":[503.1,503.2],"high":[503.5,504.0],"low":[502.9,503.0],"close":[503.2,503.81],"volume":[1000,1200]}]}}],"error":null}}"""
+        const val QUOTE_JSON = """{"quoteResponse":{"result":[{"symbol":"MSFT","regularMarketPrice":503.81,"regularMarketTime":1786478400,"preMarketPrice":502.90,"preMarketChangePercent":-0.18,"postMarketPrice":504.72,"postMarketChangePercent":0.18}],"error":null}}"""
         const val NEWS_JSON = """{"news":[{"title":"Profit growth beats outlook","publisher":"Reuters","link":"https://example.com/msft","providerPublishTime":1786478000,"relatedTickers":["MSFT"]},{"title":"Other company falls","publisher":"Wire","providerPublishTime":1786477000,"relatedTickers":["OTHER"]}]}"""
     }
 }

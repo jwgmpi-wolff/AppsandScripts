@@ -27,23 +27,30 @@ public sealed class AnalysisService(HttpClient httpClient)
     private async Task<Quote> GetQuoteAsync(string symbol, CancellationToken cancellationToken)
     {
         using var chart = await GetJsonAsync($"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d", cancellationToken);
+        using var quoteSummary = await GetJsonAsync($"/v7/finance/quote?symbols={Uri.EscapeDataString(symbol)}", cancellationToken);
         var result = GetChartResult(chart);
         var meta = result.GetProperty("meta");
-        if (!meta.TryGetProperty("regularMarketPrice", out var priceValue) || priceValue.ValueKind != JsonValueKind.Number)
+        var summary = GetQuoteResult(quoteSummary, symbol);
+        var regularPrice = OptionalDouble(meta, "regularMarketPrice") ?? OptionalDouble(summary, "regularMarketPrice");
+        if (regularPrice is null)
             throw new InvalidOperationException("Current price was unavailable.");
-        if (!meta.TryGetProperty("regularMarketTime", out var timestampValue) || !timestampValue.TryGetInt64(out var timestamp))
+        var regularMarketTime = OptionalLong(meta, "regularMarketTime") ?? OptionalLong(summary, "regularMarketTime");
+        if (regularMarketTime is null)
             throw new InvalidOperationException("Quote timestamp was unavailable.");
-        var regularPrice = priceValue.GetDouble();
-        var preMarketPrice = OptionalDouble(meta, "preMarketPrice");
-        var afterHoursPrice = OptionalDouble(meta, "postMarketPrice");
+        var preMarketPrice = OptionalDouble(meta, "preMarketPrice")
+            ?? OptionalDouble(summary, "preMarketPrice");
+        var afterHoursPrice = OptionalDouble(meta, "postMarketPrice")
+            ?? OptionalDouble(summary, "postMarketPrice");
         var preMarketChangePercent = OptionalDouble(meta, "preMarketChangePercent")
+            ?? OptionalDouble(summary, "preMarketChangePercent")
             ?? (preMarketPrice is double prePrice && regularPrice != 0.0 ? ((prePrice - regularPrice) / regularPrice) * 100.0 : null);
         var afterHoursChangePercent = OptionalDouble(meta, "postMarketChangePercent")
+            ?? OptionalDouble(summary, "postMarketChangePercent")
             ?? (afterHoursPrice is double postPrice && regularPrice != 0.0 ? ((postPrice - regularPrice) / regularPrice) * 100.0 : null);
         return new Quote(
             symbol,
-            regularPrice,
-            DateTimeOffset.FromUnixTimeSeconds(timestamp),
+            regularPrice.Value,
+            DateTimeOffset.FromUnixTimeSeconds(regularMarketTime.Value),
             Provider,
             preMarketPrice,
             preMarketChangePercent,
@@ -113,10 +120,43 @@ public sealed class AnalysisService(HttpClient httpClient)
         return results[0];
     }
 
+    private static JsonElement? GetQuoteResult(JsonDocument quoteSummary, string symbol)
+    {
+        if (!quoteSummary.RootElement.TryGetProperty("quoteResponse", out var quoteResponse)) return null;
+        if (!quoteResponse.TryGetProperty("result", out var results) || results.ValueKind != JsonValueKind.Array) return null;
+        foreach (var item in results.EnumerateArray())
+        {
+            if (!item.TryGetProperty("symbol", out var value)) continue;
+            if (string.Equals(value.GetString(), symbol, StringComparison.OrdinalIgnoreCase)) return item;
+        }
+        return null;
+    }
+
     private static double? OptionalDouble(JsonElement parent, string propertyName)
     {
         return parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
             ? value.GetDouble()
+            : null;
+    }
+
+    private static double? OptionalDouble(JsonElement? parent, string propertyName)
+    {
+        return parent.HasValue && parent.Value.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble()
+            : null;
+    }
+
+    private static long? OptionalLong(JsonElement parent, string propertyName)
+    {
+        return parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result)
+            ? result
+            : null;
+    }
+
+    private static long? OptionalLong(JsonElement? parent, string propertyName)
+    {
+        return parent.HasValue && parent.Value.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result)
+            ? result
             : null;
     }
 

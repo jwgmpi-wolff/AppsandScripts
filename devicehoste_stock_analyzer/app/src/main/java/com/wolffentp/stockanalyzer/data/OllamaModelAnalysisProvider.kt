@@ -29,6 +29,27 @@ class OllamaModelAnalysisProvider(
     private val json: Json = Json { ignoreUnknownKeys = true },
     private val clock: () -> Instant = Instant::now,
 ) {
+    suspend fun getModels(endpoint: String): List<String> = withContext(Dispatchers.IO) {
+        val normalizedEndpoint = endpoint.trim().trimEnd('/')
+        require(normalizedEndpoint.matches(Regex("^https?://[^\\s]+$"))) { "Enter a valid Ollama endpoint." }
+        val request = Request.Builder()
+            .url("$normalizedEndpoint/api/tags")
+            .get()
+            .build()
+        val responseText = try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("Ollama returned HTTP ${response.code}")
+                response.body?.string().orEmpty()
+            }
+        } catch (error: IOException) {
+            error("Ollama is unreachable")
+        }
+        val envelope = json.decodeFromString(OllamaTagsResponse.serializer(), responseText)
+        envelope.models.mapNotNull { model -> model.name?.trim()?.takeIf(String::isNotBlank) }
+            .distinctBy { it.lowercase() }
+            .sortedBy { it.lowercase() }
+    }
+
     suspend fun analyze(result: AnalysisResult, settings: ModelSettings): ModelReview = withContext(Dispatchers.IO) {
         require(settings.enabled && settings.endpoint.isNotBlank() && settings.model.isNotBlank())
         require(result.recommendation != Recommendation.UNAVAILABLE) { "Validated analysis unavailable" }
@@ -114,6 +135,12 @@ private data class OllamaOptions(val temperature: Double = 0.0)
 
 @Serializable
 private data class OllamaGenerateResponse(val response: String)
+
+@Serializable
+private data class OllamaTagsResponse(val models: List<OllamaTagModel> = emptyList())
+
+@Serializable
+private data class OllamaTagModel(val name: String? = null)
 
 @Serializable
 private data class OllamaReviewResponse(

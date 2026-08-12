@@ -32,15 +32,20 @@ class YahooFinanceMarketDataProvider(
 
     override suspend fun getQuote(symbol: String): Quote {
         val result = chart(symbol, interval = "1m", range = "1d")
-        val price = result.meta.regularMarketPrice
+        val summary = quoteSummary(symbol)
+        val price = result.meta.regularMarketPrice ?: summary?.regularMarketPrice
             ?: throw MarketDataException.InvalidResponse("current price was unavailable")
-        val timestamp = result.meta.regularMarketTime
+        val timestamp = result.meta.regularMarketTime ?: summary?.regularMarketTime
             ?: throw MarketDataException.InvalidResponse("quote timestamp was unavailable")
         val preMarketPrice = result.meta.preMarketPrice
+            ?: summary?.preMarketPrice
         val afterHoursPrice = result.meta.postMarketPrice
+            ?: summary?.postMarketPrice
         val preMarketChangePercent = result.meta.preMarketChangePercent
+            ?: summary?.preMarketChangePercent
             ?: preMarketPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
         val afterHoursChangePercent = result.meta.postMarketChangePercent
+            ?: summary?.postMarketChangePercent
             ?: afterHoursPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
         return Quote(
             symbol = symbol,
@@ -102,6 +107,14 @@ class YahooFinanceMarketDataProvider(
                     ?.also { chartCache[key] = CachedChart(now, it) }
                 ?: throw MarketDataException.UnsupportedSymbol()
         }
+    }
+
+    private suspend fun quoteSummary(symbol: String): YahooQuoteResult? {
+        val encoded = encode(symbol)
+        return request<YahooQuoteEnvelope>("/v7/finance/quote?symbols=$encoded")
+            .quoteResponse
+            .result
+            .firstOrNull { item -> item.symbol.equals(symbol, ignoreCase = true) }
     }
 
     private suspend inline fun <reified T> request(path: String): T = withContext(Dispatchers.IO) {
@@ -194,6 +207,23 @@ private data class YahooQuoteValues(
 
 @Serializable
 private data class YahooSearchResponse(val news: List<YahooNewsItem> = emptyList())
+
+@Serializable
+private data class YahooQuoteEnvelope(val quoteResponse: YahooQuoteResponse = YahooQuoteResponse())
+
+@Serializable
+private data class YahooQuoteResponse(val result: List<YahooQuoteResult> = emptyList())
+
+@Serializable
+private data class YahooQuoteResult(
+    val symbol: String,
+    val regularMarketPrice: Double? = null,
+    val regularMarketTime: Long? = null,
+    val preMarketPrice: Double? = null,
+    val preMarketChangePercent: Double? = null,
+    val postMarketPrice: Double? = null,
+    val postMarketChangePercent: Double? = null,
+)
 
 @Serializable
 private data class YahooNewsItem(

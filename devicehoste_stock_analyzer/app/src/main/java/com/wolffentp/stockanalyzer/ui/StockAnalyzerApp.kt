@@ -31,7 +31,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -234,7 +237,12 @@ private fun Dashboard(state: StockUiState, model: StockViewModel) {
     if (configureModel) {
         ModelSettingsDialog(
             settings = state.modelSettings,
+            endpointOptions = state.endpointOptions,
+            modelOptions = state.modelOptions,
+            status = state.modelStatus,
             onDismiss = { configureModel = false },
+            onFindEndpoints = { model.refreshEndpointOptions() },
+            onDiscoverModels = { model.refreshModelOptions() },
             onSave = { enabled, endpoint, modelName ->
                 model.saveModelSettings(enabled, endpoint, modelName).also { saved ->
                     if (saved) configureModel = false
@@ -266,7 +274,8 @@ private fun StockGridCard(
                 Text(horizon.label, color = Color(0xFF606067), fontWeight = FontWeight.Bold)
             }
             Text(result?.quote?.price?.let { String.format(Locale.US, "$%,.2f", it) } ?: "Price unavailable", fontSize = 21.sp)
-            Text(result?.quote?.extendedSessionSummary() ?: "Pre/After: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
+            Text(result?.quote?.preMarketGridLine() ?: "Pre-market: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
+            Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
             Text(
@@ -293,16 +302,24 @@ private fun StockGridCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelSettingsDialog(
     settings: ModelSettings,
+    endpointOptions: List<String>,
+    modelOptions: List<String>,
+    status: String?,
     onDismiss: () -> Unit,
+    onFindEndpoints: () -> Unit,
+    onDiscoverModels: () -> Unit,
     onSave: (Boolean, String, String) -> Boolean,
 ) {
     var enabled by remember { mutableStateOf(settings.enabled) }
     var endpoint by remember { mutableStateOf(settings.endpoint) }
     var model by remember { mutableStateOf(settings.model) }
     var invalid by remember { mutableStateOf(false) }
+    var endpointExpanded by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Free local model") },
@@ -312,22 +329,75 @@ private fun ModelSettingsDialog(
                     Text("Use Ollama review", Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it; invalid = false })
                 }
-                OutlinedTextField(
-                    value = endpoint,
-                    onValueChange = { endpoint = it; invalid = false },
-                    label = { Text("Ollama URL on local network") },
-                    placeholder = { Text("http://192.168.1.10:11434") },
-                    singleLine = true,
-                    isError = invalid,
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it; invalid = false },
-                    label = { Text("Installed model") },
-                    placeholder = { Text("qwen3:4b") },
-                    singleLine = true,
-                    isError = invalid,
-                )
+                ExposedDropdownMenuBox(
+                    expanded = endpointExpanded,
+                    onExpandedChange = { endpointExpanded = !endpointExpanded },
+                ) {
+                    OutlinedTextField(
+                        value = endpoint,
+                        onValueChange = { endpoint = it; invalid = false },
+                        label = { Text("Ollama endpoint") },
+                        placeholder = { Text("http://192.168.1.10:11434") },
+                        singleLine = true,
+                        isError = invalid,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = endpointExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = endpointExpanded,
+                        onDismissRequest = { endpointExpanded = false },
+                    ) {
+                        endpointOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    endpoint = option
+                                    endpointExpanded = false
+                                    invalid = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onFindEndpoints) { Text("Find endpoints") }
+                }
+                ExposedDropdownMenuBox(
+                    expanded = modelExpanded,
+                    onExpandedChange = { modelExpanded = !modelExpanded },
+                ) {
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = { model = it; invalid = false },
+                        label = { Text("Installed model") },
+                        placeholder = { Text("qwen3:4b") },
+                        singleLine = true,
+                        isError = invalid,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = modelExpanded,
+                        onDismissRequest = { modelExpanded = false },
+                    ) {
+                        modelOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    model = option
+                                    modelExpanded = false
+                                    invalid = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDiscoverModels) { Text("Discover models") }
+                }
+                status?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 13.sp, color = Color(0xFF52625E))
+                }
                 Text("Analysis stays on your devices. The validated technical result remains available when Ollama is offline.", fontSize = 13.sp)
             }
         },
@@ -544,6 +614,21 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): S
         after != null -> after
         else -> "Unavailable"
     }
+}
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String =
+    "Pre-market: ${gridSessionText(preMarketPrice, preMarketChangePercent)}"
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
+    "After-hours: ${gridSessionText(afterHoursPrice, afterHoursChangePercent)}"
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPrice: Double?, percent: Double?): String {
+    if (sessionPrice == null) return "unavailable"
+    val delta = sessionPrice - price
+    val priceText = String.format(Locale.US, "$%,.2f", sessionPrice)
+    val deltaText = String.format(Locale.US, "%+$,.2f", delta)
+    val percentText = percent?.let { formatSignedPercent(it) } ?: "-"
+    return "$priceText ($deltaText, $percentText)"
 }
 
 private fun sessionText(label: String, price: Double?, changePercent: Double?): String? {

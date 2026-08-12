@@ -196,7 +196,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
 {
-    private string price = "-", extendedSession = "-", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
+    private string price = "-", extendedSession = "-", preMarketGrid = "Unavailable", afterHoursGrid = "Unavailable", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
     private string signalDetails = "Not calculated.", newsDetails = "No news evidence loaded.", modelDetails = "Local model review pending.";
     private string warningDetails = "None reported.", finalReason = "Analysis has not refreshed yet.";
@@ -205,6 +205,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
     public string ExtendedSession { get => extendedSession; private set => Set(ref extendedSession, value); }
+    public string PreMarketGrid { get => preMarketGrid; private set => Set(ref preMarketGrid, value); }
+    public string AfterHoursGrid { get => afterHoursGrid; private set => Set(ref afterHoursGrid, value); }
     public string Technical { get => technical; private set => Set(ref technical, value); }
     public string TechnicalRange { get => technicalRange; private set => Set(ref technicalRange, value); }
     public string Confidence { get => confidence; private set => Set(ref confidence, value); }
@@ -227,6 +229,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     {
         Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
         ExtendedSession = ExtendedSessionSummary(value.Quote);
+        PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
+        AfterHoursGrid = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
         Technical = value.Recommendation.ToString().ToUpperInvariant();
         TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
         Confidence = $"{value.Confidence}%";
@@ -255,7 +259,7 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     { ModelResult = "Unavailable"; ModelBrush = DirectionBrushes.Neutral; ModelRationale = message; ModelDetails = message; }
     public void ApplyDataError(string message)
     {
-        Price = ExtendedSession = Technical = TechnicalRange = Confidence = "Unavailable";
+        Price = ExtendedSession = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
         ModelResult = "Unavailable";
         TechnicalBrush = ModelBrush = DirectionBrushes.Neutral;
         ModelRationale = message;
@@ -281,6 +285,15 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         var priceText = price is null ? "-" : price.Value.ToString("C2");
         var percentText = changePercent is null ? "-" : $"{NormalizeSignedPercent(changePercent.Value):+0.00;-0.00;0.00}%";
         return $"{label} {priceText} ({percentText})";
+    }
+
+    private static string SessionGridText(double? sessionPrice, double? sessionPercent, double? regularPrice)
+    {
+        if (sessionPrice is null) return "Unavailable";
+        var delta = regularPrice is double regular ? sessionPrice.Value - regular : 0.0;
+        var deltaText = regularPrice is null ? "-" : $"{NormalizeSignedPercent(delta):+0.00;-0.00;0.00}";
+        var percentText = sessionPercent is null ? "-" : $"{NormalizeSignedPercent(sessionPercent.Value):+0.00;-0.00;0.00}%";
+        return $"{sessionPrice.Value:C2} ({deltaText}, {percentText})";
     }
 
     private static double NormalizeSignedPercent(double value) => Math.Abs(value) < 0.00005 ? 0.0 : value;

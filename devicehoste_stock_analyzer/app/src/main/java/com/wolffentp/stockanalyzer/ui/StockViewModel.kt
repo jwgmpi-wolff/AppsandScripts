@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.time.Instant
 
 data class StockRowState(
@@ -49,6 +51,9 @@ data class StockUiState(
     val lastRefreshAt: Instant? = null,
     val selectedSymbol: String? = null,
     val modelSettings: ModelSettings = ModelSettings(),
+    val endpointOptions: List<String> = DEFAULT_ENDPOINT_OPTIONS,
+    val modelOptions: List<String> = DEFAULT_MODEL_OPTIONS,
+    val modelStatus: String? = null,
 )
 
 class StockViewModel @JvmOverloads constructor(
@@ -70,6 +75,8 @@ class StockViewModel @JvmOverloads constructor(
 
     init {
         loadModelSettings()
+        refreshEndpointOptions(reportStatus = false)
+        refreshModelOptions(reportStatus = false)
         loadWatchlist()
         startAutoRefresh()
     }
@@ -155,10 +162,63 @@ class StockViewModel @JvmOverloads constructor(
         val normalizedModel = model.trim()
         if (enabled && (!normalizedEndpoint.matches(Regex("^https?://[^\\s]+$")) || normalizedModel.isBlank())) return false
         val settings = ModelSettings(enabled, normalizedEndpoint, normalizedModel.ifBlank { "qwen3:4b" })
-        mutableState.update { it.copy(modelSettings = settings) }
+        mutableState.update {
+            it.copy(
+                modelSettings = settings,
+                endpointOptions = mergedOptions(it.endpointOptions, listOf(normalizedEndpoint).filter(String::isNotBlank)),
+                modelOptions = mergedOptions(it.modelOptions, listOf(settings.model).filter(String::isNotBlank)),
+            )
+        }
         viewModelScope.launch { modelSettingsStore.save(settings) }
         refresh()
         return true
+    }
+
+    fun refreshEndpointOptions(reportStatus: Boolean = true) {
+        viewModelScope.launch {
+            val currentEndpoint = mutableState.value.modelSettings.endpoint
+            val discovered = discoverEndpointOptions(currentEndpoint)
+            mutableState.update { state ->
+                state.copy(
+                    endpointOptions = discovered,
+                    modelStatus = if (reportStatus) "Loaded ${discovered.size} endpoint option(s)." else state.modelStatus,
+                )
+            }
+        }
+    }
+
+    fun refreshModelOptions(reportStatus: Boolean = true) {
+        viewModelScope.launch {
+            val settings = mutableState.value.modelSettings
+            val base = mergedOptions(DEFAULT_MODEL_OPTIONS, listOf(settings.model).filter(String::isNotBlank))
+            if (settings.endpoint.isBlank()) {
+                mutableState.update {
+                    it.copy(
+                        modelOptions = base,
+                        modelStatus = if (reportStatus) "Enter an endpoint to discover installed models." else it.modelStatus,
+                    )
+                }
+                return@launch
+            }
+            runCatching { modelProvider.getModels(settings.endpoint) }
+                .onSuccess { discovered ->
+                    val merged = mergedOptions(base, discovered)
+                    mutableState.update {
+                        it.copy(
+                            modelOptions = merged,
+                            modelStatus = if (discovered.isEmpty()) "Ollama reachable; no installed models found." else "Found ${discovered.size} installed model(s).",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    mutableState.update {
+                        it.copy(
+                            modelOptions = base,
+                            modelStatus = error.message ?: "Ollama unavailable; technical analysis remains active.",
+                        )
+                    }
+                }
+        }
     }
 
     fun refresh() {
@@ -209,6 +269,49 @@ class StockViewModel @JvmOverloads constructor(
 
     private companion object { const val AUTO_REFRESH_MILLIS = 60_000L }
 }
+
+private fun discoverEndpointOptions(currentEndpoint: String): List<String> {
+    val values = linkedSetOf(
+        "http://127.0.0.1:11434",
+        "http://localhost:11434",
+        "http://10.0.2.2:11434",
+        "http://host.docker.internal:11434",
+    )
+    if (currentEndpoint.isNotBlank()) values.add(currentEndpoint.trim().trimEnd('/'))
+    val interfaces = runCatching { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty() }.getOrDefault(emptyList())
+    interfaces.forEach { network ->
+        if (!network.isUp || network.isLoopback) return@forEach
+        network.inetAddresses.toList()
+            .filterIsInstance<Inet4Address>()
+            .map { "http://${it.hostAddress}:11434" }
+            .forEach(values::add)
+    }
+    return values.toList()
+}
+
+private fun mergedOptions(primary: List<String>, secondary: List<String>): List<String> =
+    (primary + secondary).map { it.trim() }.filter(String::isNotBlank).distinctBy { it.lowercase() }
+
+private fun <T> java.util.Enumeration<T>.toList(): List<T> {
+    val values = mutableListOf<T>()
+    while (hasMoreElements()) values += nextElement()
+    return values
+}
+
+private val DEFAULT_ENDPOINT_OPTIONS = listOf(
+    "http://127.0.0.1:11434",
+    "http://localhost:11434",
+    "http://10.0.2.2:11434",
+    "http://host.docker.internal:11434",
+)
+
+private val DEFAULT_MODEL_OPTIONS = listOf(
+    "qwen3:4b",
+    "qwen3:8b",
+    "llama3.1:8b",
+    "mistral:7b",
+    "phi4:latest",
+)
 
 private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
 private fun StockRowState.toWatchlistEntry() = WatchlistEntry(symbol, quantity, averageCost)
