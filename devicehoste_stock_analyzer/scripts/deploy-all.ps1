@@ -36,8 +36,19 @@ try {
     if ($setupProcess.ExitCode -ne 0) { throw "Windows installation failed with exit code $($setupProcess.ExitCode)." }
 
     if (-not $SkipAndroidInstall) {
-        & .\gradlew.bat installDebug
-        if ($LASTEXITCODE -ne 0) { throw "Android in-place installation failed." }
+        $adb = Get-Command adb -ErrorAction Stop
+        $devices = & $adb.Source devices | Select-String "`tdevice$" | ForEach-Object {
+            ($_ -split "`t")[0].Trim()
+        }
+        if ($devices.Count -eq 0) {
+            Write-Warning "No authorized Android devices are attached; skipped Android installation."
+        }
+        else {
+            foreach ($device in $devices) {
+                & $adb.Source -s $device install -r .\app\build\outputs\apk\debug\app-debug.apk
+                if ($LASTEXITCODE -ne 0) { throw "Android in-place installation failed for device $device." }
+            }
+        }
     }
 
     $installedApp = Join-Path $env:LOCALAPPDATA 'Programs\StockMovementAnalyzer\StockMovementAnalyzer.Windows.exe'
