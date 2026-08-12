@@ -325,7 +325,11 @@ private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
             172.dp,
             color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
         )
-        TableCell(result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable", 172.dp)
+        TableCell(
+            result?.quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable",
+            172.dp,
+            color = result?.quote?.afterHoursColor() ?: Color(0xFF6B6B72),
+        )
         TableCell(recommendationLabel(result?.recommendation), 100.dp, FontWeight.Bold, technicalColor)
         TableCell(priceRangeText(result), 146.dp, color = technicalColor)
         TableCell(result?.let { "${it.confidence}%" } ?: "Unavailable", 92.dp, FontWeight.Bold, technicalColor)
@@ -415,7 +419,11 @@ private fun StockGridCard(
                 color = result?.quote?.preMarketColor() ?: Color(0xFF6B6B72),
                 fontSize = 12.sp,
             )
-            Text(result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable", color = Color(0xFF3F3F45), fontSize = 12.sp)
+            Text(
+                result?.quote?.afterHoursGridLine() ?: "After-hours: unavailable",
+                color = result?.quote?.afterHoursColor() ?: Color(0xFF6B6B72),
+                fontSize = 12.sp,
+            )
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
             Text(
@@ -785,6 +793,12 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.overnightColor(): Color = w
 private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketColor(): Color = when {
     (preMarketChange ?: preMarketPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFFC28C00)
     (preMarketChange ?: preMarketPrice?.minus(price) ?: 0.0) < -0.00005 -> Color(0xFFC28C00)
+    else -> Color(0xFF6B6B72)
+}
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursColor(): Color = when {
+    (afterHoursChange ?: afterHoursPrice?.minus(price) ?: 0.0) > 0.00005 -> Color(0xFFC28C00)
+    (afterHoursChange ?: afterHoursPrice?.minus(price) ?: 0.0) < -0.00005 -> Color(0xFFC28C00)
     else -> Color(0xFF6B6B72)
 }
 
