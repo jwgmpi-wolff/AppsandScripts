@@ -59,6 +59,7 @@
                     <Button Content="Find endpoints" Click="FindEndpoints_Click"/>
                     <ComboBox Width="210" IsEditable="True" Text="{Binding SelectedModel, UpdateSourceTrigger=PropertyChanged}" ItemsSource="{Binding ModelOptions}" ToolTip="Installed or example model"/>
                     <Button Content="Discover models" Click="DiscoverModels_Click"/>
+                    <TextBox Width="260" Text="{Binding FinnhubApiKey, UpdateSourceTrigger=PropertyChanged}" ToolTip="Optional Finnhub API key for quote fallback"/>
                     <TextBlock Text="Models run locally; no API key or paid endpoint." VerticalAlignment="Center" Foreground="#52625E" Margin="10,0"/>
                 </WrapPanel>
                 <StackPanel Grid.Row="2" Margin="6,8,0,0">
@@ -66,6 +67,8 @@
                                Text="Endpoint examples: http://127.0.0.1:11434 (same PC), http://localhost:11434, or http://[this-PC-LAN-IP]:11434 for Android on the same Wi-Fi. Click Find endpoints to auto-populate this machine's options."/>
                     <TextBlock Foreground="#52625E" TextWrapping="Wrap" Margin="0,4,0,0"
                                Text="Model options: choose any discovered installed model, or enter an example ID such as qwen3:4b, qwen3:8b, llama3.1:8b, mistral:7b, or phi4:latest after pulling it with Ollama. Entering gpt-5.3-codex maps to qwen3:8b for local execution."/>
+                    <TextBlock Foreground="#52625E" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Finnhub key is optional and only used as a quote fallback when Yahoo is missing current price/timestamp."/>
                 </StackPanel>
             </Grid>
         </Border>

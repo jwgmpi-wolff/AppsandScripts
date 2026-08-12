@@ -23,6 +23,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private HorizonDefinition selectedHorizon = HorizonDefinition.All[0];
     private string ollamaEndpoint = "http://127.0.0.1:11434";
     private string? selectedModel;
+    private string finnhubApiKey = "d9k5sapr01qkjjrs460gd9k5sapr01qkjjrs4610";
     private bool useLocalModel = true;
     private StockRow? selectedRow;
 
@@ -35,6 +36,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var settings = store.Load();
         OllamaEndpoint = settings.OllamaEndpoint;
         SelectedModel = settings.Model;
+        FinnhubApiKey = settings.FinnhubApiKey;
         UseLocalModel = settings.UseLocalModel;
         foreach (var row in settings.Rows) Rows.Add(new StockRow(row.Symbol, row.Quantity, row.AverageCost));
         Loaded += async (_, _) => { await DiscoverModelsAsync(false); await RefreshAsync(); refreshTimer.Start(); };
@@ -52,6 +54,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public HorizonDefinition SelectedHorizon { get => selectedHorizon; set => Set(ref selectedHorizon, value); }
     public string OllamaEndpoint { get => ollamaEndpoint; set => Set(ref ollamaEndpoint, value); }
     public string? SelectedModel { get => selectedModel; set => Set(ref selectedModel, value); }
+    public string FinnhubApiKey { get => finnhubApiKey; set => Set(ref finnhubApiKey, value); }
     public bool UseLocalModel { get => useLocalModel; set => Set(ref useLocalModel, value); }
     public StockRow? SelectedRow { get => selectedRow; set => Set(ref selectedRow, value); }
 
@@ -160,7 +163,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Status = "Refreshing live evidence";
         try
         {
-            var analyzer = new AnalysisService(httpClient);
+            var analyzer = new AnalysisService(httpClient, FinnhubApiKey);
             var ollama = new OllamaClient(httpClient);
             foreach (var row in Rows)
             {
@@ -192,7 +195,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally { isRefreshing = false; }
     }
 
-    private void Save() => store.Save(new AppSettings(OllamaEndpoint, SelectedModel, UseLocalModel,
+    private void Save() => store.Save(new AppSettings(OllamaEndpoint, SelectedModel, UseLocalModel, FinnhubApiKey.Trim(),
         Rows.Select(row => new SavedRow(row.Symbol, row.Quantity, row.AverageCost)).ToList()));
 
     private static string NormalizeRequestedModel(string model)
@@ -251,7 +254,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
         OvernightBrush = DirectionBrushes.ForSessionChange(value.Quote?.OvernightChange ??
             (value.Quote?.OvernightPrice is double overnight && value.Quote?.Price is double regular ? overnight - regular : null));
         PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
-        AfterHoursGrid = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
+        var refreshedAfterHours = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
+        AfterHoursGrid = refreshedAfterHours == "Unavailable" && AfterHoursGrid != "Unavailable" ? AfterHoursGrid : refreshedAfterHours;
         Technical = value.Recommendation.ToString().ToUpperInvariant();
         TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
         Confidence = $"{value.Confidence}%";

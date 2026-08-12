@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace StockMovementAnalyzer.Windows;
 
 public sealed record SavedRow(string Symbol, decimal? Quantity, decimal? AverageCost);
-public sealed record AppSettings(string OllamaEndpoint, string? Model, bool UseLocalModel, List<SavedRow> Rows);
+public sealed record AppSettings(string OllamaEndpoint, string? Model, bool UseLocalModel, string FinnhubApiKey, List<SavedRow> Rows);
 
 public sealed class AppStore
 {
@@ -42,6 +42,7 @@ public sealed class AppStore
             var model = ReadString(root, "Model");
             var useLocalModel = root.TryGetProperty("UseLocalModel", out var enabled) && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False
                 ? enabled.GetBoolean() : true;
+            var finnhubApiKey = ReadString(root, "FinnhubApiKey") ?? "d9k5sapr01qkjjrs460gd9k5sapr01qkjjrs4610";
             var rows = new List<SavedRow>();
             if (root.TryGetProperty("Rows", out var storedRows) && storedRows.ValueKind == JsonValueKind.Array)
             {
@@ -52,7 +53,7 @@ public sealed class AppStore
                     rows.Add(new SavedRow(symbol, ReadDecimal(row, "Quantity"), ReadDecimal(row, "AverageCost")));
                 }
             }
-            return new AppSettings(endpoint, model, useLocalModel, rows);
+            return new AppSettings(endpoint, model, useLocalModel, finnhubApiKey.Trim(), rows);
         }
         catch { return null; }
     }
@@ -63,6 +64,6 @@ public sealed class AppStore
     private static decimal? ReadDecimal(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number) ? number : null;
 
-    private static AppSettings Defaults() => new("http://127.0.0.1:11434", null, true,
+    private static AppSettings Defaults() => new("http://127.0.0.1:11434", null, true, "d9k5sapr01qkjjrs460gd9k5sapr01qkjjrs4610",
         [new("MSFT", null, null), new("AAPL", null, null), new("NVDA", null, null)]);
 }

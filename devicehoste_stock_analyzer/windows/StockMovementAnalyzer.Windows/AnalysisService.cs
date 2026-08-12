@@ -3,10 +3,11 @@ using System.Text.Json;
 
 namespace StockMovementAnalyzer.Windows;
 
-public sealed class AnalysisService(HttpClient httpClient)
+public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey = null)
 {
     private const string Provider = "Yahoo Finance";
     private const string ExtendedHoursBaseUrl = "https://query2.finance.yahoo.com";
+    private const string FinnhubBaseUrl = "https://finnhub.io";
     private static readonly TimeZoneInfo EasternTime = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
     public async Task<AnalysisResult> AnalyzeAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)
@@ -36,9 +37,15 @@ public sealed class AnalysisService(HttpClient httpClient)
         var meta = result.GetProperty("meta");
         var summary = quoteSummary is null ? null : GetQuoteResult(quoteSummary, symbol);
         var regularPrice = OptionalDouble(meta, "regularMarketPrice") ?? OptionalDouble(summary, "regularMarketPrice");
+        var regularMarketTime = OptionalLong(meta, "regularMarketTime") ?? OptionalLong(summary, "regularMarketTime");
+        if (regularPrice is null || regularMarketTime is null)
+        {
+            var finnhubQuote = await GetFinnhubQuoteAsync(symbol, cancellationToken);
+            regularPrice ??= finnhubQuote?.Price;
+            regularMarketTime ??= finnhubQuote?.Timestamp;
+        }
         if (regularPrice is null)
             throw new InvalidOperationException("Current price was unavailable.");
-        var regularMarketTime = OptionalLong(meta, "regularMarketTime") ?? OptionalLong(summary, "regularMarketTime");
         if (regularMarketTime is null)
             throw new InvalidOperationException("Quote timestamp was unavailable.");
         var extended = await GetExtendedSessionAsync(symbol, cancellationToken);
@@ -82,10 +89,8 @@ public sealed class AnalysisService(HttpClient httpClient)
     {
         try
         {
-            using var chart = await GetJsonAsync(
-                $"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d&includePrePost=true",
-                cancellationToken,
-                ExtendedHoursBaseUrl);
+            using var chart = await GetExtendedSessionJsonAsync(symbol, cancellationToken)
+                ?? throw new InvalidOperationException("Extended-session chart was unavailable.");
             var result = GetChartResult(chart);
             var timestamps = result.GetProperty("timestamp").EnumerateArray().Select(value => value.GetInt64()).ToList();
             var closes = result.GetProperty("indicators").GetProperty("quote")[0].GetProperty("close").EnumerateArray().Select(NullableDouble).ToList();
@@ -114,6 +119,39 @@ public sealed class AnalysisService(HttpClient httpClient)
                 LatestSessionPrice(16 * 60, 20 * 60));
         }
         catch { return new ExtendedSessionPrices(null, null, null); }
+    }
+
+    private async Task<JsonDocument?> GetExtendedSessionJsonAsync(string symbol, CancellationToken cancellationToken)
+    {
+        var path = $"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d&includePrePost=true";
+        var baseUrls = new[] { ExtendedHoursBaseUrl, "https://query1.finance.yahoo.com" }.Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var baseUrl in baseUrls)
+        {
+            try { return await GetJsonAsync(path, cancellationToken, baseUrl); }
+            catch { }
+        }
+        return null;
+    }
+
+    private async Task<FinnhubQuote?> GetFinnhubQuoteAsync(string symbol, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(finnhubApiKey)) return null;
+        try
+        {
+            using var quote = await GetJsonAsync(
+                $"/api/v1/quote?symbol={Uri.EscapeDataString(symbol)}&token={Uri.EscapeDataString(finnhubApiKey.Trim())}",
+                cancellationToken,
+                FinnhubBaseUrl);
+            var root = quote.RootElement;
+            var price = OptionalDouble(root, "c");
+            var timestamp = OptionalLong(root, "t");
+            if (price is null || timestamp is null || timestamp <= 0) return null;
+            return new FinnhubQuote(price.Value, timestamp.Value);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<IReadOnlyList<Candle>> GetCandlesAsync(string symbol, HorizonDefinition horizon, CancellationToken cancellationToken)
@@ -166,7 +204,8 @@ public sealed class AnalysisService(HttpClient httpClient)
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.UserAgent.ParseAdd("StockMovementAnalyzer/1.6");
         using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode} from {baseUrl}");
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
     }
 
@@ -223,4 +262,6 @@ public sealed class AnalysisService(HttpClient httpClient)
     private static double? NullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
     private static long? NullableLong(JsonElement value) => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result) ? result : null;
     private static T? ElementAt<T>(IReadOnlyList<T?> values, int index) where T : struct => index < values.Count ? values[index] : null;
+
+    private sealed record FinnhubQuote(double Price, long Timestamp);
 }
