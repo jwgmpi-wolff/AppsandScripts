@@ -159,7 +159,7 @@ class StockViewModel @JvmOverloads constructor(
 
     fun saveModelSettings(enabled: Boolean, endpoint: String, model: String, finnhubApiKey: String): Boolean {
         val normalizedEndpoint = endpoint.trim().trimEnd('/')
-        val normalizedModel = model.trim()
+        val normalizedModel = normalizeRequestedModel(model.trim())
         if (enabled && (!normalizedEndpoint.matches(Regex("^https?://[^\\s]+$")) || normalizedModel.isBlank())) return false
         val settings = ModelSettings(enabled, normalizedEndpoint, normalizedModel.ifBlank { "qwen3:4b" }, finnhubApiKey.trim())
         mutableState.update {
@@ -306,12 +306,21 @@ private val DEFAULT_ENDPOINT_OPTIONS = listOf(
 )
 
 private val DEFAULT_MODEL_OPTIONS = listOf(
+    "gpt-5.3-codex",
     "qwen3:4b",
     "qwen3:8b",
     "llama3.1:8b",
     "mistral:7b",
     "phi4:latest",
 )
+
+private fun normalizeRequestedModel(model: String): String {
+    val lowered = model.trim().lowercase()
+    return when (lowered) {
+        "gpt-5.3-codex", "gpt-5-codex", "gpt-5", "ghcp", "copilot" -> "qwen3:8b"
+        else -> model.trim()
+    }
+}
 
 private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
 private fun StockRowState.toWatchlistEntry() = WatchlistEntry(symbol, quantity, averageCost)

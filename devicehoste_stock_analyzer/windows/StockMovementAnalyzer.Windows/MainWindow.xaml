@@ -65,7 +65,7 @@
                     <TextBlock Foreground="#52625E" TextWrapping="Wrap"
                                Text="Endpoint examples: http://127.0.0.1:11434 (same PC), http://localhost:11434, or http://[this-PC-LAN-IP]:11434 for Android on the same Wi-Fi. Click Find endpoints to auto-populate this machine's options."/>
                     <TextBlock Foreground="#52625E" TextWrapping="Wrap" Margin="0,4,0,0"
-                               Text="Model options: choose any discovered installed model, or enter an example ID such as qwen3:4b, qwen3:8b, llama3.1:8b, mistral:7b, or phi4:latest after pulling it with Ollama."/>
+                               Text="Model options: choose any discovered installed model, or enter an example ID such as qwen3:4b, qwen3:8b, llama3.1:8b, mistral:7b, or phi4:latest after pulling it with Ollama. Entering gpt-5.3-codex maps to qwen3:8b for local execution."/>
                 </StackPanel>
             </Grid>
         </Border>

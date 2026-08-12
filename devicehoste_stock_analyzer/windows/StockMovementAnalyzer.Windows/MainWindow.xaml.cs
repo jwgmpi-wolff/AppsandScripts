@@ -145,6 +145,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static readonly string[] DefaultModelExamples =
     [
+        "gpt-5.3-codex",
         "qwen3:4b",
         "qwen3:8b",
         "llama3.1:8b",
@@ -173,7 +174,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     }
                     else if (UseLocalModel && !string.IsNullOrWhiteSpace(SelectedModel))
                     {
-                        try { row.ApplyModel(await ollama.ReviewAsync(OllamaEndpoint, SelectedModel, analysis, lifetime.Token), SelectedModel); }
+                        var normalizedModel = NormalizeRequestedModel(SelectedModel);
+                        if (!string.Equals(normalizedModel, SelectedModel, StringComparison.OrdinalIgnoreCase))
+                        {
+                            SelectedModel = normalizedModel;
+                        }
+                        try { row.ApplyModel(await ollama.ReviewAsync(OllamaEndpoint, normalizedModel, analysis, lifetime.Token), normalizedModel); }
                         catch (Exception error) { row.ApplyModelError($"{error.Message} Technical result retained."); }
                     }
                     else row.ApplyModelError(UseLocalModel ? "No installed model selected. Technical result retained." : "Local model review off.");
@@ -188,6 +194,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void Save() => store.Save(new AppSettings(OllamaEndpoint, SelectedModel, UseLocalModel,
         Rows.Select(row => new SavedRow(row.Symbol, row.Quantity, row.AverageCost)).ToList()));
+
+    private static string NormalizeRequestedModel(string model)
+    {
+        var lowered = model.Trim().ToLowerInvariant();
+        return lowered switch
+        {
+            "gpt-5.3-codex" or "gpt-5-codex" or "gpt-5" or "ghcp" or "copilot" => "qwen3:8b",
+            _ => model.Trim(),
+        };
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
