@@ -89,6 +89,35 @@ Require(IsColor(flashRow.PriceFlashBrush, 0x00, 0x00, 0x00, 0x00) &&
         IsColor(flashRow.AfterHoursFlashBrush, 0x00, 0x00, 0x00, 0x00),
     "An unchanged next refresh must clear every market-value flash.");
 
+var retainedSessionRow = new StockRow("MSFT", null, null);
+retainedSessionRow.ApplyTechnical(initialFlashResult);
+var retainedOvernightText = retainedSessionRow.OvernightGrid;
+var retainedAfterHoursText = retainedSessionRow.AfterHoursGrid;
+retainedSessionRow.ApplyTechnical(initialFlashResult with
+{
+    Quote = initialFlashResult.Quote! with
+    {
+        Price = initialFlashResult.Quote.Price + 10.0,
+        OvernightPrice = null,
+        OvernightChange = null,
+        OvernightChangePercent = null,
+        AfterHoursPrice = null,
+        AfterHoursChange = null,
+        AfterHoursChangePercent = null,
+    }
+});
+Require(retainedSessionRow.OvernightGrid == retainedOvernightText &&
+        retainedSessionRow.AfterHoursGrid == retainedAfterHoursText,
+    "Missing refresh values must retain exact last overnight and after-hours snapshots.");
+
+retainedSessionRow.ApplyTechnical(initialFlashResult with
+{
+    Quote = initialFlashResult.Quote! with { OvernightPrice = 140.0, AfterHoursPrice = 141.0 }
+});
+Require(retainedSessionRow.OvernightGrid != retainedOvernightText &&
+        retainedSessionRow.AfterHoursGrid != retainedAfterHoursText,
+    "New overnight and after-hours snapshots must replace retained values.");
+
 var fallbackFlashRow = new StockRow("MSFT", null, null);
 var changeOnlyResult = rising with
 {
@@ -134,7 +163,22 @@ try
     var upgraded = store.Load();
     Require(upgraded.Rows.Count == 2 && upgraded.Rows[0] == new SavedRow("MSFT", 12.5m, 310.75m),
         "Previous-version Windows watchlist and holding must load unchanged.");
-    store.Save(upgraded with { Model = "qwen3:4b" });
+    var retainedRows = upgraded.Rows.Select(row => row.Symbol == "MSFT"
+        ? row with
+        {
+            LastOvernightPrice = 320.0,
+            LastOvernightChange = 1.5,
+            LastOvernightPercent = 0.47,
+            LastAfterHoursPrice = 321.0,
+            LastAfterHoursChange = 2.5,
+            LastAfterHoursPercent = 0.78,
+        }
+        : row).ToList();
+    store.Save(upgraded with { Model = "qwen3:4b", Rows = retainedRows });
+    var retainedSettings = store.Load();
+    Require(retainedSettings.Rows[0].LastOvernightPrice == 320.0 &&
+            retainedSettings.Rows[0].LastAfterHoursPrice == 321.0,
+        "Last overnight and after-hours snapshots must persist across Windows restarts.");
     File.WriteAllText(settingsPath, "corrupt update residue");
     var recovered = store.Load();
     Require(recovered.Rows.Count == 2 && recovered.Rows[0].Symbol == "MSFT",

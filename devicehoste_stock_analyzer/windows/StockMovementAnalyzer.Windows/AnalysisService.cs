@@ -51,35 +51,42 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
         var extended = await GetExtendedSessionAsync(symbol, cancellationToken);
         var preMarketChange = OptionalDouble(meta, "preMarketChange")
             ?? OptionalDouble(summary, "preMarketChange");
-        var afterHoursChange = OptionalDouble(meta, "postMarketChange")
+        var directAfterHoursChange = OptionalDouble(meta, "postMarketChange")
             ?? OptionalDouble(summary, "postMarketChange");
-        var preMarketPrice = OptionalDouble(meta, "preMarketPrice")
-            ?? OptionalDouble(summary, "preMarketPrice")
+        var directPreMarketPrice = OptionalDouble(meta, "preMarketPrice")
+            ?? OptionalDouble(summary, "preMarketPrice");
+        var preMarketPrice = directPreMarketPrice
+            ?? (preMarketChange is double preChange ? regularPrice + preChange : null)
             ?? extended.PreMarketPrice;
-        if (preMarketPrice is null && preMarketChange is not null) preMarketPrice = regularPrice + preMarketChange;
-        var afterHoursPrice = OptionalDouble(meta, "postMarketPrice")
-            ?? OptionalDouble(summary, "postMarketPrice")
-            ?? extended.AfterHoursPrice;
-        if (afterHoursPrice is null && afterHoursChange is not null) afterHoursPrice = regularPrice + afterHoursChange;
+        var directAfterHoursPrice = OptionalDouble(meta, "postMarketPrice")
+            ?? OptionalDouble(summary, "postMarketPrice");
+        var afterHoursPrice = directAfterHoursPrice
+            ?? (directAfterHoursChange is double postChange ? regularPrice + postChange : null)
+            ?? extended.AfterHours?.Price;
+        var afterHoursChange = directAfterHoursChange
+            ?? (directAfterHoursPrice is double directPost ? directPost - regularPrice : null)
+            ?? extended.AfterHours?.Change;
         var preMarketChangePercent = OptionalDouble(meta, "preMarketChangePercent")
             ?? OptionalDouble(summary, "preMarketChangePercent")
             ?? (preMarketPrice is double prePrice && regularPrice != 0.0 ? ((prePrice - regularPrice) / regularPrice) * 100.0 : null);
         var afterHoursChangePercent = OptionalDouble(meta, "postMarketChangePercent")
             ?? OptionalDouble(summary, "postMarketChangePercent")
-            ?? (afterHoursPrice is double postPrice && regularPrice != 0.0 ? ((postPrice - regularPrice) / regularPrice) * 100.0 : null);
+            ?? (directAfterHoursPrice is not null || directAfterHoursChange is not null
+                ? afterHoursChange is double currentPostChange && regularPrice != 0.0 ? (currentPostChange / regularPrice) * 100.0 : null
+                : extended.AfterHours?.Percent);
         var quote = new Quote(
             symbol,
             regularPrice.Value,
             DateTimeOffset.FromUnixTimeSeconds(regularMarketTime.Value),
             Provider,
-            extended.OvernightPrice,
-            extended.OvernightPrice is double overnight ? overnight - regularPrice.Value : null,
-            extended.OvernightPrice is double overnightPercent && regularPrice.Value != 0.0 ? ((overnightPercent - regularPrice.Value) / regularPrice.Value) * 100.0 : null,
+            extended.Overnight?.Price,
+            extended.Overnight?.Change,
+            extended.Overnight?.Percent,
             preMarketPrice,
             preMarketChange ?? (preMarketPrice is double resolvedPre ? resolvedPre - regularPrice.Value : null),
             preMarketChangePercent,
             afterHoursPrice,
-            afterHoursChange ?? (afterHoursPrice is double resolvedAfter ? resolvedAfter - regularPrice.Value : null),
+            afterHoursChange,
             afterHoursChangePercent);
         quoteSummary?.Dispose();
         return quote;
@@ -89,41 +96,68 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
     {
         try
         {
+            var observedAt = DateTimeOffset.UtcNow;
             using var chart = await GetExtendedSessionJsonAsync(symbol, cancellationToken)
                 ?? throw new InvalidOperationException("Extended-session chart was unavailable.");
             var result = GetChartResult(chart);
             var timestamps = result.GetProperty("timestamp").EnumerateArray().Select(value => value.GetInt64()).ToList();
             var closes = result.GetProperty("indicators").GetProperty("quote")[0].GetProperty("close").EnumerateArray().Select(NullableDouble).ToList();
-            var samples = timestamps.Select((timestamp, index) => new { Timestamp = DateTimeOffset.FromUnixTimeSeconds(timestamp), Close = ElementAt(closes, index) })
-                .Where(sample => sample.Close is not null)
+            var samples = timestamps.Select((timestamp, index) => new SessionSample(DateTimeOffset.FromUnixTimeSeconds(timestamp), ElementAt(closes, index)))
+                .Where(sample => sample.Price is not null && sample.Timestamp <= observedAt)
                 .ToList();
-            double? LatestSessionPrice(int startMinute, int endMinute) => samples
+            SessionSample? LatestSessionPrice(int startMinute, int endMinute) => samples
                 .Where(sample =>
                 {
                     var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
                     var minute = time.Hours * 60 + time.Minutes;
                     return minute >= startMinute && minute < endMinute;
                 })
-                .MaxBy(sample => sample.Timestamp)?.Close;
-            double? LatestOvernightPrice() => samples
+                .MaxBy(sample => sample.Timestamp);
+            SessionSample? LatestOvernightPrice() => samples
                 .Where(sample =>
                 {
                     var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
                     var minute = time.Hours * 60 + time.Minutes;
                     return minute >= 20 * 60 || minute < 4 * 60;
                 })
-                .MaxBy(sample => sample.Timestamp)?.Close;
+                .MaxBy(sample => sample.Timestamp);
+            double? RegularClose(DateTime date) => samples
+                .Where(sample =>
+                {
+                    var local = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime);
+                    var minute = local.Hour * 60 + local.Minute;
+                    return local.Date == date && minute >= 9 * 60 + 30 && minute < 16 * 60;
+                })
+                .MaxBy(sample => sample.Timestamp)?.Price;
+            SessionQuote? ToSessionQuote(SessionSample? sample, Func<DateTimeOffset, DateTime> baselineDate)
+            {
+                if (sample?.Price is not double sessionPrice) return null;
+                var baseline = RegularClose(baselineDate(sample.Timestamp));
+                double? change = baseline is double regularClose ? sessionPrice - regularClose : null;
+                double? percent = change is double resolvedChange && baseline is double nonzeroBaseline && nonzeroBaseline != 0.0
+                    ? (resolvedChange / nonzeroBaseline) * 100.0
+                    : null;
+                return new SessionQuote(sessionPrice, change, percent);
+            }
+            var overnight = ToSessionQuote(LatestOvernightPrice(), timestamp =>
+            {
+                var local = TimeZoneInfo.ConvertTime(timestamp, EasternTime);
+                return local.Hour < 4 ? local.Date.AddDays(-1) : local.Date;
+            });
+            var afterHours = ToSessionQuote(
+                LatestSessionPrice(16 * 60, 20 * 60),
+                timestamp => TimeZoneInfo.ConvertTime(timestamp, EasternTime).Date);
             return new ExtendedSessionPrices(
-                LatestOvernightPrice(),
-                LatestSessionPrice(4 * 60, 9 * 60 + 30),
-                LatestSessionPrice(16 * 60, 20 * 60));
+                overnight,
+                LatestSessionPrice(4 * 60, 9 * 60 + 30)?.Price,
+                afterHours);
         }
         catch { return new ExtendedSessionPrices(null, null, null); }
     }
 
     private async Task<JsonDocument?> GetExtendedSessionJsonAsync(string symbol, CancellationToken cancellationToken)
     {
-        var path = $"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=1d&includePrePost=true";
+        var path = $"/v8/finance/chart/{Uri.EscapeDataString(symbol)}?interval=1m&range=5d&includePrePost=true";
         var baseUrls = new[] { ExtendedHoursBaseUrl, "https://query1.finance.yahoo.com" }.Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var baseUrl in baseUrls)
         {
@@ -257,7 +291,9 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
             : null;
     }
 
-            private sealed record ExtendedSessionPrices(double? OvernightPrice, double? PreMarketPrice, double? AfterHoursPrice);
+    private sealed record SessionSample(DateTimeOffset Timestamp, double? Price);
+    private sealed record SessionQuote(double Price, double? Change, double? Percent);
+    private sealed record ExtendedSessionPrices(SessionQuote? Overnight, double? PreMarketPrice, SessionQuote? AfterHours);
 
     private static double? NullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
     private static long? NullableLong(JsonElement value) => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result) ? result : null;

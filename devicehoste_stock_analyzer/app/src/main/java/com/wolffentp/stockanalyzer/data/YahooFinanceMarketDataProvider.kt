@@ -10,7 +10,9 @@ import com.wolffentp.stockanalyzer.domain.TimestampedSentiment
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.Duration
+import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -33,47 +35,67 @@ class YahooFinanceMarketDataProvider(
     private val chartCache = mutableMapOf<String, CachedChart>()
 
     override suspend fun getQuote(symbol: String): Quote {
+        val observedAt = clock()
         val result = chart(symbol, interval = "1m", range = "1d")
         val summary = runCatching { quoteSummary(symbol) }.getOrNull()
         val price = result.meta.regularMarketPrice ?: summary?.regularMarketPrice
             ?: throw MarketDataException.InvalidResponse("current price was unavailable")
         val timestamp = result.meta.regularMarketTime ?: summary?.regularMarketTime
             ?: throw MarketDataException.InvalidResponse("quote timestamp was unavailable")
-        val extended = runCatching { extendedSession(symbol) }.getOrNull()
+        val extended = runCatching { extendedSession(symbol, observedAt) }.getOrNull()
+        val session = marketSession(observedAt)
         val preMarketChange = result.meta.preMarketChange
             ?: summary?.preMarketChange
-        val afterHoursChange = result.meta.postMarketChange
+        val directAfterHoursChange = result.meta.postMarketChange
             ?: summary?.postMarketChange
-        val overnightPrice = extended?.overnightPrice
+        val overnightPrice = extended?.overnight?.price
         val preMarketPrice = result.meta.preMarketPrice
             ?: summary?.preMarketPrice
-            ?: extended?.preMarketPrice
+            ?: extended?.preMarket?.price
             ?: preMarketChange?.let { price + it }
-        val afterHoursPrice = result.meta.postMarketPrice
+        val directAfterHoursPrice = result.meta.postMarketPrice
             ?: summary?.postMarketPrice
-            ?: extended?.afterHoursPrice
-            ?: afterHoursChange?.let { price + it }
+        val afterHoursPrice = directAfterHoursPrice
+            ?: directAfterHoursChange?.let { price + it }
+            ?: extended?.afterHours?.price
         val preMarketChangePercent = result.meta.preMarketChangePercent
             ?: summary?.preMarketChangePercent
             ?: preMarketPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
+        val afterHoursChange = directAfterHoursChange
+            ?: directAfterHoursPrice?.minus(price)
+            ?: extended?.afterHours?.change
         val afterHoursChangePercent = result.meta.postMarketChangePercent
             ?: summary?.postMarketChangePercent
-            ?: afterHoursPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null }
+            ?: if (directAfterHoursPrice != null || directAfterHoursChange != null) {
+                afterHoursChange?.let { if (price != 0.0) (it / price) * 100.0 else null }
+            } else extended?.afterHours?.percent
+        val overnightIsPrior = extended?.overnight?.let { !isCurrentOvernightSample(it.timestamp, observedAt) } ?: false
+        val overnightChange = extended?.overnight?.change
+            ?: overnightPrice?.takeUnless { overnightIsPrior }?.minus(price)
+        val overnightChangePercent = extended?.overnight?.percent
+            ?: overnightChange?.let { if (price != 0.0) (it / price) * 100.0 else null }
         return Quote(
             symbol = symbol,
             price = price,
             timestamp = Instant.ofEpochSecond(timestamp),
             provider = PROVIDER,
-            marketSession = marketSession(clock()),
+            marketSession = session,
             overnightPrice = overnightPrice,
-            overnightChange = overnightPrice?.let { it - price },
-            overnightChangePercent = overnightPrice?.let { sessionPrice -> if (price != 0.0) ((sessionPrice - price) / price) * 100.0 else null },
+            overnightChange = overnightChange,
+            overnightChangePercent = overnightChangePercent,
+            overnightIsPrior = overnightIsPrior,
             preMarketPrice = preMarketPrice,
             preMarketChange = preMarketChange ?: preMarketPrice?.let { it - price },
             preMarketChangePercent = preMarketChangePercent,
             afterHoursPrice = afterHoursPrice,
             afterHoursChange = afterHoursChange ?: afterHoursPrice?.let { it - price },
             afterHoursChangePercent = afterHoursChangePercent,
+            afterHoursIsPrior = when {
+                afterHoursPrice == null -> false
+                session != MarketSession.AFTER_HOURS -> true
+                directAfterHoursPrice != null || directAfterHoursChange != null -> false
+                else -> extended?.afterHours?.let { !isCurrentAfterHoursSample(it.timestamp, observedAt) } ?: true
+            },
         )
     }
 
@@ -135,7 +157,7 @@ class YahooFinanceMarketDataProvider(
             .firstOrNull { item -> item.symbol.equals(symbol, ignoreCase = true) }
     }
 
-    private suspend fun extendedSession(symbol: String): ExtendedSessionPrices {
+    private suspend fun extendedSession(symbol: String, observedAt: Instant): ExtendedSessionPrices {
         val key = "$symbol:extended-session"
         val result = cacheMutex.withLock {
             val now = clock()
@@ -147,32 +169,54 @@ class YahooFinanceMarketDataProvider(
         val closes = result.indicators.quote.firstOrNull()?.close.orEmpty()
         val sessionPrices = result.timestamp.mapIndexedNotNull { index, value ->
             closes.getOrNull(index)?.let { close -> Instant.ofEpochSecond(value) to close }
-        }
-        fun latestSessionPrice(startMinute: Int, endMinute: Int): Double? = sessionPrices
+        }.filter { (instant, _) -> !instant.isAfter(observedAt) }
+        fun latestSessionPrice(startMinute: Int, endMinute: Int): Pair<Instant, Double>? = sessionPrices
             .filter { (instant, _) ->
                 val time = instant.atZone(NEW_YORK).toLocalTime()
                 val minute = time.hour * 60 + time.minute
                 minute in startMinute until endMinute
             }
             .maxByOrNull { it.first }
+        fun regularClose(date: LocalDate): Double? = sessionPrices
+            .filter { (instant, _) ->
+                val dateTime = instant.atZone(NEW_YORK)
+                val minute = dateTime.hour * 60 + dateTime.minute
+                dateTime.toLocalDate() == date && minute in REGULAR_MARKET_OPEN_MINUTE until REGULAR_MARKET_CLOSE_MINUTE
+            }
+            .maxByOrNull { it.first }
             ?.second
-        fun latestOvernightPrice(): Double? = sessionPrices
+        fun sessionSample(value: Pair<Instant, Double>?, baselineDate: (Instant) -> LocalDate): SessionSample? {
+            val (timestamp, sessionPrice) = value ?: return null
+            val baseline = regularClose(baselineDate(timestamp))
+            val change = baseline?.let { sessionPrice - it }
+            val percent = change?.let { if (baseline != 0.0) (it / baseline) * 100.0 else null }
+            return SessionSample(sessionPrice, timestamp, change, percent)
+        }
+        fun latestOvernightPrice(): Pair<Instant, Double>? = sessionPrices
             .filter { (instant, _) ->
                 val time = instant.atZone(NEW_YORK).toLocalTime()
                 val minute = time.hour * 60 + time.minute
                 minute >= AFTER_HOURS_CLOSE_MINUTE || minute < OVERNIGHT_CLOSE_MINUTE
             }
             .maxByOrNull { it.first }
-            ?.second
+        val overnight = sessionSample(latestOvernightPrice()) { instant ->
+            instant.atZone(NEW_YORK).let { dateTime ->
+                if (dateTime.hour < 4) dateTime.toLocalDate().minusDays(1) else dateTime.toLocalDate()
+            }
+        }
+        val afterHours = sessionSample(
+            latestSessionPrice(REGULAR_MARKET_CLOSE_MINUTE, AFTER_HOURS_CLOSE_MINUTE),
+        ) { instant -> instant.atZone(NEW_YORK).toLocalDate() }
         return ExtendedSessionPrices(
-            overnightPrice = latestOvernightPrice(),
-            preMarketPrice = latestSessionPrice(PRE_MARKET_OPEN_MINUTE, REGULAR_MARKET_OPEN_MINUTE),
-            afterHoursPrice = latestSessionPrice(REGULAR_MARKET_CLOSE_MINUTE, AFTER_HOURS_CLOSE_MINUTE),
+            overnight = overnight,
+            preMarket = latestSessionPrice(PRE_MARKET_OPEN_MINUTE, REGULAR_MARKET_OPEN_MINUTE)
+                ?.let { (timestamp, sessionPrice) -> SessionSample(sessionPrice, timestamp, null, null) },
+            afterHours = afterHours,
         )
     }
 
     private suspend fun requestExtendedSessionChart(symbol: String): YahooChartResult? {
-        val path = "/v8/finance/chart/${encode(symbol)}?interval=1m&range=1d&includePrePost=true"
+        val path = "/v8/finance/chart/${encode(symbol)}?interval=1m&range=5d&includePrePost=true"
         val candidateBaseUrls = listOf(
             if (baseUrl.contains("query1.finance.yahoo.com")) EXTENDED_HOURS_BASE_URL else baseUrl,
             baseUrl,
@@ -220,10 +264,13 @@ class YahooFinanceMarketDataProvider(
 
     private fun encode(value: String): String = URLEncoder.encode(value.trim().uppercase(), Charsets.UTF_8.name())
 
-    private fun marketSession(now: Instant): MarketSession {
+    internal fun marketSession(now: Instant): MarketSession {
         val dateTime = now.atZone(NEW_YORK)
-        if (dateTime.dayOfWeek.value >= 6) return MarketSession.CLOSED
         val minute = dateTime.hour * 60 + dateTime.minute
+        if (dateTime.dayOfWeek == DayOfWeek.SATURDAY ||
+            dateTime.dayOfWeek == DayOfWeek.SUNDAY && minute < AFTER_HOURS_CLOSE_MINUTE ||
+            dateTime.dayOfWeek == DayOfWeek.FRIDAY && minute >= AFTER_HOURS_CLOSE_MINUTE
+        ) return MarketSession.CLOSED
         return when {
             minute < OVERNIGHT_CLOSE_MINUTE || minute >= AFTER_HOURS_CLOSE_MINUTE -> MarketSession.OVERNIGHT
             minute < REGULAR_MARKET_OPEN_MINUTE -> MarketSession.PRE_MARKET
@@ -232,11 +279,29 @@ class YahooFinanceMarketDataProvider(
         }
     }
 
+    private fun isCurrentOvernightSample(sample: Instant, observedAt: Instant): Boolean {
+        if (marketSession(observedAt) != MarketSession.OVERNIGHT) return false
+        fun Instant.sessionDate() = atZone(NEW_YORK).let { dateTime ->
+            if (dateTime.hour < 4) dateTime.toLocalDate().minusDays(1) else dateTime.toLocalDate()
+        }
+        return sample.sessionDate() == observedAt.sessionDate()
+    }
+
+    private fun isCurrentAfterHoursSample(sample: Instant, observedAt: Instant): Boolean =
+        marketSession(observedAt) == MarketSession.AFTER_HOURS &&
+            sample.atZone(NEW_YORK).toLocalDate() == observedAt.atZone(NEW_YORK).toLocalDate()
+
     private data class CachedChart(val retrievedAt: Instant, val result: YahooChartResult)
+    private data class SessionSample(
+        val price: Double,
+        val timestamp: Instant,
+        val change: Double?,
+        val percent: Double?,
+    )
     private data class ExtendedSessionPrices(
-        val overnightPrice: Double?,
-        val preMarketPrice: Double?,
-        val afterHoursPrice: Double?,
+        val overnight: SessionSample?,
+        val preMarket: SessionSample?,
+        val afterHours: SessionSample?,
     )
 
     private companion object {

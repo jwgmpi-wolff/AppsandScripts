@@ -21,6 +21,8 @@ The app retrieves:
 - one-minute OHLCV for intraday horizons and daily OHLCV for 1/5/10-day horizons from the same chart endpoint;
 - ticker-related headlines, publishers, links, and publication timestamps from `query1.finance.yahoo.com/v1/finance/search`.
 
+Yahoo's public chart currently publishes regular, pre-market, and after-hours samples, but no distinct 20:00-04:00 ET overnight samples. The clients never relabel after-hours data as overnight data. They retain the last genuine overnight snapshot when a provider supplies one and retain the last Yahoo after-hours snapshot from five-day extended-session history. Both snapshots are stored locally and remain visible across refresh failures and app restarts until a newer value from the same session type replaces them.
+
 Quote and candle calls share a short in-memory response cache to avoid duplicate chart requests during one refresh. Responses are not persisted by the app. News is filtered to articles whose `relatedTickers` contains the requested symbol. Yahoo does not provide a sentiment score in this response, so the app labels its deterministic local headline score rather than attributing that score to Yahoo.
 
 No setup is required beyond normal Android internet access. `local.properties` remains optional and may contain only Android SDK settings or non-secret analyzer thresholds.

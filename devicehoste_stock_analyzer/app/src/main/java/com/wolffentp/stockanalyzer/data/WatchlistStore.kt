@@ -11,10 +11,19 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
+data class StoredSessionSnapshot(
+    val price: Double,
+    val change: Double,
+    val percent: Double? = null,
+)
+
+@Serializable
 data class WatchlistEntry(
     val symbol: String,
     val quantity: Double? = null,
     val averageCost: Double? = null,
+    val lastOvernight: StoredSessionSnapshot? = null,
+    val lastAfterHours: StoredSessionSnapshot? = null,
 )
 
 interface WatchlistStore {

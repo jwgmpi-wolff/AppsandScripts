@@ -11,7 +11,13 @@ class WatchlistEntryTest {
 
     @Test
     fun holdingRoundTripPreservesUserEnteredValues() {
-        val entry = WatchlistEntry("MSFT", quantity = 12.5, averageCost = 310.75)
+        val entry = WatchlistEntry(
+            "MSFT",
+            quantity = 12.5,
+            averageCost = 310.75,
+            lastOvernight = StoredSessionSnapshot(320.0, 1.5, 0.47),
+            lastAfterHours = StoredSessionSnapshot(321.0, 2.5, 0.78),
+        )
         val decoded = json.decodeFromString<WatchlistEntry>(json.encodeToString(entry))
         assertEquals(entry, decoded)
     }

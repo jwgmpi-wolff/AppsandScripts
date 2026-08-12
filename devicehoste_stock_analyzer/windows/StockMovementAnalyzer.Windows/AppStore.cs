@@ -4,7 +4,16 @@ using System.Text.RegularExpressions;
 
 namespace StockMovementAnalyzer.Windows;
 
-public sealed record SavedRow(string Symbol, decimal? Quantity, decimal? AverageCost);
+public sealed record SavedRow(
+    string Symbol,
+    decimal? Quantity,
+    decimal? AverageCost,
+    double? LastOvernightPrice = null,
+    double? LastOvernightChange = null,
+    double? LastOvernightPercent = null,
+    double? LastAfterHoursPrice = null,
+    double? LastAfterHoursChange = null,
+    double? LastAfterHoursPercent = null);
 public sealed record AppSettings(string OllamaEndpoint, string? Model, bool UseLocalModel, string FinnhubApiKey, List<SavedRow> Rows);
 
 public sealed class AppStore
@@ -50,7 +59,16 @@ public sealed class AppStore
                 {
                     var symbol = ReadString(row, "Symbol")?.Trim().ToUpperInvariant();
                     if (symbol is null || !SymbolPattern.IsMatch(symbol) || rows.Any(existing => existing.Symbol == symbol)) continue;
-                    rows.Add(new SavedRow(symbol, ReadDecimal(row, "Quantity"), ReadDecimal(row, "AverageCost")));
+                    rows.Add(new SavedRow(
+                        symbol,
+                        ReadDecimal(row, "Quantity"),
+                        ReadDecimal(row, "AverageCost"),
+                        ReadDouble(row, "LastOvernightPrice"),
+                        ReadDouble(row, "LastOvernightChange"),
+                        ReadDouble(row, "LastOvernightPercent"),
+                        ReadDouble(row, "LastAfterHoursPrice"),
+                        ReadDouble(row, "LastAfterHoursChange"),
+                        ReadDouble(row, "LastAfterHoursPercent")));
                 }
             }
             return new AppSettings(endpoint, model, useLocalModel, finnhubApiKey.Trim(), rows);
@@ -63,6 +81,9 @@ public sealed class AppStore
 
     private static decimal? ReadDecimal(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number) ? number : null;
+
+    private static double? ReadDouble(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : null;
 
     private static AppSettings Defaults() => new("http://127.0.0.1:11434", null, true, "d9k5sapr01qkjjrs460gd9k5sapr01qkjjrs4610",
         [new("MSFT", null, null), new("AAPL", null, null), new("NVDA", null, null)]);

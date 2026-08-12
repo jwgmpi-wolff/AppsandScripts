@@ -100,9 +100,9 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}" IsReadOnly="True" Width="75"/>
                     <DataGridTextColumn Header="Price" Binding="{Binding Price}" ElementStyle="{StaticResource PriceCell}" IsReadOnly="True" Width="88"/>
-                    <DataGridTextColumn Header="Overnight" Binding="{Binding OvernightGrid}" ElementStyle="{StaticResource OvernightCell}" IsReadOnly="True" Width="180"/>
+                    <DataGridTextColumn Header="Last overnight" Binding="{Binding OvernightGrid}" ElementStyle="{StaticResource OvernightCell}" IsReadOnly="True" Width="180"/>
                     <DataGridTextColumn Header="Pre-market" Binding="{Binding PreMarketGrid}" ElementStyle="{StaticResource PreMarketCell}" IsReadOnly="True" Width="180"/>
-                    <DataGridTextColumn Header="After-hours" Binding="{Binding AfterHoursGrid}" ElementStyle="{StaticResource AfterHoursCell}" IsReadOnly="True" Width="180"/>
+                    <DataGridTextColumn Header="Last after-hours" Binding="{Binding AfterHoursGrid}" ElementStyle="{StaticResource AfterHoursCell}" IsReadOnly="True" Width="180"/>
                     <DataGridTextColumn Header="Technical" Binding="{Binding Technical}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="90"/>
                     <DataGridTextColumn Header="Projected range" Binding="{Binding TechnicalRange}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="135"/>
                     <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" ElementStyle="{StaticResource TechnicalCell}" IsReadOnly="True" Width="85"/>

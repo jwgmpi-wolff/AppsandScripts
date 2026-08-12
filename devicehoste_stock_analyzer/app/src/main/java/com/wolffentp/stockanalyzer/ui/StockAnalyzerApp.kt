@@ -73,6 +73,7 @@ import com.wolffentp.stockanalyzer.domain.Horizon
 import com.wolffentp.stockanalyzer.domain.MarketSession
 import com.wolffentp.stockanalyzer.domain.Recommendation
 import com.wolffentp.stockanalyzer.data.ModelSettings
+import com.wolffentp.stockanalyzer.data.StoredSessionSnapshot
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -297,9 +298,9 @@ private fun StockTableHeader() {
     ) {
         TableCell("Symbol", 76.dp, FontWeight.Bold)
         TableCell("Price", 92.dp, FontWeight.Bold)
-        TableCell("Overnight", 172.dp, FontWeight.Bold)
+        TableCell("Last overnight", 172.dp, FontWeight.Bold)
         TableCell("Pre-market", 172.dp, FontWeight.Bold)
-        TableCell("After-hours", 172.dp, FontWeight.Bold)
+        TableCell("Last after-hours", 172.dp, FontWeight.Bold)
         TableCell("Technical", 100.dp, FontWeight.Bold)
         TableCell("Projected range", 146.dp, FontWeight.Bold)
         TableCell("Confidence", 92.dp, FontWeight.Bold)
@@ -322,7 +323,7 @@ private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
             92.dp,
             flashArgb = row.priceFlashArgb,
         )
-        OvernightTableCell(quote, 172.dp, row.overnightFlashArgb)
+        OvernightTableCell(quote, row.lastOvernight, 172.dp, row.overnightFlashArgb)
         TableCell(
             quote?.preMarketGridLine()?.removePrefix("Pre-market: ") ?: "Unavailable",
             172.dp,
@@ -330,7 +331,9 @@ private fun StockTableRow(row: StockRowState, onClick: () -> Unit) {
             flashArgb = row.preMarketFlashArgb,
         )
         TableCell(
-            quote?.afterHoursGridLine()?.removePrefix("After-hours: ") ?: "Unavailable",
+            quote?.afterHoursGridLine()?.substringAfter(": ")
+                ?: row.lastAfterHours?.gridLine("After-hours (last)")?.substringAfter(": ")
+                ?: "Unavailable",
             172.dp,
             color = quote?.afterHoursColor() ?: Color(0xFF6B6B72),
             flashArgb = row.afterHoursFlashArgb,
@@ -364,11 +367,13 @@ private fun TableCell(
 @Composable
 private fun OvernightTableCell(
     quote: com.wolffentp.stockanalyzer.domain.Quote?,
+    retained: StoredSessionSnapshot?,
     width: androidx.compose.ui.unit.Dp,
     flashArgb: Long?,
 ) {
     OvernightRefreshText(
         quote = quote,
+        retained = retained,
         flashArgb = flashArgb,
         modifier = Modifier.width(width).padding(horizontal = 8.dp),
         label = false,
@@ -378,16 +383,19 @@ private fun OvernightTableCell(
 @Composable
 private fun OvernightRefreshText(
     quote: com.wolffentp.stockanalyzer.domain.Quote?,
+    retained: StoredSessionSnapshot?,
     flashArgb: Long?,
     modifier: Modifier = Modifier,
     label: Boolean = true,
 ) {
     val flashColor = flashArgb?.let { Color(it) } ?: Color.Transparent
     Text(
-        text = if (label) quote?.overnightGridLine() ?: "Overnight: unavailable"
-        else quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable",
+        text = if (label) quote?.overnightGridLine() ?: retained?.gridLine("Overnight (last)") ?: "Overnight: unavailable"
+        else quote?.overnightGridLine()?.substringAfter(": ")
+            ?: retained?.gridLine("Overnight (last)")?.substringAfter(": ")
+            ?: "Unavailable",
         modifier = modifier.background(flashColor).padding(vertical = 2.dp),
-        color = quote?.overnightColor() ?: Color(0xFF6B6B72),
+        color = quote?.overnightColor() ?: retained?.sessionColor() ?: Color(0xFF6B6B72),
         fontSize = 12.sp,
         maxLines = 2,
     )
@@ -420,16 +428,18 @@ private fun StockGridCard(
                 flashArgb = row.priceFlashArgb,
                 fontSize = 21,
             )
-            OvernightRefreshText(quote, row.overnightFlashArgb)
+            OvernightRefreshText(quote, row.lastOvernight, row.overnightFlashArgb)
             RefreshingMarketText(
                 text = quote?.preMarketGridLine() ?: "Pre-market: unavailable",
                 flashArgb = row.preMarketFlashArgb,
                 color = quote?.preMarketColor() ?: Color(0xFF6B6B72),
             )
             RefreshingMarketText(
-                text = quote?.afterHoursGridLine() ?: "After-hours: unavailable",
+                text = quote?.afterHoursGridLine()
+                    ?: row.lastAfterHours?.gridLine("After-hours (last)")
+                    ?: "After-hours: unavailable",
                 flashArgb = row.afterHoursFlashArgb,
-                color = quote?.afterHoursColor() ?: Color(0xFF6B6B72),
+                color = quote?.afterHoursColor() ?: row.lastAfterHours?.sessionColor() ?: Color(0xFF6B6B72),
             )
             Text("Predictive analysis: ${recommendationLabel(result?.recommendation)}", color = color, fontWeight = FontWeight.Bold)
             Text("Projected ${horizon.label} range: ${priceRangeText(result)}", color = Color(0xFF3F3F45), fontSize = 13.sp)
@@ -716,7 +726,7 @@ private fun sourceText(result: AnalysisResult) = buildString {
     appendLine("Latest source timestamp: ${result.lastDataTimestamp.formatTimestamp()}")
     appendLine("Source age: ${result.sourceAgeMinutes?.let { "$it minutes" } ?: "Unavailable"}")
     appendLine("Candle interval: ${result.candleIntervalMinutes} minute(s)")
-    appendLine("Overnight: ${result.quote?.overnightGridLine()?.removePrefix("Overnight: ") ?: "Unavailable"}")
+    appendLine(result.quote?.overnightGridLine() ?: "Overnight: unavailable")
     appendLine("Pre/After market: ${result.quote?.extendedSessionSummary() ?: "Unavailable"}")
     append("Latest quote: ${result.quote?.let { String.format(Locale.US, "$%,.2f at %s", it.price, it.timestamp.formatTimestamp()) } ?: "Unsupported / unavailable"}")
 }
@@ -788,7 +798,8 @@ private fun Instant?.formatTimeOnly(): String = this?.atZone(ZoneId.systemDefaul
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.extendedSessionSummary(): String {
     val pre = sessionText("Pre", preMarketPrice, preMarketChangePercent)
-    val after = sessionText("After", afterHoursPrice, afterHoursChangePercent)
+    val afterLabel = if (marketSession == MarketSession.AFTER_HOURS && !afterHoursIsPrior) "After" else "After (last)"
+    val after = sessionText(afterLabel, afterHoursPrice, afterHoursChangePercent)
     return when {
         pre != null && after != null -> "$pre | $after"
         pre != null -> pre
@@ -801,7 +812,7 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.preMarketGridLine(): String
     "${if (marketSession == MarketSession.PRE_MARKET) "Pre-market" else "Pre-market (prior)"}: ${gridSessionText(preMarketPrice, preMarketChange, preMarketChangePercent)}"
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.overnightGridLine(): String = when {
-    overnightPrice != null -> "Overnight: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
+    overnightPrice != null -> "${if (marketSession == MarketSession.OVERNIGHT && !overnightIsPrior) "Overnight" else "Overnight (last)"}: ${gridSessionText(overnightPrice, overnightChange, overnightChangePercent)}"
     marketSession == MarketSession.OVERNIGHT -> "Overnight: not published by Yahoo"
     else -> "Overnight: unavailable"
 }
@@ -825,7 +836,7 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursColor(): Color = 
 }
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.afterHoursGridLine(): String =
-    "${if (marketSession == MarketSession.AFTER_HOURS) "After-hours" else "After-hours (prior)"}: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
+    "${if (marketSession == MarketSession.AFTER_HOURS && !afterHoursIsPrior) "After-hours" else "After-hours (last)"}: ${gridSessionText(afterHoursPrice, afterHoursChange, afterHoursChangePercent)}"
 
 private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPrice: Double?, change: Double?, percent: Double?): String {
     if (sessionPrice == null && change == null && percent == null) return "unavailable"
@@ -835,6 +846,19 @@ private fun com.wolffentp.stockanalyzer.domain.Quote.gridSessionText(sessionPric
     val deltaText = resolvedChange?.let { String.format(Locale.US, "%+.2f", it).replace("+", "+$").replace("-", "-$") } ?: "-"
     val percentText = percent?.let { formatSignedPercent(it) } ?: "-"
     return "$priceText ($deltaText, $percentText)"
+}
+
+private fun StoredSessionSnapshot.gridLine(label: String): String {
+    val priceText = String.format(Locale.US, "$%,.2f", price)
+    val deltaText = String.format(Locale.US, "%+.2f", change).replace("+", "+$").replace("-", "-$")
+    val percentText = percent?.let { formatSignedPercent(it) } ?: "-"
+    return "$label: $priceText ($deltaText, $percentText)"
+}
+
+private fun StoredSessionSnapshot.sessionColor(): Color = when {
+    change > 0.00005 -> Color(0xFF16803C)
+    change < -0.00005 -> Color(0xFFC62828)
+    else -> Color(0xFF6B6B72)
 }
 
 private fun sessionText(label: String, price: Double?, changePercent: Double?): String? {

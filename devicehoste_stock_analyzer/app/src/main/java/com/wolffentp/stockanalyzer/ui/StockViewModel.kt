@@ -15,6 +15,7 @@ import com.wolffentp.stockanalyzer.data.YahooFinanceMarketDataProvider
 import com.wolffentp.stockanalyzer.data.DataStoreWatchlistStore
 import com.wolffentp.stockanalyzer.data.WatchlistEntry
 import com.wolffentp.stockanalyzer.data.WatchlistStore
+import com.wolffentp.stockanalyzer.data.StoredSessionSnapshot
 import com.wolffentp.stockanalyzer.domain.AnalysisResult
 import com.wolffentp.stockanalyzer.domain.AnalyzerConfig
 import com.wolffentp.stockanalyzer.domain.Horizon
@@ -38,6 +39,8 @@ data class StockRowState(
     val quantity: Double? = null,
     val averageCost: Double? = null,
     val analysis: AnalysisResult? = null,
+    val lastOvernight: StoredSessionSnapshot? = null,
+    val lastAfterHours: StoredSessionSnapshot? = null,
     val priceFlashArgb: Long? = null,
     val overnightFlashArgb: Long? = null,
     val preMarketFlashArgb: Long? = null,
@@ -234,8 +237,12 @@ class StockViewModel @JvmOverloads constructor(
             val updated = mutableState.value.rows.map { row ->
                 try {
                     val analysis = repository.analyze(row.symbol, horizon)
-                    val mergedAnalysis = analysis.withExtendedSessionFallback(row.analysis)
-                    val refreshedRow = row.withRefreshedAnalysis(mergedAnalysis)
+                    val mergedAnalysis = analysis.withExtendedSessionFallback(
+                        previous = row.analysis,
+                        retainedOvernight = row.lastOvernight,
+                        retainedAfterHours = row.lastAfterHours,
+                    )
+                    val refreshedRow = row.withRefreshedAnalysis(mergedAnalysis).withRetainedSessions(mergedAnalysis)
                     if (modelSettings.enabled && analysis.recommendation != com.wolffentp.stockanalyzer.domain.Recommendation.UNAVAILABLE) {
                         runCatching { modelProvider.analyze(mergedAnalysis, modelSettings) }
                             .fold(
@@ -259,6 +266,7 @@ class StockViewModel @JvmOverloads constructor(
                 }
             }
             mutableState.update { it.copy(rows = updated, isRefreshing = false, lastRefreshAt = Instant.now()) }
+            persistWatchlist()
         }
     }
 
@@ -337,29 +345,77 @@ private fun normalizeRequestedModel(model: String): String {
     }
 }
 
-private fun AnalysisResult.withExtendedSessionFallback(previous: AnalysisResult?): AnalysisResult {
+internal fun AnalysisResult.withExtendedSessionFallback(
+    previous: AnalysisResult?,
+    retainedOvernight: StoredSessionSnapshot? = null,
+    retainedAfterHours: StoredSessionSnapshot? = null,
+): AnalysisResult {
     val currentQuote = quote ?: return this
-    val previousQuote = previous?.quote ?: return this
+    val previousQuote = previous?.quote
 
-    val mergedOvernightPrice = currentQuote.overnightPrice ?: previousQuote.overnightPrice
-    val mergedPreMarketPrice = currentQuote.preMarketPrice ?: previousQuote.preMarketPrice
-    val mergedAfterHoursPrice = currentQuote.afterHoursPrice ?: previousQuote.afterHoursPrice
+    val currentOvernight = currentQuote.sessionValues(
+        currentQuote.overnightPrice,
+        currentQuote.overnightChange,
+        currentQuote.overnightChangePercent,
+    )
+    val overnight = currentOvernight ?: previousQuote?.sessionValues(
+        previousQuote.overnightPrice,
+        previousQuote.overnightChange,
+        previousQuote.overnightChangePercent,
+    ) ?: retainedOvernight?.toSessionValues()
+    val preMarket = currentQuote.sessionValues(
+        currentQuote.preMarketPrice,
+        currentQuote.preMarketChange,
+        currentQuote.preMarketChangePercent,
+    ) ?: previousQuote?.sessionValues(
+        previousQuote.preMarketPrice,
+        previousQuote.preMarketChange,
+        previousQuote.preMarketChangePercent,
+    )
+    val currentAfterHours = currentQuote.sessionValues(
+        currentQuote.afterHoursPrice,
+        currentQuote.afterHoursChange,
+        currentQuote.afterHoursChangePercent,
+    )
+    val afterHours = currentAfterHours ?: previousQuote?.sessionValues(
+        previousQuote.afterHoursPrice,
+        previousQuote.afterHoursChange,
+        previousQuote.afterHoursChangePercent,
+    ) ?: retainedAfterHours?.toSessionValues()
 
     val mergedQuote = currentQuote.copy(
-        overnightPrice = mergedOvernightPrice,
-        overnightChange = currentQuote.overnightChange ?: mergedOvernightPrice?.minus(currentQuote.price),
-        overnightChangePercent = currentQuote.overnightChangePercent
-            ?: mergedOvernightPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
-        preMarketPrice = mergedPreMarketPrice,
-        preMarketChange = currentQuote.preMarketChange ?: mergedPreMarketPrice?.minus(currentQuote.price),
-        preMarketChangePercent = currentQuote.preMarketChangePercent
-            ?: mergedPreMarketPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
-        afterHoursPrice = mergedAfterHoursPrice,
-        afterHoursChange = currentQuote.afterHoursChange ?: mergedAfterHoursPrice?.minus(currentQuote.price),
-        afterHoursChangePercent = currentQuote.afterHoursChangePercent
-            ?: mergedAfterHoursPrice?.let { if (currentQuote.price != 0.0) ((it - currentQuote.price) / currentQuote.price) * 100.0 else null },
+        overnightPrice = overnight?.price,
+        overnightChange = overnight?.change,
+        overnightChangePercent = overnight?.percent,
+        overnightIsPrior = if (currentOvernight != null) currentQuote.overnightIsPrior else overnight != null,
+        preMarketPrice = preMarket?.price,
+        preMarketChange = preMarket?.change,
+        preMarketChangePercent = preMarket?.percent,
+        afterHoursPrice = afterHours?.price,
+        afterHoursChange = afterHours?.change,
+        afterHoursChangePercent = afterHours?.percent,
+        afterHoursIsPrior = if (currentAfterHours != null) currentQuote.afterHoursIsPrior else afterHours != null,
     )
     return copy(quote = mergedQuote)
+}
+
+private data class SessionValues(val price: Double?, val change: Double?, val percent: Double?)
+
+private fun StoredSessionSnapshot.toSessionValues() = SessionValues(price, change, percent)
+private fun SessionValues.toStoredSnapshot(): StoredSessionSnapshot? =
+    if (price != null && change != null) StoredSessionSnapshot(price, change, percent) else null
+
+private fun com.wolffentp.stockanalyzer.domain.Quote.sessionValues(
+    sessionPrice: Double?,
+    sessionChange: Double?,
+    sessionPercent: Double?,
+): SessionValues? {
+    if (sessionPrice == null && sessionChange == null) return null
+    val resolvedPrice = sessionPrice ?: sessionChange?.let { price + it }
+    val resolvedChange = sessionChange ?: resolvedPrice?.minus(price)
+    val resolvedPercent = sessionPercent
+        ?: resolvedChange?.let { if (price != 0.0) (it / price) * 100.0 else null }
+    return SessionValues(resolvedPrice, resolvedChange, resolvedPercent)
 }
 
 private fun StockRowState.withRefreshedAnalysis(refreshedAnalysis: AnalysisResult): StockRowState {
@@ -383,6 +439,22 @@ private fun StockRowState.withRefreshedAnalysis(refreshedAnalysis: AnalysisResul
     )
 }
 
+private fun StockRowState.withRetainedSessions(refreshedAnalysis: AnalysisResult): StockRowState {
+    val quote = refreshedAnalysis.quote ?: return this
+    return copy(
+        lastOvernight = quote.sessionValues(
+            quote.overnightPrice,
+            quote.overnightChange,
+            quote.overnightChangePercent,
+        )?.toStoredSnapshot() ?: lastOvernight,
+        lastAfterHours = quote.sessionValues(
+            quote.afterHoursPrice,
+            quote.afterHoursChange,
+            quote.afterHoursChangePercent,
+        )?.toStoredSnapshot() ?: lastAfterHours,
+    )
+}
+
 internal fun changeFlashArgb(previousValue: Double?, currentValue: Double?): Long? = when {
     previousValue == null || currentValue == null -> null
     currentValue - previousValue > 0.00005 -> 0x6634C759L
@@ -393,5 +465,18 @@ internal fun changeFlashArgb(previousValue: Double?, currentValue: Double?): Lon
 private fun com.wolffentp.stockanalyzer.domain.Quote.sessionFlashValue(sessionPrice: Double?, sessionChange: Double?): Double? =
     sessionPrice ?: sessionChange?.let { price + it }
 
-private fun WatchlistEntry.toRowState() = StockRowState(symbol, quantity, averageCost)
-private fun StockRowState.toWatchlistEntry() = WatchlistEntry(symbol, quantity, averageCost)
+private fun WatchlistEntry.toRowState() = StockRowState(
+    symbol = symbol,
+    quantity = quantity,
+    averageCost = averageCost,
+    lastOvernight = lastOvernight,
+    lastAfterHours = lastAfterHours,
+)
+
+private fun StockRowState.toWatchlistEntry() = WatchlistEntry(
+    symbol = symbol,
+    quantity = quantity,
+    averageCost = averageCost,
+    lastOvernight = lastOvernight,
+    lastAfterHours = lastAfterHours,
+)

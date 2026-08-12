@@ -44,12 +44,14 @@ data class Quote(
     val overnightPrice: Double? = null,
     val overnightChange: Double? = null,
     val overnightChangePercent: Double? = null,
+    val overnightIsPrior: Boolean = false,
     val preMarketPrice: Double? = null,
     val preMarketChange: Double? = null,
     val preMarketChangePercent: Double? = null,
     val afterHoursPrice: Double? = null,
     val afterHoursChange: Double? = null,
     val afterHoursChangePercent: Double? = null,
+    val afterHoursIsPrior: Boolean = false,
 )
 
 data class Candle(

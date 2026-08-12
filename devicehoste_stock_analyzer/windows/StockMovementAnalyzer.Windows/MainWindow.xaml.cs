@@ -38,7 +38,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedModel = settings.Model;
         FinnhubApiKey = settings.FinnhubApiKey;
         UseLocalModel = settings.UseLocalModel;
-        foreach (var row in settings.Rows) Rows.Add(new StockRow(row.Symbol, row.Quantity, row.AverageCost));
+        foreach (var row in settings.Rows)
+        {
+            Rows.Add(new StockRow(
+                row.Symbol,
+                row.Quantity,
+                row.AverageCost,
+                row.LastOvernightPrice,
+                row.LastOvernightChange,
+                row.LastOvernightPercent,
+                row.LastAfterHoursPrice,
+                row.LastAfterHoursChange,
+                row.LastAfterHoursPercent));
+        }
         Loaded += async (_, _) => { await DiscoverModelsAsync(false); await RefreshAsync(); refreshTimer.Start(); };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
         Closing += (_, _) => { refreshTimer.Stop(); lifetime.Cancel(); Save(); httpClient.Dispose(); };
@@ -196,7 +208,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private void Save() => store.Save(new AppSettings(OllamaEndpoint, SelectedModel, UseLocalModel, FinnhubApiKey.Trim(),
-        Rows.Select(row => new SavedRow(row.Symbol, row.Quantity, row.AverageCost)).ToList()));
+        Rows.Select(row => new SavedRow(
+            row.Symbol,
+            row.Quantity,
+            row.AverageCost,
+            row.LastOvernightPrice,
+            row.LastOvernightChange,
+            row.LastOvernightPercent,
+            row.LastAfterHoursPrice,
+            row.LastAfterHoursChange,
+            row.LastAfterHoursPercent)).ToList()));
 
     private static string NormalizeRequestedModel(string model)
     {
@@ -213,7 +234,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new(propertyName)); }
 }
 
-public sealed class StockRow(string symbol, decimal? quantity, decimal? averageCost) : INotifyPropertyChanged
+public sealed class StockRow(
+    string symbol,
+    decimal? quantity,
+    decimal? averageCost,
+    double? savedOvernightPrice = null,
+    double? savedOvernightChange = null,
+    double? savedOvernightPercent = null,
+    double? savedAfterHoursPrice = null,
+    double? savedAfterHoursChange = null,
+    double? savedAfterHoursPercent = null) : INotifyPropertyChanged
 {
     private string price = "-", extendedSession = "-", overnightGrid = "Unavailable", preMarketGrid = "Unavailable", afterHoursGrid = "Unavailable", technical = "-", technicalRange = "-", confidence = "-", modelResult = "-", modelRationale = "Waiting";
     private string technicalSummary = "Analysis has not refreshed yet.", sourceDetails = "Not available.", indicatorDetails = "Not calculated.";
@@ -222,6 +252,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     private Brush technicalBrush = DirectionBrushes.Neutral, overnightBrush = DirectionBrushes.Neutral, preMarketBrush = DirectionBrushes.Neutral, modelBrush = DirectionBrushes.Neutral;
     private Brush priceFlashBrush = DirectionBrushes.Transparent, overnightFlashBrush = DirectionBrushes.Transparent, preMarketFlashBrush = DirectionBrushes.Transparent, afterHoursFlashBrush = DirectionBrushes.Transparent;
     private double? previousPrice, previousOvernightPrice, previousPreMarketPrice, previousAfterHoursPrice;
+    private SessionValues? lastOvernight = RestoreSession(savedOvernightPrice, savedOvernightChange, savedOvernightPercent);
+    private SessionValues? lastAfterHours = RestoreSession(savedAfterHoursPrice, savedAfterHoursChange, savedAfterHoursPercent);
     private decimal? quantity = quantity, averageCost = averageCost;
     public string Symbol { get; } = symbol;
     public string Price { get => price; private set => Set(ref price, value); }
@@ -252,30 +284,36 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public Brush AfterHoursFlashBrush { get => afterHoursFlashBrush; private set => Set(ref afterHoursFlashBrush, value); }
     public decimal? Quantity { get => quantity; set => Set(ref quantity, value); }
     public decimal? AverageCost { get => averageCost; set => Set(ref averageCost, value); }
+    public double? LastOvernightPrice => lastOvernight?.Price;
+    public double? LastOvernightChange => lastOvernight?.Change;
+    public double? LastOvernightPercent => lastOvernight?.Percent;
+    public double? LastAfterHoursPrice => lastAfterHours?.Price;
+    public double? LastAfterHoursChange => lastAfterHours?.Change;
+    public double? LastAfterHoursPercent => lastAfterHours?.Percent;
 
     public void ApplyTechnical(AnalysisResult value)
     {
+        var overnight = RetainSession(value.Quote, value.Quote?.OvernightPrice, value.Quote?.OvernightChange, value.Quote?.OvernightChangePercent, ref lastOvernight);
+        var afterHours = RetainSession(value.Quote, value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, ref lastAfterHours);
         UpdateFlash(value.Quote?.Price, ref previousPrice, brush => PriceFlashBrush = brush);
-        UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.OvernightPrice, value.Quote?.OvernightChange), ref previousOvernightPrice, brush => OvernightFlashBrush = brush);
+        UpdateFlash(overnight?.Price, ref previousOvernightPrice, brush => OvernightFlashBrush = brush);
         UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange), ref previousPreMarketPrice, brush => PreMarketFlashBrush = brush);
-        UpdateFlash(SessionFlashValue(value.Quote, value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange), ref previousAfterHoursPrice, brush => AfterHoursFlashBrush = brush);
+        UpdateFlash(afterHours?.Price, ref previousAfterHoursPrice, brush => AfterHoursFlashBrush = brush);
         Price = value.Quote?.Price.ToString("C2") ?? "Unavailable";
-        ExtendedSession = ExtendedSessionSummary(value.Quote);
-        OvernightGrid = SessionGridText(value.Quote?.OvernightPrice, value.Quote?.OvernightChange, value.Quote?.OvernightChangePercent, value.Quote?.Price);
-        OvernightBrush = DirectionBrushes.ForSessionChange(value.Quote?.OvernightChange ??
-            (value.Quote?.OvernightPrice is double overnight && value.Quote?.Price is double regular ? overnight - regular : null));
+        ExtendedSession = ExtendedSessionSummary(value.Quote, afterHours);
+        OvernightGrid = SessionGridText(overnight?.Price, overnight?.Change, overnight?.Percent, null);
+        OvernightBrush = DirectionBrushes.ForSessionChange(overnight?.Change);
         PreMarketGrid = SessionGridText(value.Quote?.PreMarketPrice, value.Quote?.PreMarketChange, value.Quote?.PreMarketChangePercent, value.Quote?.Price);
         PreMarketBrush = DirectionBrushes.ForPreMarketChange(value.Quote?.PreMarketChange ??
             (value.Quote?.PreMarketPrice is double pre && value.Quote?.Price is double baseline ? pre - baseline : null));
-        var refreshedAfterHours = SessionGridText(value.Quote?.AfterHoursPrice, value.Quote?.AfterHoursChange, value.Quote?.AfterHoursChangePercent, value.Quote?.Price);
-        AfterHoursGrid = refreshedAfterHours == "Unavailable" && AfterHoursGrid != "Unavailable" ? AfterHoursGrid : refreshedAfterHours;
+        AfterHoursGrid = SessionGridText(afterHours?.Price, afterHours?.Change, afterHours?.Percent, null);
         Technical = value.Recommendation.ToString().ToUpperInvariant();
         TechnicalRange = value.ProjectedPriceRange is null ? "Unavailable" : $"{value.ProjectedPriceRange.Low:C2} - {value.ProjectedPriceRange.High:C2}";
         Confidence = $"{value.Confidence}%";
         TechnicalBrush = DirectionBrushes.For(value.Direction);
         ModelRationale = value.Reason;
         TechnicalSummary = $"{Technical} · {TechnicalRange} · Confidence {Confidence}";
-        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nOvernight: {OvernightGrid}\nPre/After market: {ExtendedSession}\nLatest quote: {Price}";
+        SourceDetails = $"Provider: {value.Provider}\nRetrieved: {value.RetrievedAt.LocalDateTime:g}\nLatest source: {value.LastDataTimestamp?.LocalDateTime:g}\nSource age: {value.SourceAgeMinutes?.ToString() ?? "Unavailable"} minutes\nCandle interval: {value.CandleIntervalMinutes} minute(s)\nLast overnight: {OvernightGrid}\nPre/After market: {ExtendedSession}\nLatest quote: {Price}";
         IndicatorDetails = value.Indicators is null ? "Indicators were not calculated because live-data validation failed." :
             $"Momentum: {Display(value.Indicators.MomentumPercent)}%\nShort moving average: {Display(value.Indicators.ShortMovingAverage)}\nLong moving average: {Display(value.Indicators.LongMovingAverage)}\nRelative volume: {Display(value.Indicators.RelativeVolume)}\nRSI: {Display(value.Indicators.Rsi)}\nMACD: {Display(value.Indicators.Macd)}\nVWAP: {Display(value.Indicators.Vwap)}\nFresh news sentiment: {Display(value.Indicators.SentimentAverage)}";
         SignalDetails = value.Signals.Count == 0 ? "Signals were not calculated." : string.Join("\n", value.Signals.Select(signal =>
@@ -298,9 +336,12 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     public void ApplyDataError(string message)
     {
         ResetFlashes();
-        Price = ExtendedSession = OvernightGrid = PreMarketGrid = AfterHoursGrid = Technical = TechnicalRange = Confidence = "Unavailable";
+        Price = ExtendedSession = PreMarketGrid = Technical = TechnicalRange = Confidence = "Unavailable";
+        OvernightGrid = SessionGridText(lastOvernight?.Price, lastOvernight?.Change, lastOvernight?.Percent, null);
+        AfterHoursGrid = SessionGridText(lastAfterHours?.Price, lastAfterHours?.Change, lastAfterHours?.Percent, null);
         ModelResult = "Unavailable";
-        TechnicalBrush = OvernightBrush = PreMarketBrush = ModelBrush = DirectionBrushes.Neutral;
+        TechnicalBrush = PreMarketBrush = ModelBrush = DirectionBrushes.Neutral;
+        OvernightBrush = DirectionBrushes.ForSessionChange(lastOvernight?.Change);
         ModelRationale = message;
         TechnicalSummary = "UNAVAILABLE · No projection generated";
         SourceDetails = IndicatorDetails = SignalDetails = NewsDetails = "Not available because live-data validation failed.";
@@ -323,17 +364,37 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     private static double? SessionFlashValue(Quote? quote, double? sessionPrice, double? sessionChange) =>
         sessionPrice ?? (quote is not null && sessionChange is not null ? quote.Price + sessionChange : null);
 
+    private static SessionValues? RetainSession(
+        Quote? quote,
+        double? sessionPrice,
+        double? sessionChange,
+        double? sessionPercent,
+        ref SessionValues? retained)
+    {
+        if (quote is null || sessionPrice is null && sessionChange is null) return retained;
+        var resolvedPrice = sessionPrice ?? quote.Price + sessionChange!.Value;
+        var resolvedChange = sessionChange ?? resolvedPrice - quote.Price;
+        var resolvedPercent = sessionPercent ?? (quote.Price != 0.0 ? (resolvedChange / quote.Price) * 100.0 : null);
+        retained = new SessionValues(resolvedPrice, resolvedChange, resolvedPercent);
+        return retained;
+    }
+
+    private static SessionValues? RestoreSession(double? price, double? change, double? percent) =>
+        price is double savedPrice && change is double savedChange
+            ? new SessionValues(savedPrice, savedChange, percent)
+            : null;
+
     private void ResetFlashes()
     {
         previousPrice = previousOvernightPrice = previousPreMarketPrice = previousAfterHoursPrice = null;
         PriceFlashBrush = OvernightFlashBrush = PreMarketFlashBrush = AfterHoursFlashBrush = DirectionBrushes.Transparent;
     }
 
-    private static string ExtendedSessionSummary(Quote? quote)
+    private static string ExtendedSessionSummary(Quote? quote, SessionValues? afterHours)
     {
         if (quote is null) return "Unavailable";
         var pre = SessionText("Pre", quote.PreMarketPrice, quote.PreMarketChangePercent);
-        var after = SessionText("After", quote.AfterHoursPrice, quote.AfterHoursChangePercent);
+        var after = SessionText("After (last)", afterHours?.Price, afterHours?.Percent);
         return pre is not null && after is not null
             ? $"{pre} | {after}"
             : pre ?? after ?? "Unavailable";
@@ -361,6 +422,8 @@ public sealed class StockRow(string symbol, decimal? quantity, decimal? averageC
     private static double NormalizeSignedPercent(double value) => Math.Abs(value) < 0.00005 ? 0.0 : value;
 
     private static string Display(double? value) => value?.ToString("F4") ?? "Unsupported / unavailable";
+
+    private sealed record SessionValues(double Price, double Change, double? Percent);
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
