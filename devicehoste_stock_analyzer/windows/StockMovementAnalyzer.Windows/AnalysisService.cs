@@ -103,9 +103,20 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
             var timestamps = result.GetProperty("timestamp").EnumerateArray().Select(value => value.GetInt64()).ToList();
             var closes = result.GetProperty("indicators").GetProperty("quote")[0].GetProperty("close").EnumerateArray().Select(NullableDouble).ToList();
             var samples = timestamps.Select((timestamp, index) => new SessionSample(DateTimeOffset.FromUnixTimeSeconds(timestamp), ElementAt(closes, index)))
-                .Where(sample => sample.Price is not null && sample.Timestamp <= observedAt)
                 .ToList();
-            SessionSample? LatestSessionPrice(int startMinute, int endMinute) => samples
+            return ExtractExtendedSessionPrices(samples, observedAt);
+        }
+        catch { return new ExtendedSessionPrices(null, null, null); }
+    }
+
+    internal static ExtendedSessionPrices ExtractExtendedSessionPrices(
+        IReadOnlyList<SessionSample> samples,
+        DateTimeOffset observedAt)
+    {
+        var observedSamples = samples
+            .Where(sample => sample.Price is not null && sample.Timestamp <= observedAt)
+            .ToList();
+        SessionSample? LatestSessionPrice(int startMinute, int endMinute) => observedSamples
                 .Where(sample =>
                 {
                     var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
@@ -113,7 +124,7 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
                     return minute >= startMinute && minute < endMinute;
                 })
                 .MaxBy(sample => sample.Timestamp);
-            SessionSample? LatestOvernightPrice() => samples
+        SessionSample? LatestOvernightPrice() => observedSamples
                 .Where(sample =>
                 {
                     var time = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime).TimeOfDay;
@@ -121,7 +132,7 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
                     return minute >= 20 * 60 || minute < 4 * 60;
                 })
                 .MaxBy(sample => sample.Timestamp);
-            double? RegularClose(DateTime date) => samples
+        double? RegularClose(DateTime date) => observedSamples
                 .Where(sample =>
                 {
                     var local = TimeZoneInfo.ConvertTime(sample.Timestamp, EasternTime);
@@ -129,30 +140,28 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
                     return local.Date == date && minute >= 9 * 60 + 30 && minute < 16 * 60;
                 })
                 .MaxBy(sample => sample.Timestamp)?.Price;
-            SessionQuote? ToSessionQuote(SessionSample? sample, Func<DateTimeOffset, DateTime> baselineDate)
-            {
-                if (sample?.Price is not double sessionPrice) return null;
-                var baseline = RegularClose(baselineDate(sample.Timestamp));
-                double? change = baseline is double regularClose ? sessionPrice - regularClose : null;
-                double? percent = change is double resolvedChange && baseline is double nonzeroBaseline && nonzeroBaseline != 0.0
-                    ? (resolvedChange / nonzeroBaseline) * 100.0
-                    : null;
-                return new SessionQuote(sessionPrice, change, percent);
-            }
-            var overnight = ToSessionQuote(LatestOvernightPrice(), timestamp =>
-            {
-                var local = TimeZoneInfo.ConvertTime(timestamp, EasternTime);
-                return local.Hour < 4 ? local.Date.AddDays(-1) : local.Date;
-            });
-            var afterHours = ToSessionQuote(
-                LatestSessionPrice(16 * 60, 20 * 60),
-                timestamp => TimeZoneInfo.ConvertTime(timestamp, EasternTime).Date);
-            return new ExtendedSessionPrices(
-                overnight,
-                LatestSessionPrice(4 * 60, 9 * 60 + 30)?.Price,
-                afterHours);
+        SessionQuote? ToSessionQuote(SessionSample? sample, Func<DateTimeOffset, DateTime> baselineDate)
+        {
+            if (sample?.Price is not double sessionPrice) return null;
+            var baseline = RegularClose(baselineDate(sample.Timestamp));
+            double? change = baseline is double regularClose ? sessionPrice - regularClose : null;
+            double? percent = change is double resolvedChange && baseline is double nonzeroBaseline && nonzeroBaseline != 0.0
+                ? (resolvedChange / nonzeroBaseline) * 100.0
+                : null;
+            return new SessionQuote(sessionPrice, change, percent);
         }
-        catch { return new ExtendedSessionPrices(null, null, null); }
+        var overnight = ToSessionQuote(LatestOvernightPrice(), timestamp =>
+        {
+            var local = TimeZoneInfo.ConvertTime(timestamp, EasternTime);
+            return local.Hour < 4 ? local.Date.AddDays(-1) : local.Date;
+        });
+        var afterHours = ToSessionQuote(
+            LatestSessionPrice(16 * 60, 20 * 60),
+            timestamp => TimeZoneInfo.ConvertTime(timestamp, EasternTime).Date);
+        return new ExtendedSessionPrices(
+            overnight,
+            LatestSessionPrice(4 * 60, 9 * 60 + 30)?.Price,
+            afterHours);
     }
 
     private async Task<JsonDocument?> GetExtendedSessionJsonAsync(string symbol, CancellationToken cancellationToken)
@@ -291,9 +300,9 @@ public sealed class AnalysisService(HttpClient httpClient, string? finnhubApiKey
             : null;
     }
 
-    private sealed record SessionSample(DateTimeOffset Timestamp, double? Price);
-    private sealed record SessionQuote(double Price, double? Change, double? Percent);
-    private sealed record ExtendedSessionPrices(SessionQuote? Overnight, double? PreMarketPrice, SessionQuote? AfterHours);
+    internal sealed record SessionSample(DateTimeOffset Timestamp, double? Price);
+    internal sealed record SessionQuote(double Price, double? Change, double? Percent);
+    internal sealed record ExtendedSessionPrices(SessionQuote? Overnight, double? PreMarketPrice, SessionQuote? AfterHours);
 
     private static double? NullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
     private static long? NullableLong(JsonElement value) => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var result) ? result : null;

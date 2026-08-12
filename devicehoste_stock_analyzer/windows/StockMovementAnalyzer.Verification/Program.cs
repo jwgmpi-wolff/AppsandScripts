@@ -40,6 +40,42 @@ Require(currentNews.News?.Items.Count == 1 && currentNews.News.Items[0].Headline
         Math.Abs((currentNews.Indicators?.SentimentAverage ?? 0.0) - 0.8) < 0.0001,
     "Only news current at analysis time may remain in the result or affect sentiment.");
 
+var overnightObservedAt = DateTimeOffset.Parse("2026-08-12T03:00:00Z");
+var extractedSessions = AnalysisService.ExtractExtendedSessionPrices(
+[
+    new(DateTimeOffset.FromUnixTimeSeconds(1_786_478_340), 503.81), // 15:59 ET regular close
+    new(DateTimeOffset.FromUnixTimeSeconds(1_786_482_000), 504.72), // 17:00 ET after-hours
+    new(DateTimeOffset.FromUnixTimeSeconds(1_786_501_260), 504.01), // 22:21 ET overnight
+    new(DateTimeOffset.FromUnixTimeSeconds(1_786_507_200), 999.00), // 00:00 ET, future at retrieval
+], overnightObservedAt);
+var extractedOvernight = extractedSessions.Overnight;
+var extractedAfterHours = extractedSessions.AfterHours;
+Require(extractedOvernight is not null &&
+    Math.Abs(extractedOvernight.Price - 504.01) < 0.0001 &&
+    Math.Abs((extractedOvernight.Change ?? 0.0) - 0.20) < 0.0001 &&
+    Math.Abs((extractedOvernight.Percent ?? 0.0) - 0.0397) < 0.001 &&
+    extractedOvernight.Price != 999.00,
+    "Windows must populate the latest observed overnight price, use its session close baseline, and reject future samples.");
+Require(extractedAfterHours is not null &&
+    Math.Abs(extractedAfterHours.Price - 504.72) < 0.0001 &&
+    Math.Abs((extractedAfterHours.Change ?? 0.0) - 0.91) < 0.0001,
+    "Windows must keep after-hours extraction separate from overnight extraction.");
+
+var extractedOvernightRow = new StockRow("MSFT", null, null);
+extractedOvernightRow.ApplyTechnical(rising with
+{
+    Quote = rising.Quote! with
+    {
+        OvernightPrice = extractedOvernight!.Price,
+        OvernightChange = extractedOvernight.Change,
+        OvernightChangePercent = extractedOvernight.Percent,
+    }
+});
+Require(extractedOvernightRow.OvernightGrid.Contains("504.01") &&
+        extractedOvernightRow.OvernightGrid.Contains("+0.20") &&
+        extractedOvernightRow.OvernightGrid.Contains("+0.04%"),
+    "The Windows overnight dashboard cell must render the extracted overnight snapshot.");
+
 var flashRow = new StockRow("MSFT", null, null);
 var initialFlashResult = rising with
 {

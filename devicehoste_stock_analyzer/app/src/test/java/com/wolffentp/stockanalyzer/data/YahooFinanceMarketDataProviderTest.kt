@@ -41,6 +41,7 @@ class YahooFinanceMarketDataProviderTest {
         assertEquals(503.81, quote.price, 0.0)
         assertEquals(Instant.ofEpochSecond(1_786_478_400), quote.timestamp)
         assertEquals(504.01, quote.overnightPrice ?: 0.0, 0.0)
+        assertEquals(0.20, quote.overnightChange ?: 0.0, 0.0001)
         assertEquals(0.04, quote.overnightChangePercent ?: 0.0, 0.01)
         assertTrue(!quote.overnightIsPrior)
         assertEquals(502.90, quote.preMarketPrice ?: 0.0, 0.0)
