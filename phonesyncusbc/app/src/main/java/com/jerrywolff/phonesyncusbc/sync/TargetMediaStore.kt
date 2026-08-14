@@ -1,0 +1,142 @@
+package com.jerrywolff.phonesyncusbc.sync
+
+import android.content.ContentValues
+import android.content.Context
+import android.mtp.MtpDevice
+import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
+import android.webkit.MimeTypeMap
+import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
+import com.jerrywolff.phonesyncusbc.domain.TransferClassifier
+
+data class TargetWriteResult(
+    val uri: Uri,
+    val bytesWritten: Long,
+)
+
+class TargetMediaStore(private val context: Context) {
+    fun importMtpObject(
+        mtpDevice: MtpDevice,
+        objectHandle: Int,
+        displayName: String,
+        category: ConsentCategory,
+        sourceName: String,
+        modifiedAtEpochMillis: Long,
+        expectedBytes: Long,
+        onBytesTransferred: (Long) -> Unit = {},
+    ): TargetWriteResult {
+        return writePendingItem(
+            displayName = displayName,
+            category = category,
+            sourceName = sourceName,
+            modifiedAtEpochMillis = modifiedAtEpochMillis,
+            mimeType = mimeType(displayName, category),
+        ) { destination ->
+            context.contentResolver.openOutputStream(destination, "w").use { output ->
+                checkNotNull(output) { "Android could not open the destination item." }
+                if (expectedBytes > 0) {
+                    val buffer = ByteArray(MTP_CHUNK_BYTES)
+                    var offset = 0L
+                    while (offset < expectedBytes) {
+                        val requested = minOf(buffer.size.toLong(), expectedBytes - offset)
+                        val read = mtpDevice.getPartialObject64(objectHandle, offset, requested, buffer)
+                        check(read > 0) { "The source phone stopped transferring this item." }
+                        val bytesRead = read.coerceAtMost(buffer.size.toLong()).toInt()
+                        output.write(buffer, 0, bytesRead)
+                        offset += bytesRead
+                        onBytesTransferred(offset)
+                    }
+                }
+            }
+            expectedBytes.coerceAtLeast(0)
+        }
+    }
+
+    fun copyFromProvider(
+        sourceUri: Uri,
+        displayName: String,
+        mimeType: String?,
+        category: ConsentCategory,
+        sourceName: String,
+        modifiedAtEpochMillis: Long,
+    ): TargetWriteResult {
+        return writePendingItem(
+            displayName = displayName,
+            category = category,
+            sourceName = sourceName,
+            modifiedAtEpochMillis = modifiedAtEpochMillis,
+            mimeType = mimeType ?: mimeType(displayName, category),
+        ) { destination ->
+            val source = context.contentResolver.openInputStream(sourceUri)
+                ?: error("The selected provider could not open this item.")
+            source.use { input ->
+                context.contentResolver.openOutputStream(destination, "w").use { output ->
+                    checkNotNull(output) { "Android could not open the destination item." }
+                    input.copyTo(output)
+                }
+            }
+        }
+    }
+
+    private fun writePendingItem(
+        displayName: String,
+        category: ConsentCategory,
+        sourceName: String,
+        modifiedAtEpochMillis: Long,
+        mimeType: String,
+        writer: (Uri) -> Long,
+    ): TargetWriteResult {
+        val safeName = sanitizePathSegment(displayName)
+        val isVideo = category == ConsentCategory.PHOTOS_AND_VIDEOS && TransferClassifier.isVideo(safeName)
+        val collection = when {
+            category != ConsentCategory.PHOTOS_AND_VIDEOS -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            isVideo -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+        val rootDirectory = when {
+            category != ConsentCategory.PHOTOS_AND_VIDEOS -> Environment.DIRECTORY_DOWNLOADS
+            isVideo -> Environment.DIRECTORY_MOVIES
+            else -> Environment.DIRECTORY_PICTURES
+        }
+        val categoryDirectory = category.name.lowercase().replace('_', '-')
+        val relativePath = "$rootDirectory/Phone Sync/${sanitizePathSegment(sourceName)}/$categoryDirectory"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            put(MediaStore.MediaColumns.DATE_MODIFIED, modifiedAtEpochMillis / 1_000)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val destination = context.contentResolver.insert(collection, values)
+            ?: error("Android could not create the destination item.")
+        try {
+            val bytesWritten = writer(destination)
+            context.contentResolver.update(
+                destination,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null,
+            )
+            return TargetWriteResult(destination, bytesWritten)
+        } catch (throwable: Throwable) {
+            context.contentResolver.delete(destination, null, null)
+            throw throwable
+        }
+    }
+
+    private fun mimeType(displayName: String, category: ConsentCategory): String {
+        if (category == ConsentCategory.CONTACTS) return "text/vcard"
+        val extension = displayName.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            ?: "application/octet-stream"
+    }
+
+    private fun sanitizePathSegment(value: String): String {
+        return value.replace(Regex("[\\/:*?\"<>|\\p{Cntrl}]"), "_").take(120).ifBlank { "source" }
+    }
+
+    private companion object {
+        const val MTP_CHUNK_BYTES = 1024 * 1024
+    }
+}
