@@ -73,6 +73,7 @@ import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.DataImportManager
 import com.jerrywolff.phonesyncusbc.data.displayName
+import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
 import com.jerrywolff.phonesyncusbc.data.StoredTrust
 import com.jerrywolff.phonesyncusbc.data.TargetSelectionStore
@@ -170,6 +171,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var backingUp by remember { mutableStateOf(false) }
     var activeSection by remember { mutableStateOf(AppSection.USB_SOURCE) }
     var messageSection by remember { mutableStateOf(AppSection.USB_SOURCE) }
+    var backupWorkflowSection by remember { mutableStateOf(AppSection.BACKUP_ACTIVITY) }
     var backupActivity by remember { mutableStateOf(BackupActivityUi()) }
     var liveProgress by remember { mutableStateOf<SyncProgress?>(null) }
     var mtpScanSummary by remember { mutableStateOf<MtpScanSummary?>(null) }
@@ -187,6 +189,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var selectedBackupIds by remember {
         mutableStateOf<Set<Long>>(initialBackupEntries.mapTo(linkedSetOf()) { it.id })
     }
+    var selectedUsbBackupIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var selectedUsbPeerId by remember { mutableStateOf<String?>(null) }
+    var knownUsbBackupIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showTargetWizard by remember { mutableStateOf(false) }
     var targetUri by remember { mutableStateOf<Uri?>(null) }
     var targetName by remember { mutableStateOf(DEFAULT_MOBILE_TARGET_NAME) }
@@ -194,6 +199,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var backupStatus by remember {
         mutableStateOf("${selectedBackupIds.size} items ready for $DEFAULT_MOBILE_TARGET_NAME.")
     }
+    var usbBackupStatus by remember { mutableStateOf("No USB source data has been collected yet.") }
     val existingPersonalExports = remember {
         application.auditLog.completedTransfers(LOCAL_ANDROID_PEER_ID)
     }
@@ -219,6 +225,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var targetRestored by remember { mutableStateOf(false) }
     var refreshToken by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
+
+    LaunchedEffect(showBackupSelection, showTargetWizard, backupWorkflowSection, activeSection) {
+        if (activeSection == backupWorkflowSection && (showBackupSelection || showTargetWizard)) {
+            val requestedIndex = if (backupWorkflowSection == AppSection.USB_SOURCE) 2 else 3
+            val lastValidIndex = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+            listState.animateScrollToItem(minOf(requestedIndex, lastValidIndex))
+        }
+    }
 
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
@@ -335,6 +349,28 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     }
 
     val source = selectedSource
+    val usbCollectedEntries = remember(identity?.peerId, refreshToken) {
+        identity?.peerId?.let(application.auditLog::completedTransfers).orEmpty()
+    }
+
+    LaunchedEffect(identity?.peerId, refreshToken) {
+        val peerId = identity?.peerId
+        val currentIds = usbCollectedEntries.mapTo(linkedSetOf()) { it.id }
+        selectedUsbBackupIds = mergeSourceBackupSelection(
+            peerId = peerId,
+            previousPeerId = selectedUsbPeerId,
+            currentIds = currentIds,
+            knownIds = knownUsbBackupIds,
+            selectedIds = selectedUsbBackupIds,
+        )
+        selectedUsbPeerId = peerId
+        knownUsbBackupIds = currentIds
+        usbBackupStatus = if (usbCollectedEntries.isEmpty()) {
+            "No USB source data has been collected yet."
+        } else {
+            "${usbCollectedEntries.size} source items ready for $targetName."
+        }
+    }
 
     LaunchedEffect(refreshToken, selectedSource) {
         val source = selectedSource ?: return@LaunchedEffect
@@ -488,6 +524,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
+    fun updateBackupWorkflowStatus(section: AppSection, status: String) {
+        if (section == AppSection.USB_SOURCE) {
+            usbBackupStatus = status
+        } else {
+            backupStatus = status
+        }
+    }
+
+    fun backupWorkflowSelectedCount(): Int {
+        return if (backupWorkflowSection == AppSection.USB_SOURCE) {
+            selectedUsbBackupIds.size
+        } else {
+            selectedBackupIds.size
+        }
+    }
+
     val allDataExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -506,15 +558,16 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             targetSelectionStore.save(uri, targetName!!)
             pendingTargetName = null
             showTargetWizard = false
-            backupStatus = "${selectedBackupIds.size} items ready for ${targetName}."
+            updateBackupWorkflowStatus(
+                backupWorkflowSection,
+                "${backupWorkflowSelectedCount()} items ready for ${targetName}.",
+            )
             message = "Destination saved: ${targetName}."
-            messageSection = AppSection.BACKUP_ACTIVITY
-            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+            messageSection = backupWorkflowSection
         } else {
             pendingTargetName = null
             message = "Folder selection canceled."
-            messageSection = AppSection.BACKUP_ACTIVITY
-            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+            messageSection = backupWorkflowSection
         }
     }
 
@@ -532,7 +585,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
         val pickerInstruction = "Navigate to the $label folder, then tap USE THIS FOLDER at the bottom."
         message = pickerInstruction
-        messageSection = AppSection.BACKUP_ACTIVITY
+        messageSection = backupWorkflowSection
         Toast.makeText(context, pickerInstruction, Toast.LENGTH_LONG).show()
         allDataExportLauncher.launch(picker)
     }
@@ -542,13 +595,21 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         targetUri = null
         targetName = DEFAULT_MOBILE_TARGET_NAME
         showTargetWizard = false
-        backupStatus = "${selectedBackupIds.size} items ready for $targetName."
+        updateBackupWorkflowStatus(
+            backupWorkflowSection,
+            "${backupWorkflowSelectedCount()} items ready for $targetName.",
+        )
         message = "Backups will stay on this phone in Downloads."
-        messageSection = AppSection.BACKUP_ACTIVITY
-        scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+        messageSection = backupWorkflowSection
     }
 
-    fun launchProviderUpload(uri: Uri, packageName: String?, label: String, itemCount: Int) {
+    fun launchProviderUpload(
+        uri: Uri,
+        packageName: String?,
+        label: String,
+        itemCount: Int,
+        ownerSection: AppSection,
+    ) {
         val uploadIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/octet-stream"
             packageName?.let(::setPackage)
@@ -567,7 +628,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
         }.onSuccess {
             message = "$label opened with one backup package containing $itemCount items. Choose the folder and tap Upload."
-            messageSection = AppSection.BACKUP_ACTIVITY
+            messageSection = ownerSection
             backupActivity = backupActivity.copy(
                 title = "$label upload",
                 status = message.orEmpty(),
@@ -578,7 +639,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
         }.onFailure { throwable ->
             message = "Could not open $label. Install/sign in to it or choose another destination. ${throwable.message.orEmpty()}"
-            messageSection = AppSection.BACKUP_ACTIVITY
+            messageSection = ownerSection
             backupActivity = backupActivity.copy(
                 title = "$label upload",
                 status = message.orEmpty(),
@@ -588,17 +649,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
-    fun uploadSelectedBackup(packageName: String?, label: String) {
-        activeSection = AppSection.BACKUP_ACTIVITY
-        val entries = backupEntries.filter { it.id in selectedBackupIds }
+    fun uploadBackupEntries(
+        entries: List<AuditEntry>,
+        packageName: String?,
+        label: String,
+        ownerSection: AppSection,
+    ) {
+        backupWorkflowSection = ownerSection
+        activeSection = ownerSection
         if (entries.isEmpty()) {
-            backupStatus = "Select at least one available item before uploading."
+            updateBackupWorkflowStatus(ownerSection, "Select at least one available item before uploading.")
             return
         }
         if (entries.size == 1) {
             val uri = entries.first().destination?.let(Uri::parse)
             if (uri == null) {
-                backupStatus = "The selected item is no longer available."
+                updateBackupWorkflowStatus(ownerSection, "The selected item is no longer available.")
             } else {
                 backupActivity = BackupActivityUi(
                     title = "$label upload",
@@ -607,16 +673,16 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     totalItems = 1,
                     running = true,
                 )
-                launchProviderUpload(uri, packageName, label, 1)
+                launchProviderUpload(uri, packageName, label, 1, ownerSection)
             }
             return
         }
 
         backingUp = true
-        backupStatus = "Preparing one upload package for ${entries.size} items..."
+        updateBackupWorkflowStatus(ownerSection, "Preparing one upload package for ${entries.size} items...")
         backupActivity = BackupActivityUi(
             title = "Prepare $label upload package",
-            status = backupStatus,
+            status = "Preparing one upload package for ${entries.size} items...",
             totalItems = entries.size,
             running = true,
         )
@@ -624,10 +690,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             val result = withContext(Dispatchers.IO) {
                 DataExportManager(context).createUploadArchive(entries) { progress ->
                     scope.launch(Dispatchers.Main.immediate) {
-                        backupStatus = "Preparing upload: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
+                        val progressStatus =
+                            "Preparing upload: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
+                        updateBackupWorkflowStatus(ownerSection, progressStatus)
                         backupActivity = BackupActivityUi(
                             title = "Prepare $label upload package",
-                            status = backupStatus,
+                            status = progressStatus,
                             completedItems = progress.completedItems,
                             totalItems = progress.totalItems,
                             currentItem = progress.currentItem,
@@ -641,25 +709,117 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             }
             backingUp = false
             if (result.uri == null) {
-                backupStatus = "Could not prepare upload: ${result.error ?: "unknown error"}"
-                message = backupStatus
-                messageSection = AppSection.BACKUP_ACTIVITY
+                val failureStatus = "Could not prepare upload: ${result.error ?: "unknown error"}"
+                updateBackupWorkflowStatus(ownerSection, failureStatus)
+                message = failureStatus
+                messageSection = ownerSection
                 backupActivity = backupActivity.copy(
-                    status = backupStatus,
+                    status = failureStatus,
                     running = false,
                     failed = true,
                 )
             } else {
-                backupStatus = "Upload package ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}."
+                val readyStatus =
+                    "Upload package ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}."
+                updateBackupWorkflowStatus(ownerSection, readyStatus)
                 backupActivity = BackupActivityUi(
                     title = "Prepare $label upload package",
-                    status = backupStatus,
+                    status = readyStatus,
                     completedItems = result.archivedItems,
                     totalItems = result.archivedItems,
                     bytesProcessed = result.archiveBytes,
                 )
-                launchProviderUpload(result.uri, packageName, label, result.archivedItems)
+                launchProviderUpload(result.uri, packageName, label, result.archivedItems, ownerSection)
             }
+        }
+    }
+
+    fun backupEntriesToSelectedTarget(
+        entries: List<AuditEntry>,
+        ownerSection: AppSection,
+    ) {
+        val destination = targetUri
+        val destinationName = targetName ?: DEFAULT_MOBILE_TARGET_NAME
+        if (entries.isEmpty()) {
+            updateBackupWorkflowStatus(
+                ownerSection,
+                "Select at least one available item before starting backup.",
+            )
+            return
+        }
+        if (backingUp) return
+
+        backupWorkflowSection = ownerSection
+        activeSection = ownerSection
+        backingUp = true
+        val startingStatus = "Copying ${entries.size} items to $destinationName..."
+        updateBackupWorkflowStatus(ownerSection, startingStatus)
+        message = "BACKUP: moving collected source data to $destinationName..."
+        messageSection = ownerSection
+        backupActivity = BackupActivityUi(
+            title = "Backup to $destinationName",
+            status = startingStatus,
+            totalItems = entries.size,
+            running = true,
+        )
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val publishProgress: (com.jerrywolff.phonesyncusbc.data.ExportProgress) -> Unit = { progress ->
+                        scope.launch(Dispatchers.Main.immediate) {
+                            val progressStatus =
+                                "Copying ${progress.completedItems} of ${progress.totalItems}"
+                            updateBackupWorkflowStatus(ownerSection, progressStatus)
+                            backupActivity = BackupActivityUi(
+                                title = "Backup to $destinationName",
+                                status = progressStatus,
+                                completedItems = progress.completedItems,
+                                totalItems = progress.totalItems,
+                                currentItem = progress.currentItem,
+                                bytesProcessed = progress.bytesExported,
+                                currentItemBytes = progress.currentItemBytes,
+                                currentItemTotal = progress.currentItemTotal,
+                                running = true,
+                            )
+                        }
+                    }
+                    if (destination == null) {
+                        DataExportManager(context).backupToDownloads(entries, publishProgress)
+                    } else {
+                        DataExportManager(context).export(entries, destination, publishProgress)
+                    }
+                }
+            }.onSuccess { result ->
+                val completedStatus = if (result.failedItems == 0) {
+                    "Backup complete: ${result.exportedItems} items (${formatBytes(result.bytesExported)})."
+                } else {
+                    "Backup finished: ${result.exportedItems} copied and ${result.failedItems} failed." +
+                        result.error?.let { " First error: $it" }.orEmpty()
+                }
+                updateBackupWorkflowStatus(ownerSection, completedStatus)
+                message = completedStatus
+                messageSection = ownerSection
+                backupActivity = BackupActivityUi(
+                    title = "Backup to $destinationName",
+                    status = completedStatus,
+                    completedItems = result.exportedItems + result.failedItems,
+                    totalItems = entries.size,
+                    bytesProcessed = result.bytesExported,
+                    failed = result.failedItems > 0,
+                )
+            }.onFailure { throwable ->
+                val failureStatus =
+                    "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
+                updateBackupWorkflowStatus(ownerSection, failureStatus)
+                message = failureStatus
+                messageSection = ownerSection
+                backupActivity = backupActivity.copy(
+                    status = failureStatus,
+                    running = false,
+                    failed = true,
+                )
+            }
+            backingUp = false
         }
     }
 
@@ -729,16 +889,20 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 BackupPanel(
                     onSelectBackup = {
                         if (!backingUp) {
+                            backupWorkflowSection = AppSection.BACKUP_ACTIVITY
                             backupEntries = application.auditLog.allCompletedTransfers()
                             selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+                            showTargetWizard = false
                             showBackupSelection = true
                         }
                     },
                     onChooseTarget = {
+                        backupWorkflowSection = AppSection.BACKUP_ACTIVITY
                         backupEntries = application.auditLog.allCompletedTransfers()
                         if (selectedBackupIds.isEmpty()) {
                             selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                         }
+                        showBackupSelection = false
                         showTargetWizard = true
                     },
                     backingUp = backingUp,
@@ -746,98 +910,34 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     targetName = targetName,
                     backupStatus = backupStatus,
                     onUploadOneDrive = {
-                        uploadSelectedBackup(ONEDRIVE_PACKAGE, "OneDrive")
+                        uploadBackupEntries(
+                            backupEntries.filter { it.id in selectedBackupIds },
+                            ONEDRIVE_PACKAGE,
+                            "OneDrive",
+                            AppSection.BACKUP_ACTIVITY,
+                        )
                     },
                     onUploadGoogleDrive = {
-                        uploadSelectedBackup(GOOGLE_DRIVE_PACKAGE, "Google Drive")
+                        uploadBackupEntries(
+                            backupEntries.filter { it.id in selectedBackupIds },
+                            GOOGLE_DRIVE_PACKAGE,
+                            "Google Drive",
+                            AppSection.BACKUP_ACTIVITY,
+                        )
                     },
                     onUploadOther = {
-                        uploadSelectedBackup(null, "Android app chooser")
+                        uploadBackupEntries(
+                            backupEntries.filter { it.id in selectedBackupIds },
+                            null,
+                            "Android app chooser",
+                            AppSection.BACKUP_ACTIVITY,
+                        )
                     },
                     onExecuteBackup = {
-                        val selectedEntries = backupEntries.filter { it.id in selectedBackupIds }
-                        val destination = targetUri
-                        if (selectedEntries.isEmpty()) {
-                            backupStatus = "Select at least one available item before starting backup."
-                        } else if (!backingUp) {
-                            activeSection = AppSection.BACKUP_ACTIVITY
-                            backingUp = true
-                            backupStatus = "Copying ${selectedEntries.size} items to $targetName..."
-                            message = "BACKUP: moving collected source data to $targetName..."
-                            messageSection = AppSection.BACKUP_ACTIVITY
-                            backupActivity = BackupActivityUi(
-                                title = "Backup to $targetName",
-                                status = backupStatus,
-                                totalItems = selectedEntries.size,
-                                running = true,
-                            )
-                            scope.launch {
-                                runCatching {
-                                    withContext(Dispatchers.IO) {
-                                        if (destination == null) {
-                                            DataExportManager(context).backupToDownloads(selectedEntries) { progress ->
-                                                scope.launch(Dispatchers.Main.immediate) {
-                                                    backupActivity = BackupActivityUi(
-                                                        title = "Backup to $targetName",
-                                                        status = "Copying ${progress.completedItems} of ${progress.totalItems}",
-                                                        completedItems = progress.completedItems,
-                                                        totalItems = progress.totalItems,
-                                                        currentItem = progress.currentItem,
-                                                        bytesProcessed = progress.bytesExported,
-                                                        currentItemBytes = progress.currentItemBytes,
-                                                        currentItemTotal = progress.currentItemTotal,
-                                                        running = true,
-                                                    )
-                                                }
-                                            }
-                                        } else {
-                                            DataExportManager(context).export(selectedEntries, destination) { progress ->
-                                                scope.launch(Dispatchers.Main.immediate) {
-                                                    backupActivity = BackupActivityUi(
-                                                        title = "Backup to $targetName",
-                                                        status = "Copying ${progress.completedItems} of ${progress.totalItems}",
-                                                        completedItems = progress.completedItems,
-                                                        totalItems = progress.totalItems,
-                                                        currentItem = progress.currentItem,
-                                                        bytesProcessed = progress.bytesExported,
-                                                        currentItemBytes = progress.currentItemBytes,
-                                                        currentItemTotal = progress.currentItemTotal,
-                                                        running = true,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }.onSuccess { result ->
-                                    backupStatus = if (result.failedItems == 0) {
-                                        "Backup complete: ${result.exportedItems} items (${formatBytes(result.bytesExported)})."
-                                    } else {
-                                        "Backup finished: ${result.exportedItems} copied and ${result.failedItems} failed." +
-                                            result.error?.let { " First error: $it" }.orEmpty()
-                                    }
-                                    message = backupStatus
-                                    messageSection = AppSection.BACKUP_ACTIVITY
-                                    backupActivity = BackupActivityUi(
-                                        title = "Backup to $targetName",
-                                        status = backupStatus,
-                                        completedItems = result.exportedItems + result.failedItems,
-                                        totalItems = selectedEntries.size,
-                                        bytesProcessed = result.bytesExported,
-                                        failed = result.failedItems > 0,
-                                    )
-                                }.onFailure { throwable ->
-                                    backupStatus = "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
-                                    message = backupStatus
-                                    messageSection = AppSection.BACKUP_ACTIVITY
-                                    backupActivity = backupActivity.copy(
-                                        status = backupStatus,
-                                        running = false,
-                                        failed = true,
-                                    )
-                                }
-                                backingUp = false
-                            }
-                        }
+                        backupEntriesToSelectedTarget(
+                            backupEntries.filter { it.id in selectedBackupIds },
+                            AppSection.BACKUP_ACTIVITY,
+                        )
                     },
                 )
             }
@@ -867,26 +967,44 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                 )
             }
-            if (activeSection == AppSection.BACKUP_ACTIVITY && showBackupSelection) {
+            if (activeSection == backupWorkflowSection && showBackupSelection) {
                 item {
+                    val workflowEntries = if (backupWorkflowSection == AppSection.USB_SOURCE) {
+                        usbCollectedEntries
+                    } else {
+                        backupEntries
+                    }
+                    val workflowSelectedIds = if (backupWorkflowSection == AppSection.USB_SOURCE) {
+                        selectedUsbBackupIds
+                    } else {
+                        selectedBackupIds
+                    }
                     BackupSelectionView(
-                        entries = backupEntries,
-                        selectedIds = selectedBackupIds,
+                        entries = workflowEntries,
+                        selectedIds = workflowSelectedIds,
                         onSelectionChanged = { selected ->
-                            selectedBackupIds = selected
-                            backupStatus = "${selected.size} items ready for $targetName."
+                            if (backupWorkflowSection == AppSection.USB_SOURCE) {
+                                selectedUsbBackupIds = selected
+                            } else {
+                                selectedBackupIds = selected
+                            }
+                            updateBackupWorkflowStatus(
+                                backupWorkflowSection,
+                                "${selected.size} items ready for $targetName.",
+                            )
                         },
                         onCancel = { showBackupSelection = false },
                         onContinue = {
                             showBackupSelection = false
-                            backupStatus = "${selectedBackupIds.size} items selected."
-                            backupStatus = "${selectedBackupIds.size} items ready for $targetName."
-                            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+                            updateBackupWorkflowStatus(
+                                backupWorkflowSection,
+                                "${backupWorkflowSelectedCount()} items ready for $targetName.",
+                            )
                         },
                     )
                 }
             }
-            if (activeSection == AppSection.BACKUP_ACTIVITY && showTargetWizard) {
+            if (activeSection == backupWorkflowSection && showTargetWizard) {
                 item {
                     TargetMediaWizard(
                         onBack = { showTargetWizard = false },
@@ -1111,6 +1229,67 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     messageSection = AppSection.USB_SOURCE
                                 },
                         )
+                    }
+                    if (usbCollectedEntries.isNotEmpty()) {
+                        if (
+                            backupWorkflowSection == AppSection.USB_SOURCE &&
+                            (backupActivity.running || backupActivity.totalItems > 0 || backupActivity.failed)
+                        ) {
+                            item { BackupActivityPanel(backupActivity) }
+                        }
+                        item {
+                            BackupPanel(
+                                title = "Push this USB source data",
+                                description =
+                                    "Send only the items collected from ${source.detected.displayName} to local or provider storage.",
+                                onSelectBackup = {
+                                    if (!backingUp) {
+                                        backupWorkflowSection = AppSection.USB_SOURCE
+                                        showTargetWizard = false
+                                        showBackupSelection = true
+                                    }
+                                },
+                                onChooseTarget = {
+                                    backupWorkflowSection = AppSection.USB_SOURCE
+                                    showBackupSelection = false
+                                    showTargetWizard = true
+                                },
+                                backingUp = backingUp,
+                                selectedItemCount = selectedUsbBackupIds.size,
+                                targetName = targetName,
+                                backupStatus = usbBackupStatus,
+                                onUploadOneDrive = {
+                                    uploadBackupEntries(
+                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
+                                        ONEDRIVE_PACKAGE,
+                                        "OneDrive",
+                                        AppSection.USB_SOURCE,
+                                    )
+                                },
+                                onUploadGoogleDrive = {
+                                    uploadBackupEntries(
+                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
+                                        GOOGLE_DRIVE_PACKAGE,
+                                        "Google Drive",
+                                        AppSection.USB_SOURCE,
+                                    )
+                                },
+                                onUploadOther = {
+                                    uploadBackupEntries(
+                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
+                                        null,
+                                        "Android app chooser",
+                                        AppSection.USB_SOURCE,
+                                    )
+                                },
+                                onExecuteBackup = {
+                                    backupEntriesToSelectedTarget(
+                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
+                                        AppSection.USB_SOURCE,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1653,6 +1832,8 @@ private fun BackupActivityPanel(activity: BackupActivityUi) {
 
 @androidx.compose.runtime.Composable
 private fun BackupPanel(
+    title: String = "Back up collected data",
+    description: String = "Back up on this phone, an SD card, or an attached USB drive.",
     onSelectBackup: () -> Unit,
     onChooseTarget: () -> Unit,
     backingUp: Boolean,
@@ -1666,9 +1847,9 @@ private fun BackupPanel(
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Back up collected data", style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleMedium)
             Text(
-                "Back up on this phone, an SD card, or an attached USB drive.",
+                description,
                 style = MaterialTheme.typography.bodySmall,
             )
             Text("$selectedItemCount items selected")
@@ -1740,7 +1921,6 @@ private fun TargetMediaWizard(
     }
 }
 
-private const val BACKUP_PANEL_INDEX = 2
 private const val SOURCE_SYNC_SECTION_INDEX = 3
 private const val LOCAL_ANDROID_PEER_ID = "local-android"
 private const val ONEDRIVE_PACKAGE = "com.microsoft.skydrive"

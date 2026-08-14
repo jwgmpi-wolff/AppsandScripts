@@ -10,8 +10,9 @@ Android USB host for consent-based phone synchronization and backup.
 
 1. Open **USB Source**, connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
 2. Authorize the available source categories, then tap **Request all USB-visible files**. Phone Sync copies every exposed media/document file and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, and notification exports.
-3. Open **This Device** to prepare protected Android data or browse data already collected on this phone.
-4. Open **Backup Activity** to select collected items, choose Android Downloads or another destination, and start a backup or provider upload.
+3. After collection, use **Push this USB source data** on the same tab to select that source's items and send them to Android Downloads, another local folder, OneDrive, Google Drive, or another installed provider.
+4. Open **This Device** to prepare protected Android data or browse data already collected on this phone.
+5. Open **Backup** for consolidated progress and destination activity across collected data.
 
 Installed storage apps handle their own authentication through Android. Phone Sync does not require provider client IDs, OAuth configuration, or embedded credentials.
 
@@ -47,6 +48,8 @@ Windows Phone exposes shared media through MTP but does not publish its private 
 - OneDrive, Google Drive, or another installed app through Android's upload chooser
 
 The **Backup Activity** tab keeps overall item progress, current-file byte progress, processed bytes, and the latest result together. USB pull progress stays in **USB Source**, while Android personal-data collection progress stays in **This Device**. For multi-item provider uploads, Phone Sync creates one ZIP64 package with a SHA-256 manifest before opening the provider. This avoids OneDrive's broken bulk-file checkmark screen. Provider upload completion is controlled by the selected provider app.
+
+When a USB source is connected, its destination panel is scoped to that source's completed transfers. It does not mix in exports prepared on the collecting Android device or files collected from another USB peer.
 
 ## Permissions
 
