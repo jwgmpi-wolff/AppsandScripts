@@ -27,6 +27,22 @@ class SourceCapabilityPolicyTest {
     }
 
     @Test
+    fun `Android personal data uses local providers instead of file imports`() {
+        val capabilities = SourceCapabilityPolicy.forSource(
+            DetectedSource(SourcePlatform.IOS, SourceFamily.IPHONE, "iPhone"),
+        )
+
+        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.SMS_EXPORTS))
+        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CONTACTS))
+        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CALL_LOGS))
+        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CALENDAR))
+        assertEquals(
+            AccessMode.LOCAL_ANDROID_PROVIDER,
+            capabilities.modeFor(ConsentCategory.NOTIFICATION_EXPORTS),
+        )
+    }
+
+    @Test
     fun `Windows Phone uses MTP`() {
         val capabilities = SourceCapabilityPolicy.forSource(
             DetectedSource(SourcePlatform.WINDOWS_PHONE, SourceFamily.WINDOWS_PHONE, "Lumia"),
@@ -52,13 +68,16 @@ class SourceCapabilityPolicyTest {
     }
 
     @Test
-    fun `protected app data and accessibility scraping are never enabled`() {
+    fun `private app data and accessibility scraping stay disabled while notification listener is supported`() {
         val policies = SourceCapabilityPolicy.forSource(
             DetectedSource(SourcePlatform.ANDROID, SourceFamily.ANDROID_PHONE, "Android phone"),
         ).protectedSurfaces
 
         assertTrue(policies.isNotEmpty())
-        assertTrue(policies.all { !it.supported })
+        assertTrue(policies.first { it.surface == ProtectedSurface.LIVE_NOTIFICATION_CONTENT }.supported)
+        assertFalse(policies.first { it.surface == ProtectedSurface.SMS_DATABASE }.supported)
+        assertFalse(policies.first { it.surface == ProtectedSurface.CHAT_APPLICATION_DATABASE }.supported)
+        assertFalse(policies.first { it.surface == ProtectedSurface.EMAIL_APPLICATION_DATABASE }.supported)
         assertTrue(
             policies.first { it.surface == ProtectedSurface.ACCESSIBILITY_SCRAPING }
                 .alternative

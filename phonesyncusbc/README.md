@@ -15,6 +15,13 @@ In **Collected source data -> target media**, choose **Choose backup destination
 
 Local backups display their completed item and byte totals automatically. Cloud completion is user-confirmed because Android upload activities do not return a consistent provider verification result.
 
+## Personal Data
+
+- **This Android device:** Phone Sync can export SMS/MMS (including MMS attachments), call history, contacts, calendar events, and captured notifications. Android requires the owner to approve SMS, call-log, contacts, calendar, and notification-listener access on system-controlled screens; an app cannot auto-approve its own permissions.
+- **Connected iPhone:** USB PTP exposes photos and videos, not private message, call, mail, chat, or notification databases. On supported Samsung devices, use the in-app **Open Smart Switch for iPhone transfer** action for SMS, call history, contacts, and calendar, then collect the migrated Android data into Phone Sync's audited backup set.
+- **Email and chat:** Android and iOS do not expose other apps' private mail or chat databases through a general permission. Use the source app or provider's supported export and import that export into Phone Sync. This route does not require a cloud client ID.
+- **Notifications:** Notification access captures notifications active when access is approved and future notifications. Android does not provide deleted notification history from before approval.
+
 ## Build and Push
 
 From PowerShell in this directory:

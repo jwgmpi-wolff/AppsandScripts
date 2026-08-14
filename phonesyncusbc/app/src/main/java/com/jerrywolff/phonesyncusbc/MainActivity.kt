@@ -1,11 +1,13 @@
 package com.jerrywolff.phonesyncusbc
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.ClipData
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -60,6 +62,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import com.jerrywolff.phonesyncusbc.data.AndroidPersonalDataCollector
 import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
@@ -73,6 +78,7 @@ import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
+import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
 import com.jerrywolff.phonesyncusbc.domain.TrustContext
 import com.jerrywolff.phonesyncusbc.domain.TrustDecision
 import com.jerrywolff.phonesyncusbc.domain.TrustPolicy
@@ -161,11 +167,34 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var pendingTargetName by remember { mutableStateOf<String?>(null) }
     var awaitingCloudCompletion by remember { mutableStateOf(false) }
     var backupStatus by remember { mutableStateOf("Select data and a destination to begin.") }
+    val existingPersonalExports = remember {
+        application.auditLog.completedTransfers(LOCAL_ANDROID_PEER_ID)
+    }
+    var pendingPersonalCategories by remember { mutableStateOf(emptySet<ConsentCategory>()) }
+    var collectNotificationsAfterPermissions by remember { mutableStateOf(false) }
+    var personalDataStatus by remember {
+        mutableStateOf(
+            if (existingPersonalExports.isEmpty()) {
+                "Android personal data has not been collected yet."
+            } else {
+                "Available in backup set: ${existingPersonalExports.map { it.category }.distinct().size} categories, " +
+                    "${existingPersonalExports.size} export files (${formatBytes(existingPersonalExports.sumOf { it.bytesTransferred })})."
+            },
+        )
+    }
+    var collectingPersonalData by remember { mutableStateOf(false) }
+    var notificationAccessEnabled by remember { mutableStateOf(isNotificationAccessEnabled(context)) }
     val targetSelectionStore = remember { TargetSelectionStore(context) }
+    val personalDataCollector = remember {
+        AndroidPersonalDataCollector(context, application.auditLog)
+    }
     val savedTarget = remember { targetSelectionStore.load() }
     var targetRestored by remember { mutableStateOf(false) }
     var refreshToken by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
+    val smartSwitchAvailable = remember {
+        context.packageManager.getLaunchIntentForPackage(SMART_SWITCH_PACKAGE) != null
+    }
 
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
@@ -185,6 +214,94 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         previewVideoUri = null
     }
 
+    val runPersonalCollection: (Set<ConsentCategory>) -> Unit = { categories ->
+        if (categories.isNotEmpty() && !collectingPersonalData) {
+            collectingPersonalData = true
+            personalDataStatus = "Collecting ${categories.joinToString { it.label() }}..."
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    personalDataCollector.collect(categories) { progress ->
+                        scope.launch(Dispatchers.Main.immediate) {
+                            personalDataStatus = progress
+                        }
+                    }
+                }
+                backupEntries = application.auditLog.allCompletedTransfers()
+                selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+                personalDataStatus = when {
+                    result.failedCategories == 0 ->
+                        "Collected ${result.records} records in ${result.exportedCategories} export files (${formatBytes(result.bytes)})."
+                    result.exportedCategories > 0 ->
+                        "Collected ${result.records} records; ${result.failedCategories} categories failed. ${result.firstError.orEmpty()}"
+                    else -> "Collection failed: ${result.firstError ?: "No provider data was available."}"
+                }
+                message = personalDataStatus
+                collectingPersonalData = false
+            }
+        }
+    }
+
+    val notificationAccessLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { _ ->
+        notificationAccessEnabled = isNotificationAccessEnabled(context)
+        if (notificationAccessEnabled) {
+            runPersonalCollection(setOf(ConsentCategory.NOTIFICATION_EXPORTS))
+        } else {
+            personalDataStatus = "Notification access was not enabled. Android requires approval on the system screen."
+        }
+    }
+
+    val personalDataPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        val grantedCategories = pendingPersonalCategories.filterTo(linkedSetOf()) { category ->
+            AndroidPersonalDataCollector.requiredPermissions(setOf(category)).all { permission ->
+                ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        val deniedCategories = pendingPersonalCategories - grantedCategories
+        if (grantedCategories.isNotEmpty()) runPersonalCollection(grantedCategories)
+        if (deniedCategories.isNotEmpty()) {
+            personalDataStatus = "Permission denied for: ${deniedCategories.joinToString { it.label() }}."
+        }
+        pendingPersonalCategories = emptySet()
+        if (collectNotificationsAfterPermissions) {
+            collectNotificationsAfterPermissions = false
+            if (isNotificationAccessEnabled(context)) {
+                notificationAccessEnabled = true
+                runPersonalCollection(setOf(ConsentCategory.NOTIFICATION_EXPORTS))
+            } else {
+                notificationAccessLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
+    }
+
+    fun requestPersonalDataCollection(categories: Set<ConsentCategory>) {
+        val wantsNotifications = ConsentCategory.NOTIFICATION_EXPORTS in categories
+        val providerCategories = categories - ConsentCategory.NOTIFICATION_EXPORTS
+        val permissions = AndroidPersonalDataCollector.requiredPermissions(providerCategories)
+        val missingPermissions = permissions.filter { permission ->
+            ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+        }
+        val notificationAlreadyEnabled = wantsNotifications && isNotificationAccessEnabled(context)
+        notificationAccessEnabled = notificationAlreadyEnabled || notificationAccessEnabled
+        val categoriesReadyToCollect = providerCategories +
+            if (notificationAlreadyEnabled) setOf(ConsentCategory.NOTIFICATION_EXPORTS) else emptySet()
+        pendingPersonalCategories = categoriesReadyToCollect
+        collectNotificationsAfterPermissions = wantsNotifications && !notificationAlreadyEnabled
+        if (missingPermissions.isEmpty()) {
+            if (categoriesReadyToCollect.isNotEmpty()) runPersonalCollection(categoriesReadyToCollect)
+            pendingPersonalCategories = emptySet()
+            if (collectNotificationsAfterPermissions) {
+                collectNotificationsAfterPermissions = false
+                notificationAccessLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        } else {
+            personalDataPermissionLauncher.launch(missingPermissions.toTypedArray())
+        }
+    }
+
     fun refreshSource() {
         sources = application.usbSourceResolver.attachedSources()
         selectedSource = sources.firstOrNull()
@@ -201,7 +318,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         val resolved = runCatching { application.usbSourceResolver.resolveIdentity(source) }.getOrNull()
             ?: return@LaunchedEffect
         identity = resolved
-        capabilities = SourceCapabilityPolicy.forSource(source.detected)
+        val resolvedCapabilities = SourceCapabilityPolicy.forSource(source.detected)
+        capabilities = resolvedCapabilities
         when (val loaded = application.trustStore.load(resolved.peerId, resolved.profileId)) {
             is TrustLoadResult.Found -> {
                 val decision = TrustPolicy.evaluate(
@@ -210,11 +328,17 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 )
                 trust = if (decision is TrustDecision.Approved) loaded.trust else null
                 if (trust != null) {
-                    selectedCategories = trust!!.record.authorizedCategories
+                    selectedCategories = resolvedCapabilities.supportedCategories
+                    if (trust!!.record.authorizedCategories != selectedCategories) {
+                        trust = application.trustStore.updateCategories(trust!!, selectedCategories)
+                    }
                     grants = application.safGrantStore.list(resolved.peerId)
                 }
             }
-            else -> trust = null
+            else -> {
+                trust = null
+                selectedCategories = resolvedCapabilities.supportedCategories
+            }
         }
     }
 
@@ -523,6 +647,30 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         awaitingCloudCompletion = false
                         backupStatus = "Backup complete: ${selectedBackupIds.size} items confirmed in ${cloudTarget?.label ?: "cloud storage"}."
                         message = backupStatus
+                    },
+                )
+            }
+            item {
+                AndroidPersonalDataPanel(
+                    status = personalDataStatus,
+                    collecting = collectingPersonalData,
+                    notificationAccessEnabled = notificationAccessEnabled,
+                    smartSwitchAvailable = smartSwitchAvailable,
+                    onCollect = ::requestPersonalDataCollection,
+                    onEnableNotificationAccess = {
+                        notificationAccessLauncher.launch(
+                            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+                        )
+                    },
+                    onOpenIphoneTransfer = {
+                        val launchIntent = context.packageManager
+                            .getLaunchIntentForPackage(SMART_SWITCH_PACKAGE)
+                        if (launchIntent == null) {
+                            message = "Samsung Smart Switch is not installed."
+                        } else {
+                            message = "Complete the iPhone transfer in Smart Switch, then return and collect Android personal data."
+                            context.startActivity(launchIntent)
+                        }
                     },
                 )
             }
@@ -870,32 +1018,36 @@ private fun TrustedDashboard(
             }
             CategoryChoices(capabilities, categories, onCategoriesChange)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSync, enabled = !syncing) { Text(if (syncing) "Syncing..." else "Sync now") }
+                Button(onClick = onSync, enabled = !syncing) {
+                    Text(if (syncing) "Syncing..." else "Sync connected files")
+                }
                 OutlinedButton(onClick = onSelectFolder) { Text("Add folder/cloud") }
             }
-            Text("Import official exports", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(onClick = { onImportExports(ConsentCategory.SMS_EXPORTS) }) {
-                    Text("SMS")
-                }
-                OutlinedButton(onClick = { onImportExports(ConsentCategory.CHAT_EXPORTS) }) {
-                    Text("Chat")
-                }
-                OutlinedButton(onClick = { onImportExports(ConsentCategory.EMAIL_EXPORTS) }) {
-                    Text("Email")
-                }
-            }
+            HorizontalDivider()
+            Text("Import exports from the connected source", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(
+                onClick = { onImportExports(ConsentCategory.SMS_EXPORTS) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Import source SMS export file") }
+            OutlinedButton(
+                onClick = { onImportExports(ConsentCategory.CHAT_EXPORTS) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Import source chat export file") }
+            OutlinedButton(
+                onClick = { onImportExports(ConsentCategory.EMAIL_EXPORTS) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Import source email export file") }
             OutlinedButton(
                 onClick = { onImportExports(ConsentCategory.NOTIFICATION_EXPORTS) },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Notifications") }
+            ) { Text("Import source notification export file") }
             OutlinedButton(onClick = onViewLibrary, modifier = Modifier.fillMaxWidth()) {
                 Text("View imported data")
             }
             if (grants.isNotEmpty()) Text("Authorized locations: ${grants.size}")
             Text(
-                "For texts, chat, email, and notification data, first use the source app's " +
-                    "supported export, then add its export folder here.",
+                "The connected iPhone exposes media over PTP, not its private SMS, call, chat, mail, or notification databases. " +
+                    "Use the source app's supported export for those records. No cloud client ID is required.",
                 style = MaterialTheme.typography.bodySmall,
             )
             HorizontalDivider()
@@ -1053,6 +1205,72 @@ private fun FilterButton(label: String, selected: Boolean, onClick: () -> Unit) 
 }
 
 @androidx.compose.runtime.Composable
+private fun AndroidPersonalDataPanel(
+    status: String,
+    collecting: Boolean,
+    notificationAccessEnabled: Boolean,
+    smartSwitchAvailable: Boolean,
+    onCollect: (Set<ConsentCategory>) -> Unit,
+    onEnableNotificationAccess: () -> Unit,
+    onOpenIphoneTransfer: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Personal data backup", style = MaterialTheme.typography.titleLarge)
+            Text(status, style = MaterialTheme.typography.bodySmall)
+            Button(
+                onClick = { onCollect(AndroidPersonalDataCollector.SUPPORTED_CATEGORIES) },
+                enabled = !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (collecting) "Collecting personal data..." else "Collect all Android personal data") }
+            OutlinedButton(
+                onClick = { onCollect(setOf(ConsentCategory.SMS_EXPORTS)) },
+                enabled = !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Collect SMS and MMS") }
+            OutlinedButton(
+                onClick = { onCollect(setOf(ConsentCategory.CALL_LOGS)) },
+                enabled = !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Collect call history") }
+            OutlinedButton(
+                onClick = { onCollect(setOf(ConsentCategory.CONTACTS, ConsentCategory.CALENDAR)) },
+                enabled = !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Collect contacts and calendar") }
+            OutlinedButton(
+                onClick = {
+                    if (notificationAccessEnabled) {
+                        onCollect(setOf(ConsentCategory.NOTIFICATION_EXPORTS))
+                    } else {
+                        onEnableNotificationAccess()
+                    }
+                },
+                enabled = !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (notificationAccessEnabled) "Export captured notifications" else "Enable notification backup")
+            }
+            HorizontalDivider()
+            Text("Transfer from iPhone", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Smart Switch can migrate supported iPhone SMS, call history, contacts, and calendar records to this Samsung without a client ID.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(
+                onClick = onOpenIphoneTransfer,
+                enabled = smartSwitchAvailable && !collecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Open Smart Switch for iPhone transfer") }
+            Text(
+                "After migration, collect all Android personal data to add those records to the backup set. Android requires owner approval for system permissions.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
 private fun BackupPanel(
     onSelectBackup: () -> Unit,
     onChooseTarget: () -> Unit,
@@ -1161,6 +1379,8 @@ private fun TargetMediaWizard(
 }
 
 private const val BACKUP_PANEL_INDEX = 3
+private const val SMART_SWITCH_PACKAGE = "com.sec.android.easyMover"
+private const val LOCAL_ANDROID_PEER_ID = "local-android"
 
 @androidx.compose.runtime.Composable
 private fun BackupSelectionView(
@@ -1222,12 +1442,14 @@ private fun categoryDescription(category: ConsentCategory): String = when (categ
     ConsentCategory.PHOTOS_AND_VIDEOS -> "MediaStore Pictures and Movies collected from the source."
     ConsentCategory.DOCUMENTS -> "Documents collected into Android Downloads."
     ConsentCategory.CONTACTS -> "User-exported vCard contacts collected into Android Downloads."
+    ConsentCategory.CALL_LOGS -> "Call history exported from this Android device."
+    ConsentCategory.CALENDAR -> "Calendar events exported from this Android device."
     ConsentCategory.SELECTED_FOLDERS -> "Files collected from the selected source folder."
     ConsentCategory.CLOUD_ACCOUNTS -> "Files collected from the authorized cloud provider."
     ConsentCategory.SMS_EXPORTS -> "User-created SMS export files, not private SMS databases."
     ConsentCategory.CHAT_EXPORTS -> "User-created chat export files, not private chat databases."
     ConsentCategory.EMAIL_EXPORTS -> "User-created email export files, not private mail databases."
-    ConsentCategory.NOTIFICATION_EXPORTS -> "User-created notification exports, not live notification scraping."
+    ConsentCategory.NOTIFICATION_EXPORTS -> "Active and future Android notifications captured after special-access approval."
 }
 
 private fun combineSyncResults(first: SyncResult, second: SyncResult): SyncResult {
@@ -1258,6 +1480,10 @@ private fun treeGrantCategory(uri: Uri): ConsentCategory {
     } else {
         ConsentCategory.CLOUD_ACCOUNTS
     }
+}
+
+private fun isNotificationAccessEnabled(context: Context): Boolean {
+    return context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
 }
 
 @androidx.compose.runtime.Composable

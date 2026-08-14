@@ -6,6 +6,7 @@ enum class AccessMode {
     PORTABLE_EXPORT,
     SAF,
     PROVIDER_AUTHORIZATION,
+    LOCAL_ANDROID_PROVIDER,
 }
 
 data class CategoryCapability(
@@ -83,8 +84,18 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.CONTACTS,
-                    AccessMode.PORTABLE_EXPORT,
-                    "Contact files exported as vCard (.vcf)",
+                    AccessMode.LOCAL_ANDROID_PROVIDER,
+                    "Contacts from this Android device after permission approval; connected sources require migration or vCard export",
+                ),
+                CategoryCapability(
+                    ConsentCategory.CALL_LOGS,
+                    AccessMode.LOCAL_ANDROID_PROVIDER,
+                    "Call history from this Android device after permission approval",
+                ),
+                CategoryCapability(
+                    ConsentCategory.CALENDAR,
+                    AccessMode.LOCAL_ANDROID_PROVIDER,
+                    "Calendar events from this Android device after permission approval",
                 ),
                 CategoryCapability(
                     ConsentCategory.SELECTED_FOLDERS,
@@ -98,8 +109,8 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.SMS_EXPORTS,
-                    AccessMode.PORTABLE_EXPORT,
-                    "User-created SMS export packages; never a private SMS database",
+                    AccessMode.LOCAL_ANDROID_PROVIDER,
+                    "SMS/MMS from this Android device after permission approval; connected sources require migration or export",
                 ),
                 CategoryCapability(
                     ConsentCategory.CHAT_EXPORTS,
@@ -113,8 +124,8 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.NOTIFICATION_EXPORTS,
-                    AccessMode.PORTABLE_EXPORT,
-                    "Notification history explicitly exported by a source companion",
+                    AccessMode.LOCAL_ANDROID_PROVIDER,
+                    "Active and future notifications captured on this Android device after special-access approval",
                 ),
             ),
             protectedSurfaces = protectedSurfacePolicies,
@@ -128,7 +139,7 @@ object SourceCapabilityPolicy {
         ProtectedSurfacePolicy(
             ProtectedSurface.SMS_DATABASE,
             supported = false,
-            alternative = "Export SMS on the source phone and authorize SMS exports.",
+            alternative = "Use Android's official SMS provider locally, Smart Switch migration, or a source export.",
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.CHAT_APPLICATION_DATABASE,
@@ -147,8 +158,8 @@ object SourceCapabilityPolicy {
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.LIVE_NOTIFICATION_CONTENT,
-            supported = false,
-            alternative = "Use an explicit source-companion notification export.",
+            supported = true,
+            alternative = "Approve Android notification-listener access for active and future local notifications.",
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.ACCESSIBILITY_SCRAPING,

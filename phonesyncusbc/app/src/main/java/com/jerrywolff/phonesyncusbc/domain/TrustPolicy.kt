@@ -4,6 +4,8 @@ enum class ConsentCategory {
     PHOTOS_AND_VIDEOS,
     DOCUMENTS,
     CONTACTS,
+    CALL_LOGS,
+    CALENDAR,
     SELECTED_FOLDERS,
     CLOUD_ACCOUNTS,
     SMS_EXPORTS,
