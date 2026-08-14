@@ -12,6 +12,11 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
 
+    <queries>
+        <package android:name="com.microsoft.skydrive" />
+        <package android:name="com.google.android.apps.docs" />
+    </queries>
+
     <application
         android:name=".PhoneSyncApplication"
         android:allowBackup="false"

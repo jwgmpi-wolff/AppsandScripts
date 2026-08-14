@@ -1,26 +1,41 @@
 # Phone Sync USB-C
 
-Android initiator for consent-based phone synchronization.
+Android USB host for consent-based phone synchronization and backup.
 
 ## Download
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-## Mobile-Only Backup
+## Workflow
 
-Phone Sync does not use cloud apps, OAuth, client IDs, desktop software, or external migration apps.
+1. Connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable.
+2. Approve Android's USB prompt, then authorize all available source categories.
+3. Tap **Pull all available data**. Phone Sync copies every exposed media/document file and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, and notification exports.
+4. Tap **Start backup** for Android Downloads, choose a folder through Android's picker, or tap **Upload to OneDrive, Google Drive, or another app**.
 
-- **Default:** Tap **Start backup** to write a timestamped copy under Android Downloads / Phone Sync Backups.
-- **Optional:** Choose a folder on this phone, an SD card, or an attached USB drive. Non-local document providers are rejected.
+Installed storage apps handle their own authentication through Android. Phone Sync does not require provider client IDs, OAuth configuration, or embedded credentials.
 
-Backups display their completed item and byte totals automatically.
+## Source Coverage
 
-## Personal Data
+- **MTP Android/Windows sources:** media, documents, and export files exposed in shared storage.
+- **PTP iPhone sources:** photos and videos exposed by iOS.
+- **Android protected data:** expand **Prepare this Android phone** on the source first. It exports SMS/MMS with attachments, calls, contacts, calendar, and captured notifications into shared storage; another Phone Sync device can then pull those exports over USB.
+- **Email and chat:** use the source app's supported export, then choose **Add email export files** or **Add chat export files** in the collapsed preparation panel. Phone Sync copies those files into USB-visible shared storage.
+- **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, mail, chat, or notification databases. Phone Sync imports user-created export files when available.
 
-- **This Android device:** Phone Sync can export SMS/MMS (including MMS attachments), call history, contacts, calendar events, and captured notifications. Android requires the owner to approve SMS, call-log, contacts, calendar, and notification-listener access on system-controlled screens; an app cannot auto-approve its own permissions.
-- **Connected iPhone:** USB PTP exposes photos and videos, not private message, call, mail, chat, or notification databases. Phone Sync imports user-created source export files when available.
-- **Email and chat:** Android and iOS do not expose other apps' private mail or chat databases through a general permission. Use the source app's supported export and import that local file into Phone Sync.
-- **Notifications:** Notification access captures notifications active when access is approved and future notifications. Android does not provide deleted notification history from before approval.
+Phone Sync never reports protected data as pulled unless the source actually exposes a readable export.
+
+## Destinations
+
+- Android Downloads / Phone Sync Backups
+- Any writable folder exposed by Android's system picker, including local, SD/USB, and supporting document providers
+- OneDrive, Google Drive, or another installed app through Android's upload chooser
+
+Local/picker backups display completed item and byte totals. Provider upload completion is controlled by the selected provider app.
+
+## Permissions
+
+USB, SMS, call-log, contacts, calendar, and notification-listener access remain controlled by Android's owner-visible permission screens. Apps cannot silently approve these permissions themselves.
 
 ## Build and Push
 

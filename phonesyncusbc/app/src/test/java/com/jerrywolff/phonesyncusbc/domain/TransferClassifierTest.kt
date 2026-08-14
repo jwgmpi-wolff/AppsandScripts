@@ -41,8 +41,24 @@ class TransferClassifierTest {
             TransferClassifier.classify("/PhoneSync/Exports/Email/archive.mbox"),
         )
         assertEquals(
+            ConsentCategory.EMAIL_EXPORTS,
+            TransferClassifier.classify("/Downloads/archive.mbox"),
+        )
+        assertEquals(
             ConsentCategory.NOTIFICATION_EXPORTS,
             TransferClassifier.classify("/PhoneSync/Exports/Notifications/history.json"),
+        )
+        assertEquals(
+            ConsentCategory.SMS_EXPORTS,
+            TransferClassifier.classify("/Download/Phone Sync/This Android/sms_exports/sms-mms-20260814.zip"),
+        )
+        assertEquals(
+            ConsentCategory.CALL_LOGS,
+            TransferClassifier.classify("/Download/Phone Sync/This Android/call_logs/call-log-20260814.json"),
+        )
+        assertEquals(
+            ConsentCategory.CALENDAR,
+            TransferClassifier.classify("/Download/Phone Sync/This Android/calendar/calendar-20260814.json"),
         )
     }
 

@@ -83,18 +83,18 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.CONTACTS,
-                    AccessMode.LOCAL_ANDROID_PROVIDER,
-                    "Contacts from this Android device after permission approval; connected sources require migration or vCard export",
+                    AccessMode.PORTABLE_EXPORT,
+                    "Contacts exposed by the USB source as vCard exports",
                 ),
                 CategoryCapability(
                     ConsentCategory.CALL_LOGS,
-                    AccessMode.LOCAL_ANDROID_PROVIDER,
-                    "Call history from this Android device after permission approval",
+                    AccessMode.PORTABLE_EXPORT,
+                    "Call history exposed by the USB source as an export file",
                 ),
                 CategoryCapability(
                     ConsentCategory.CALENDAR,
-                    AccessMode.LOCAL_ANDROID_PROVIDER,
-                    "Calendar events from this Android device after permission approval",
+                    AccessMode.PORTABLE_EXPORT,
+                    "Calendar events exposed by the USB source as an export file",
                 ),
                 CategoryCapability(
                     ConsentCategory.SELECTED_FOLDERS,
@@ -103,8 +103,8 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.SMS_EXPORTS,
-                    AccessMode.LOCAL_ANDROID_PROVIDER,
-                    "SMS/MMS from this Android device after permission approval; connected sources require migration or export",
+                    AccessMode.PORTABLE_EXPORT,
+                    "SMS/MMS exposed by the USB source as a Phone Sync or app export",
                 ),
                 CategoryCapability(
                     ConsentCategory.CHAT_EXPORTS,
@@ -118,8 +118,8 @@ object SourceCapabilityPolicy {
                 ),
                 CategoryCapability(
                     ConsentCategory.NOTIFICATION_EXPORTS,
-                    AccessMode.LOCAL_ANDROID_PROVIDER,
-                    "Active and future notifications captured on this Android device after special-access approval",
+                    AccessMode.PORTABLE_EXPORT,
+                    "Notifications exposed by the USB source as a Phone Sync or app export",
                 ),
             ),
             protectedSurfaces = protectedSurfacePolicies,

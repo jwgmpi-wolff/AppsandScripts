@@ -116,7 +116,10 @@ class MainActivity : ComponentActivity() {
         )
         registerReceiver(
             object : BroadcastReceiver() {
-                override fun onReceive(context: Context, intent: Intent) = unregisterReceiver(this)
+                override fun onReceive(context: Context, intent: Intent) {
+                    unregisterReceiver(this)
+                    recreate()
+                }
             },
             IntentFilter(usbPermissionAction),
             RECEIVER_NOT_EXPORTED,
@@ -149,6 +152,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var previewVideoUri by remember { mutableStateOf<Uri?>(null) }
     var importCategory by remember { mutableStateOf<ConsentCategory?>(null) }
+    var localImportCategory by remember { mutableStateOf<ConsentCategory?>(null) }
     var showBackupSelection by remember { mutableStateOf(false) }
     val initialBackupEntries = remember { application.auditLog.allCompletedTransfers() }
     var backupEntries by remember { mutableStateOf(initialBackupEntries) }
@@ -337,22 +341,19 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     ) { uri ->
         val currentIdentity = identity ?: return@rememberLauncherForActivityResult
         if (uri != null) {
-            if (!isLocalStorageTree(uri)) {
-                message = "Choose a folder on this phone, an SD card, or an attached USB drive."
-                return@rememberLauncherForActivityResult
-            }
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
+            val grantCategory = treeGrantCategory(uri)
             val grant = application.safGrantStore.add(
                 currentIdentity.peerId,
-                ConsentCategory.SELECTED_FOLDERS,
+                grantCategory,
                 uri,
-                "Selected local folder",
+                if (grantCategory == ConsentCategory.CLOUD_ACCOUNTS) "Document provider" else "Selected folder",
             )
             grants = grants + grant
-            selectedCategories = selectedCategories + ConsentCategory.SELECTED_FOLDERS
+            selectedCategories = selectedCategories + grantCategory
             trust?.let { storedTrust ->
                 trust = application.trustStore.updateCategories(storedTrust, selectedCategories)
             }
@@ -363,10 +364,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null && libraryEntries.isNotEmpty()) {
-            if (!isLocalStorageTree(uri)) {
-                message = "Export requires storage on this phone, an SD card, or an attached USB drive."
-                return@rememberLauncherForActivityResult
-            }
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     DataExportManager(context).export(libraryEntries, uri)
@@ -402,17 +399,38 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
+    val localExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        val category = localImportCategory
+        if (uris.isNotEmpty() && category != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    DataImportManager(context).importExportedFiles(
+                        peerId = LOCAL_ANDROID_PEER_ID,
+                        sourceName = "This Android",
+                        files = uris,
+                        auditLog = application.auditLog,
+                        forcedCategory = category,
+                    )
+                }
+                backupEntries = application.auditLog.allCompletedTransfers()
+                selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+                personalDataStatus = "Imported ${result.importedItems} ${category.label()} files (${formatBytes(result.bytesImported)})." +
+                    if (result.failedItems > 0) " ${result.failedItems} failed." else ""
+                message = personalDataStatus
+                localImportCategory = null
+            }
+        } else {
+            localImportCategory = null
+        }
+    }
+
     val allDataExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
         if (uri != null) {
-            if (!isLocalStorageTree(uri)) {
-                pendingTargetName = null
-                message = "Only storage on this phone, an SD card, or an attached USB drive can be used."
-                scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
-                return@rememberLauncherForActivityResult
-            }
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
@@ -464,6 +482,43 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
     }
 
+    fun uploadSelectedBackup(packageName: String?, label: String) {
+        val entries = backupEntries.filter { it.id in selectedBackupIds }
+        val streams = ArrayList(entries.mapNotNull { it.destination?.let(Uri::parse) }.distinct())
+        if (streams.isEmpty()) {
+            backupStatus = "Select at least one available item before uploading."
+            return
+        }
+        val action = if (streams.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
+        val uploadIntent = Intent(action).apply {
+            type = "application/octet-stream"
+            packageName?.let(::setPackage)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = ClipData.newUri(context.contentResolver, "Phone Sync backup", streams.first()).apply {
+                streams.drop(1).forEach { addItem(ClipData.Item(it)) }
+            }
+            if (streams.size == 1) {
+                putExtra(Intent.EXTRA_STREAM, streams.first())
+            } else {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, streams)
+            }
+            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
+        }
+        runCatching {
+            context.startActivity(
+                if (packageName == null) {
+                    Intent.createChooser(uploadIntent, "Upload backup to")
+                } else {
+                    uploadIntent
+                },
+            )
+        }.onSuccess {
+            message = "$label opened with ${streams.size} items. Choose the destination folder and complete the upload there."
+        }.onFailure { throwable ->
+            message = "Could not open $label. Install/sign in to it or choose another destination. ${throwable.message.orEmpty()}"
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -484,18 +539,17 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Spacer(Modifier.height(28.dp))
-                Text("Android initiator", style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Bring your phone data into Android storage with one clear trust decision.",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
+                Spacer(Modifier.height(12.dp))
             }
             item {
-                OutlinedButton(onClick = ::refreshSource, modifier = Modifier.fillMaxWidth()) {
-                    Text("Refresh connected source")
-                }
+                SourceConnectionPanel(
+                    source = source,
+                    onRefresh = ::refreshSource,
+                    onRequestUsbPermission = onRequestUsbPermission,
+                    onContinue = {
+                        scope.launch { listState.animateScrollToItem(SOURCE_SYNC_SECTION_INDEX) }
+                    },
+                )
             }
             item {
                 OutlinedButton(
@@ -528,6 +582,15 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     selectedItemCount = selectedBackupIds.size,
                     targetName = targetName,
                     backupStatus = backupStatus,
+                    onUploadOneDrive = {
+                        uploadSelectedBackup(ONEDRIVE_PACKAGE, "OneDrive")
+                    },
+                    onUploadGoogleDrive = {
+                        uploadSelectedBackup(GOOGLE_DRIVE_PACKAGE, "Google Drive")
+                    },
+                    onUploadOther = {
+                        uploadSelectedBackup(null, "Android app chooser")
+                    },
                     onExecuteBackup = {
                         val selectedEntries = backupEntries.filter { it.id in selectedBackupIds }
                         val destination = targetUri
@@ -573,6 +636,19 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     onEnableNotificationAccess = {
                         notificationAccessLauncher.launch(
                             Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+                        )
+                    },
+                    onImportExport = { category ->
+                        localImportCategory = category
+                        localExportLauncher.launch(
+                            arrayOf(
+                                "text/*",
+                                "message/*",
+                                "application/json",
+                                "application/xml",
+                                "application/zip",
+                                "application/octet-stream",
+                            ),
                         )
                     },
                 )
@@ -679,20 +755,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     }
                 }
             } else if (source == null) {
-                item { Text("Connect a source phone over USB or USB-C data, then refresh.") }
+                item { Text("Connect a source phone using a data-capable USB cable.") }
             } else {
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(source.detected.displayName, style = MaterialTheme.typography.titleLarge)
-                            Text("${source.detected.family} · ${source.detected.platform}")
-                            Text(if (source.permissionGranted) "USB permission granted" else "USB permission needed")
-                            if (!source.permissionGranted) {
-                                Button(onClick = { onRequestUsbPermission(source) }) { Text("Allow USB access") }
-                            }
-                        }
-                    }
-                }
                 capabilities?.let { policy ->
                     item {
                         Text(policy.connectionMessage)
@@ -703,17 +767,17 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     item {
                         TrustApproval(
                             capabilities = capabilities!!,
-                            selected = selectedCategories,
-                            onSelectedChange = { selectedCategories = it },
                             onApprove = {
                                 val currentIdentity = identity!!
+                                val authorizedCategories = capabilities!!.supportedCategories
+                                selectedCategories = authorizedCategories
                                 val now = System.currentTimeMillis()
                                 val created = StoredTrust(
                                     record = com.jerrywolff.phonesyncusbc.domain.TrustRecord(
                                         peerDeviceId = currentIdentity.peerId,
                                         localDeviceId = DeviceIdentity.localId(context),
                                         encryptionKeyProof = application.keyManager.currentProof(),
-                                        authorizedCategories = selectedCategories,
+                                        authorizedCategories = authorizedCategories,
                                     ),
                                     profileId = currentIdentity.profileId,
                                     sourceName = source.detected.displayName,
@@ -724,7 +788,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 )
                                 application.trustStore.save(created)
                                 trust = created
-                                message = "Device trusted. Future syncs use only these categories."
+                                message = "USB source authorized for every available data category."
                             },
                         )
                     }
@@ -732,19 +796,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     item {
                         TrustedDashboard(
                                 trust = trust!!,
-                                capabilities = capabilities!!,
                                 categories = selectedCategories,
                                 grants = grants,
                                 syncing = syncing,
                                 liveProgress = liveProgress,
                                 auditLog = application.auditLog,
-                                onCategoriesChange = { categories ->
-                                    selectedCategories = categories
-                                    trust = application.trustStore.updateCategories(trust!!, categories)
-                                },
                                 onSelectFolder = { folderLauncher.launch(null) },
-                                onImportExports = { category ->
-                                    importCategory = category
+                                onImportExports = {
+                                    importCategory = null
                                     importExportsLauncher.launch(
                                         arrayOf(
                                             "text/*",
@@ -819,44 +878,29 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 @androidx.compose.runtime.Composable
 private fun TrustApproval(
     capabilities: SourceCapabilities,
-    selected: Set<ConsentCategory>,
-    onSelectedChange: (Set<ConsentCategory>) -> Unit,
     onApprove: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Trust This Device", style = MaterialTheme.typography.headlineSmall)
-            Text("Choose the categories this source may sync automatically in future sessions.")
-            CategoryChoices(capabilities, selected, onSelectedChange)
+            Text("Authorize every data category this source exposes over USB or as an export file.")
+            CapabilityList(capabilities)
             Button(
                 onClick = onApprove,
-                enabled = selected.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Trust This Device") }
+            ) { Text("Authorize all available data") }
         }
     }
 }
 
 @androidx.compose.runtime.Composable
-private fun CategoryChoices(
+private fun CapabilityList(
     capabilities: SourceCapabilities,
-    selected: Set<ConsentCategory>,
-    onSelectedChange: (Set<ConsentCategory>) -> Unit,
 ) {
     capabilities.categories.forEach { capability ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = capability.category in selected,
-                onCheckedChange = { checked ->
-                    onSelectedChange(
-                        if (checked) selected + capability.category else selected - capability.category,
-                    )
-                },
-            )
-            Column {
-                Text(capability.category.label())
-                Text(capability.description, style = MaterialTheme.typography.bodySmall)
-            }
+        Column {
+            Text(capability.category.label())
+            Text(capability.description, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -864,15 +908,13 @@ private fun CategoryChoices(
 @androidx.compose.runtime.Composable
 private fun TrustedDashboard(
     trust: StoredTrust,
-    capabilities: SourceCapabilities,
     categories: Set<ConsentCategory>,
     grants: List<SafGrant>,
     syncing: Boolean,
     liveProgress: SyncProgress?,
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
-    onCategoriesChange: (Set<ConsentCategory>) -> Unit,
     onSelectFolder: () -> Unit,
-    onImportExports: (ConsentCategory) -> Unit,
+    onImportExports: () -> Unit,
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
     onRevoke: () -> Unit,
@@ -881,8 +923,8 @@ private fun TrustedDashboard(
     val audit = remember(trust.updatedAtEpochMillis) { auditLog.recentTransfers(trust.record.peerDeviceId, 10) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Trusted source", style = MaterialTheme.typography.headlineSmall)
-            Text("Authorized: ${categories.joinToString { it.label() }}")
+            Text("Pull all available source data", style = MaterialTheme.typography.titleMedium)
+            Text("All available categories authorized: ${categories.joinToString { it.label() }}")
             Text("Last sync: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
             liveProgress?.let { progress ->
                 Text(
@@ -913,31 +955,18 @@ private fun TrustedDashboard(
                 }
                 Text("Transferred: ${formatBytes(progress.bytesTransferred)}")
             }
-            CategoryChoices(capabilities, categories, onCategoriesChange)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSync, enabled = !syncing) {
-                    Text(if (syncing) "Syncing..." else "Sync connected files")
+                    Text(if (syncing) "Pulling data..." else "Pull all available data")
                 }
                 OutlinedButton(onClick = onSelectFolder) { Text("Add local source folder") }
             }
             HorizontalDivider()
-            Text("Import exports from the connected source", style = MaterialTheme.typography.titleMedium)
+            Text("Source export files", style = MaterialTheme.typography.titleMedium)
             OutlinedButton(
-                onClick = { onImportExports(ConsentCategory.SMS_EXPORTS) },
+                onClick = onImportExports,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Import source SMS export file") }
-            OutlinedButton(
-                onClick = { onImportExports(ConsentCategory.CHAT_EXPORTS) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Import source chat export file") }
-            OutlinedButton(
-                onClick = { onImportExports(ConsentCategory.EMAIL_EXPORTS) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Import source email export file") }
-            OutlinedButton(
-                onClick = { onImportExports(ConsentCategory.NOTIFICATION_EXPORTS) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Import source notification export file") }
+            ) { Text("Import exported SMS, email, chat, calls, or notifications") }
             OutlinedButton(onClick = onViewLibrary, modifier = Modifier.fillMaxWidth()) {
                 Text("View imported data")
             }
@@ -1102,54 +1131,117 @@ private fun FilterButton(label: String, selected: Boolean, onClick: () -> Unit) 
 }
 
 @androidx.compose.runtime.Composable
+private fun SourceConnectionPanel(
+    source: AttachedSource?,
+    onRefresh: () -> Unit,
+    onRequestUsbPermission: (AttachedSource) -> Unit,
+    onContinue: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Connect and authorize source", style = MaterialTheme.typography.titleMedium)
+            if (source == null) {
+                Text("Connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable.")
+                Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                    Text("Find USB source")
+                }
+            } else {
+                Text(source.detected.displayName, style = MaterialTheme.typography.titleMedium)
+                Text("${source.detected.platform} · ${source.detected.family} · ${source.detected.physicalConnection}")
+                if (source.permissionGranted) {
+                    Text("USB data access authorized")
+                    Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+                        Text("Authorize and pull source data")
+                    }
+                    OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text("Refresh source")
+                    }
+                } else {
+                    Text("Android must approve access to this USB device.")
+                    Button(
+                        onClick = { onRequestUsbPermission(source) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Authorize USB data access") }
+                }
+            }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
 private fun AndroidPersonalDataPanel(
     status: String,
     collecting: Boolean,
     notificationAccessEnabled: Boolean,
     onCollect: (Set<ConsentCategory>) -> Unit,
     onEnableNotificationAccess: () -> Unit,
+    onImportExport: (ConsentCategory) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Personal data backup", style = MaterialTheme.typography.titleLarge)
+            Text("Prepare this Android phone", style = MaterialTheme.typography.titleMedium)
             Text(status, style = MaterialTheme.typography.bodySmall)
-            Button(
-                onClick = { onCollect(AndroidPersonalDataCollector.SUPPORTED_CATEGORIES) },
-                enabled = !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (collecting) "Collecting personal data..." else "Collect all Android personal data") }
             OutlinedButton(
-                onClick = { onCollect(setOf(ConsentCategory.SMS_EXPORTS)) },
-                enabled = !collecting,
+                onClick = { expanded = !expanded },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Collect SMS and MMS") }
-            OutlinedButton(
-                onClick = { onCollect(setOf(ConsentCategory.CALL_LOGS)) },
-                enabled = !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Collect call history") }
-            OutlinedButton(
-                onClick = { onCollect(setOf(ConsentCategory.CONTACTS, ConsentCategory.CALENDAR)) },
-                enabled = !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Collect contacts and calendar") }
-            OutlinedButton(
-                onClick = {
-                    if (notificationAccessEnabled) {
-                        onCollect(setOf(ConsentCategory.NOTIFICATION_EXPORTS))
-                    } else {
-                        onEnableNotificationAccess()
-                    }
-                },
-                enabled = !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (notificationAccessEnabled) "Export captured notifications" else "Enable notification backup")
+            ) { Text(if (expanded) "Hide preparation tools" else "Show preparation tools") }
+            if (expanded) {
+                Text(
+                    "Collect SMS/MMS, calls, contacts, calendar, and notifications into USB-visible export files. " +
+                        "Then connect this phone as a source to another Phone Sync device.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = { onCollect(AndroidPersonalDataCollector.SUPPORTED_CATEGORIES) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (collecting) "Collecting personal data..." else "Collect all Android personal data") }
+                OutlinedButton(
+                    onClick = { onCollect(setOf(ConsentCategory.SMS_EXPORTS)) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Collect SMS and MMS") }
+                OutlinedButton(
+                    onClick = { onCollect(setOf(ConsentCategory.CALL_LOGS)) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Collect call history") }
+                OutlinedButton(
+                    onClick = { onCollect(setOf(ConsentCategory.CONTACTS, ConsentCategory.CALENDAR)) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Collect contacts and calendar") }
+                OutlinedButton(
+                    onClick = {
+                        if (notificationAccessEnabled) {
+                            onCollect(setOf(ConsentCategory.NOTIFICATION_EXPORTS))
+                        } else {
+                            onEnableNotificationAccess()
+                        }
+                    },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (notificationAccessEnabled) "Export captured notifications" else "Enable notification backup")
+                }
+                HorizontalDivider()
+                Text("Add app export files", style = MaterialTheme.typography.titleMedium)
+                OutlinedButton(
+                    onClick = { onImportExport(ConsentCategory.EMAIL_EXPORTS) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Add email export files") }
+                OutlinedButton(
+                    onClick = { onImportExport(ConsentCategory.CHAT_EXPORTS) },
+                    enabled = !collecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Add chat export files") }
+                Text(
+                    "Everything stays in Phone Sync and local Android storage. Android requires owner approval for system permissions.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
-            Text(
-                "Everything stays in Phone Sync and local Android storage. Android requires owner approval for system permissions.",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }
@@ -1162,11 +1254,14 @@ private fun BackupPanel(
     selectedItemCount: Int,
     targetName: String?,
     backupStatus: String,
+    onUploadOneDrive: () -> Unit,
+    onUploadGoogleDrive: () -> Unit,
+    onUploadOther: () -> Unit,
     onExecuteBackup: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Collected source data -> target media", style = MaterialTheme.typography.titleLarge)
+            Text("Back up collected data", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Back up on this phone, an SD card, or an attached USB drive.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1186,6 +1281,21 @@ private fun BackupPanel(
                 enabled = !backingUp,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Change local destination") }
+            OutlinedButton(
+                onClick = onUploadOneDrive,
+                enabled = !backingUp && selectedItemCount > 0,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Upload to OneDrive") }
+            OutlinedButton(
+                onClick = onUploadGoogleDrive,
+                enabled = !backingUp && selectedItemCount > 0,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Upload to Google Drive") }
+            OutlinedButton(
+                onClick = onUploadOther,
+                enabled = !backingUp && selectedItemCount > 0,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Upload using another app") }
             OutlinedButton(
                 onClick = onSelectBackup,
                 enabled = !backingUp,
@@ -1213,11 +1323,11 @@ private fun TargetMediaWizard(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Use this phone's Downloads") }
             OutlinedButton(
-                onClick = { onChooseFolder("SD card or USB drive") },
+                onClick = { onChooseFolder("local or provider folder") },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Choose SD card / USB folder") }
+            ) { Text("Choose folder from Android picker") }
             Text(
-                "Phone Sync accepts local Android storage only. Cloud document providers are not used.",
+                "The Android picker may show phone storage, SD/USB storage, and installed document providers.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
@@ -1226,10 +1336,12 @@ private fun TargetMediaWizard(
 }
 
 private const val BACKUP_PANEL_INDEX = 3
+private const val SOURCE_SYNC_SECTION_INDEX = 5
 private const val LOCAL_ANDROID_PEER_ID = "local-android"
+private const val ONEDRIVE_PACKAGE = "com.microsoft.skydrive"
+private const val GOOGLE_DRIVE_PACKAGE = "com.google.android.apps.docs"
 private const val DEFAULT_MOBILE_TARGET_NAME = "This phone / Downloads / Phone Sync Backups"
 private const val LOCAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
-private const val DOWNLOADS_STORAGE_AUTHORITY = "com.android.providers.downloads.documents"
 private const val PRIMARY_STORAGE_ROOT_ID = "primary"
 
 @androidx.compose.runtime.Composable
@@ -1322,8 +1434,14 @@ private fun combineSyncResults(first: SyncResult, second: SyncResult): SyncResul
     )
 }
 
-private fun isLocalStorageTree(uri: Uri): Boolean {
-    return uri.authority == LOCAL_STORAGE_AUTHORITY || uri.authority == DOWNLOADS_STORAGE_AUTHORITY
+private fun treeGrantCategory(uri: Uri): ConsentCategory {
+    return if (uri.authority == LOCAL_STORAGE_AUTHORITY ||
+        uri.authority == "com.android.providers.downloads.documents"
+    ) {
+        ConsentCategory.SELECTED_FOLDERS
+    } else {
+        ConsentCategory.CLOUD_ACCOUNTS
+    }
 }
 
 private fun isNotificationAccessEnabled(context: Context): Boolean {

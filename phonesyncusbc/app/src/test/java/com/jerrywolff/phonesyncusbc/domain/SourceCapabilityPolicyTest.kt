@@ -27,17 +27,17 @@ class SourceCapabilityPolicyTest {
     }
 
     @Test
-    fun `Android personal data uses local providers instead of file imports`() {
+    fun `connected source personal data requires USB-visible exports`() {
         val capabilities = SourceCapabilityPolicy.forSource(
             DetectedSource(SourcePlatform.IOS, SourceFamily.IPHONE, "iPhone"),
         )
 
-        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.SMS_EXPORTS))
-        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CONTACTS))
-        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CALL_LOGS))
-        assertEquals(AccessMode.LOCAL_ANDROID_PROVIDER, capabilities.modeFor(ConsentCategory.CALENDAR))
+        assertEquals(AccessMode.PORTABLE_EXPORT, capabilities.modeFor(ConsentCategory.SMS_EXPORTS))
+        assertEquals(AccessMode.PORTABLE_EXPORT, capabilities.modeFor(ConsentCategory.CONTACTS))
+        assertEquals(AccessMode.PORTABLE_EXPORT, capabilities.modeFor(ConsentCategory.CALL_LOGS))
+        assertEquals(AccessMode.PORTABLE_EXPORT, capabilities.modeFor(ConsentCategory.CALENDAR))
         assertEquals(
-            AccessMode.LOCAL_ANDROID_PROVIDER,
+            AccessMode.PORTABLE_EXPORT,
             capabilities.modeFor(ConsentCategory.NOTIFICATION_EXPORTS),
         )
         assertFalse(ConsentCategory.CLOUD_ACCOUNTS in capabilities.supportedCategories)
