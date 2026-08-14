@@ -11,7 +11,9 @@ Android initiator for consent-based phone synchronization.
 In **Collected source data -> target media**, choose **Choose backup destination**.
 
 - For device storage, an SD card, or a USB drive, select a folder in Android's picker and tap **Use this folder**. Phone Sync retains that folder grant for later backups.
-- For OneDrive, Google Drive, Dropbox, or another cloud app, Phone Sync sends the selected files to that provider's upload screen. Choose the cloud folder and confirm the upload there. The provider app must be installed and signed in.
+- For OneDrive, Google Drive, Dropbox, or another cloud app, first select the provider as the destination, then tap **Start backup**. Choose the cloud folder and confirm the upload in the provider app. After returning to Phone Sync, tap **Complete backup** once the provider reports success, or **Retry cloud upload** if it was canceled.
+
+Local backups display their completed item and byte totals automatically. Cloud completion is user-confirmed because Android upload activities do not return a consistent provider verification result.
 
 ## Build and Push
 

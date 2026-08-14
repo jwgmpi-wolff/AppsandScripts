@@ -90,20 +90,19 @@ class DataExportManager(private val context: Context) {
         var bytes = 0L
         var firstError: String? = null
         entries.forEach { entry ->
-            val destination = entry.destination?.let(Uri::parse)
-            val source = destination?.let { DocumentFile.fromSingleUri(context, it) }
-            if (source == null || !source.canRead()) {
+            val source = entry.destination?.let(Uri::parse)
+            if (source == null) {
                 failed += 1
-                firstError = firstError ?: "An imported item is no longer available."
+                firstError = firstError ?: "A collected item has no stored location."
                 return@forEach
             }
 
             val displayName = uniqueName(
                 exportFolder,
-                sanitizeName(source.name ?: entry.sourceItem.substringAfterLast('/')),
+                sanitizeName(sourceDisplayName(source, entry)),
             )
             val target = exportFolder.createFile(
-                source.type ?: mimeType(entry),
+                context.contentResolver.getType(source) ?: mimeType(entry),
                 displayName,
             )
             if (target == null) {
@@ -113,7 +112,7 @@ class DataExportManager(private val context: Context) {
             }
 
             runCatching {
-                copy(destination!!, target.uri)
+                copy(source, target.uri)
             }.onSuccess { copied ->
                 exported += 1
                 bytes += copied
@@ -124,6 +123,23 @@ class DataExportManager(private val context: Context) {
             }
         }
         return ExportResult(exported, failed, bytes, firstError)
+    }
+
+    private fun sourceDisplayName(source: Uri, entry: AuditEntry): String {
+        val queriedName = runCatching {
+            context.contentResolver.query(
+                source,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()
+        return queriedName
+            ?.takeIf { it.isNotBlank() }
+            ?: entry.sourceItem.substringAfterLast('/').ifBlank { "collected-item" }
     }
 
     fun mimeType(entry: AuditEntry): String {

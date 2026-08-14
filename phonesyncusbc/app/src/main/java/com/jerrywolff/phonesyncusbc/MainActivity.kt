@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -85,6 +86,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+
+private data class CloudBackupTarget(
+    val label: String,
+    val packageName: String?,
+)
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 class MainActivity : ComponentActivity() {
@@ -143,21 +149,31 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var previewVideoUri by remember { mutableStateOf<Uri?>(null) }
     var importCategory by remember { mutableStateOf<ConsentCategory?>(null) }
     var showBackupSelection by remember { mutableStateOf(false) }
-    var backupEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
-    var selectedBackupIds by remember { mutableStateOf(emptySet<Long>()) }
+    val initialBackupEntries = remember { application.auditLog.allCompletedTransfers() }
+    var backupEntries by remember { mutableStateOf(initialBackupEntries) }
+    var selectedBackupIds by remember {
+        mutableStateOf<Set<Long>>(initialBackupEntries.mapTo(linkedSetOf()) { it.id })
+    }
     var showTargetWizard by remember { mutableStateOf(false) }
     var targetUri by remember { mutableStateOf<Uri?>(null) }
     var targetName by remember { mutableStateOf<String?>(null) }
+    var cloudTarget by remember { mutableStateOf<CloudBackupTarget?>(null) }
     var pendingTargetName by remember { mutableStateOf<String?>(null) }
+    var awaitingCloudCompletion by remember { mutableStateOf(false) }
+    var backupStatus by remember { mutableStateOf("Select data and a destination to begin.") }
     val targetSelectionStore = remember { TargetSelectionStore(context) }
     val savedTarget = remember { targetSelectionStore.load() }
     var targetRestored by remember { mutableStateOf(false) }
     var refreshToken by remember { mutableStateOf(0) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
             targetUri = savedTarget?.uri
             targetName = savedTarget?.name
+            if (savedTarget != null) {
+                backupStatus = "${selectedBackupIds.size} items ready for ${savedTarget.name}."
+            }
             targetRestored = true
         }
     }
@@ -276,6 +292,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
             val providerName = pendingTargetName ?: "Selected destination"
             val folderName = DocumentFile.fromTreeUri(context, uri)?.name
+            cloudTarget = null
+            awaitingCloudCompletion = false
             targetUri = uri
             targetName = listOfNotNull(providerName, folderName)
                 .distinctBy(String::lowercase)
@@ -283,8 +301,25 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             targetSelectionStore.save(uri, targetName!!)
             pendingTargetName = null
             showTargetWizard = false
-            message = "Destination saved: ${targetName}. Select data, then start the backup."
+            backupStatus = "${selectedBackupIds.size} items ready for ${targetName}."
+            message = "Destination saved: ${targetName}."
+            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+        } else {
+            pendingTargetName = null
+            message = "Folder selection canceled."
+            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
         }
+    }
+
+    val cloudUploadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { _ ->
+        backingUp = false
+        awaitingCloudCompletion = true
+        val label = cloudTarget?.label ?: "cloud provider"
+        backupStatus = "If $label reported that the upload finished, tap Complete backup."
+        message = "Returned from $label. Confirm completion in Phone Sync."
+        scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
     }
 
     fun launchTargetPicker(label: String) {
@@ -301,36 +336,37 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         allDataExportLauncher.launch(picker)
     }
 
-    fun launchCloudUpload(label: String, packageNames: List<String>) {
+    fun cloudUploadIntent(packageName: String?): Intent? {
         val entries = backupEntries.filter { it.id in selectedBackupIds }
         val destinations = ArrayList(
             entries.mapNotNull { entry -> entry.destination?.let(Uri::parse) }.distinct(),
         )
-        if (destinations.isEmpty()) {
-            message = "No collected items are selected for upload."
+        if (destinations.isEmpty()) return null
+        val action = if (destinations.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
+        return Intent(action).apply {
+            type = "*/*"
+            packageName?.let(::setPackage)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = ClipData.newUri(context.contentResolver, "Phone Sync backup", destinations.first()).apply {
+                destinations.drop(1).forEach { addItem(ClipData.Item(it)) }
+            }
+            if (destinations.size == 1) {
+                putExtra(Intent.EXTRA_STREAM, destinations.first())
+            } else {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, destinations)
+            }
+            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
+        }
+    }
+
+    fun selectCloudTarget(label: String, packageNames: List<String>) {
+        if (cloudUploadIntent(null) == null) {
+            message = "Select at least one available collected item first."
+            showBackupSelection = true
             return
         }
-
-        fun uploadIntent(packageName: String? = null): Intent {
-            val action = if (destinations.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
-            return Intent(action).apply {
-                type = "*/*"
-                packageName?.let(::setPackage)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                clipData = ClipData.newUri(context.contentResolver, "Phone Sync backup", destinations.first()).apply {
-                    destinations.drop(1).forEach { addItem(ClipData.Item(it)) }
-                }
-                if (destinations.size == 1) {
-                    putExtra(Intent.EXTRA_STREAM, destinations.first())
-                } else {
-                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, destinations)
-                }
-                putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
-            }
-        }
-
         val packageName = packageNames.firstOrNull { candidate ->
-            context.packageManager.resolveActivity(uploadIntent(candidate), 0) != null
+            cloudUploadIntent(candidate)?.let { context.packageManager.resolveActivity(it, 0) } != null
         }
         if (packageNames.isNotEmpty() && packageName == null) {
             val storePackage = packageNames.first()
@@ -347,21 +383,37 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 }
             return
         }
-
-        val upload = uploadIntent(packageName)
-        val launchIntent = if (packageNames.isEmpty()) {
-            Intent.createChooser(upload, "Upload backup with")
-        } else {
-            upload
+            targetSelectionStore.clear()
+            targetUri = null
+            targetName = label
+            cloudTarget = CloudBackupTarget(label, packageName)
+            awaitingCloudCompletion = false
+            showTargetWizard = false
+            backupStatus = "${selectedBackupIds.size} items ready for $label."
+            message = "$label selected. Tap Start backup."
+            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
         }
-        runCatching { context.startActivity(launchIntent) }
-            .onSuccess {
-                showTargetWizard = false
-                message = "$label opened with ${destinations.size} items. Choose its cloud folder and confirm the upload."
+
+        fun startCloudBackup(target: CloudBackupTarget) {
+            val upload = cloudUploadIntent(target.packageName)
+            if (upload == null) {
+                backingUp = false
+                backupStatus = "Backup could not start because the selected items are unavailable."
+                return
             }
-            .onFailure { throwable ->
-                message = "Could not open $label: ${throwable.message ?: throwable.javaClass.simpleName}"
+            val launchIntent = if (target.packageName == null) {
+                Intent.createChooser(upload, "Upload backup with")
+            } else {
+                upload
             }
+            backingUp = true
+            awaitingCloudCompletion = false
+            backupStatus = "Opening ${target.label} to choose a folder and upload..."
+            runCatching { cloudUploadLauncher.launch(launchIntent) }
+                .onFailure { throwable ->
+                    backingUp = false
+                    backupStatus = "Could not open ${target.label}: ${throwable.message ?: throwable.javaClass.simpleName}"
+                }
     }
 
     Scaffold(
@@ -379,6 +431,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         },
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -426,29 +479,50 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     backingUp = backingUp,
                     selectedItemCount = selectedBackupIds.size,
                     targetName = targetName,
-                    targetReady = targetUri != null,
+                    targetReady = targetUri != null || cloudTarget != null,
+                    awaitingCloudCompletion = awaitingCloudCompletion,
+                    backupStatus = backupStatus,
                     onExecuteBackup = {
-                        val destination = targetUri ?: return@BackupPanel
-                        if (!backingUp) {
+                        val selectedEntries = backupEntries.filter { it.id in selectedBackupIds }
+                        val selectedCloud = cloudTarget
+                        val destination = targetUri
+                        if (selectedEntries.isEmpty()) {
+                            backupStatus = "Select at least one available item before starting backup."
+                        } else if (selectedCloud != null) {
+                            startCloudBackup(selectedCloud)
+                        } else if (destination != null && !backingUp) {
                             backingUp = true
+                            awaitingCloudCompletion = false
+                            backupStatus = "Copying ${selectedEntries.size} items to ${targetName ?: "selected folder"}..."
                             message = "BACKUP: moving collected source data to $targetName..."
                             scope.launch {
                                 runCatching {
                                     withContext(Dispatchers.IO) {
                                         DataExportManager(context).export(
-                                            backupEntries.filter { it.id in selectedBackupIds },
+                                            selectedEntries,
                                             destination,
                                         )
                                     }
                                 }.onSuccess { result ->
-                                    message = "Backup complete: ${result.exportedItems} items (${formatBytes(result.bytesExported)})." +
-                                        if (result.failedItems > 0) " ${result.failedItems} failed." else ""
+                                    backupStatus = if (result.failedItems == 0) {
+                                        "Backup complete: ${result.exportedItems} items (${formatBytes(result.bytesExported)})."
+                                    } else {
+                                        "Backup finished: ${result.exportedItems} copied and ${result.failedItems} failed." +
+                                            result.error?.let { " First error: $it" }.orEmpty()
+                                    }
+                                    message = backupStatus
                                 }.onFailure { throwable ->
-                                    message = "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
+                                    backupStatus = "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
+                                    message = backupStatus
                                 }
                                 backingUp = false
                             }
                         }
+                    },
+                    onCompleteCloudBackup = {
+                        awaitingCloudCompletion = false
+                        backupStatus = "Backup complete: ${selectedBackupIds.size} items confirmed in ${cloudTarget?.label ?: "cloud storage"}."
+                        message = backupStatus
                     },
                 )
             }
@@ -461,10 +535,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         onCancel = { showBackupSelection = false },
                         onContinue = {
                             showBackupSelection = false
-                            if (targetUri == null) {
+                            backupStatus = "${selectedBackupIds.size} items selected."
+                            if (targetUri == null && cloudTarget == null) {
                                 showTargetWizard = true
                             } else {
-                                message = "${selectedBackupIds.size} items ready for ${targetName}. Press Start backup."
+                                backupStatus = "${selectedBackupIds.size} items ready for ${targetName}."
+                                scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
                             }
                         },
                     )
@@ -478,7 +554,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                             launchTargetPicker(selectedTargetName)
                         },
                         onUploadCloud = { label, packages ->
-                            launchCloudUpload(label, packages)
+                            selectCloudTarget(label, packages)
                         },
                     )
                 }
@@ -984,7 +1060,10 @@ private fun BackupPanel(
     selectedItemCount: Int,
     targetName: String?,
     targetReady: Boolean,
+    awaitingCloudCompletion: Boolean,
+    backupStatus: String,
     onExecuteBackup: () -> Unit,
+    onCompleteCloudBackup: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -993,22 +1072,36 @@ private fun BackupPanel(
                 "Choose a local folder or send the selected data to a cloud app.",
                 style = MaterialTheme.typography.bodySmall,
             )
+            Text("$selectedItemCount items selected")
             if (targetReady) {
                 Text("Destination: ${targetName ?: "selected folder"}")
-                Text("$selectedItemCount items selected", style = MaterialTheme.typography.bodySmall)
-                Button(
-                    onClick = onExecuteBackup,
-                    enabled = !backingUp && selectedItemCount > 0,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (backingUp) "Backing up..." else "Start backup")
+                Text(backupStatus, style = MaterialTheme.typography.bodySmall)
+                if (awaitingCloudCompletion) {
+                    Button(
+                        onClick = onCompleteCloudBackup,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Complete backup") }
+                    OutlinedButton(
+                        onClick = onExecuteBackup,
+                        enabled = !backingUp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Retry cloud upload") }
+                } else {
+                    Button(
+                        onClick = onExecuteBackup,
+                        enabled = !backingUp && selectedItemCount > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (backingUp) "Backing up..." else "Start backup")
+                    }
                 }
                 OutlinedButton(
                     onClick = onChooseTarget,
                     enabled = !backingUp,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Choose a different destination folder") }
+                ) { Text("Change destination") }
             } else {
+                Text(backupStatus, style = MaterialTheme.typography.bodySmall)
                 Button(
                     onClick = onChooseTarget,
                     enabled = !backingUp,
@@ -1037,7 +1130,7 @@ private fun TargetMediaWizard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Select backup target media", style = MaterialTheme.typography.headlineSmall)
-            Text("Local and removable storage use Android's folder picker. Cloud buttons open the provider's upload screen so you can choose its folder there.")
+            Text("Choose a destination here, then return to the backup card and tap Start backup.")
             Button(
                 onClick = { onChooseFolder("device, SD card, or USB drive") },
                 modifier = Modifier.fillMaxWidth(),
@@ -1045,15 +1138,15 @@ private fun TargetMediaWizard(
             OutlinedButton(
                 onClick = { onUploadCloud("OneDrive", listOf("com.microsoft.skydrive")) },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload selected data to OneDrive") }
+            ) { Text("Use OneDrive") }
             OutlinedButton(
                 onClick = { onUploadCloud("Google Drive", listOf("com.google.android.apps.docs")) },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload selected data to Google Drive") }
+            ) { Text("Use Google Drive") }
             OutlinedButton(
                 onClick = { onUploadCloud("Dropbox", listOf("com.dropbox.android")) },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload selected data to Dropbox") }
+            ) { Text("Use Dropbox") }
             OutlinedButton(
                 onClick = { onUploadCloud("Cloud app", emptyList()) },
                 modifier = Modifier.fillMaxWidth(),
@@ -1066,6 +1159,8 @@ private fun TargetMediaWizard(
         }
     }
 }
+
+private const val BACKUP_PANEL_INDEX = 3
 
 @androidx.compose.runtime.Composable
 private fun BackupSelectionView(
