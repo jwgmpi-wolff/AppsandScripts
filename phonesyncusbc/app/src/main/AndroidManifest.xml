@@ -12,17 +12,6 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
 
-    <queries>
-        <package android:name="com.sec.android.easyMover" />
-        <package android:name="com.microsoft.skydrive" />
-        <package android:name="com.google.android.apps.docs" />
-        <package android:name="com.dropbox.android" />
-        <intent>
-            <action android:name="android.intent.action.SEND_MULTIPLE" />
-            <data android:mimeType="*/*" />
-        </intent>
-    </queries>
-
     <application
         android:name=".PhoneSyncApplication"
         android:allowBackup="false"

@@ -40,6 +40,7 @@ class SourceCapabilityPolicyTest {
             AccessMode.LOCAL_ANDROID_PROVIDER,
             capabilities.modeFor(ConsentCategory.NOTIFICATION_EXPORTS),
         )
+        assertFalse(ConsentCategory.CLOUD_ACCOUNTS in capabilities.supportedCategories)
     }
 
     @Test

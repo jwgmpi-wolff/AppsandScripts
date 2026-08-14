@@ -5,7 +5,6 @@ enum class AccessMode {
     PTP,
     PORTABLE_EXPORT,
     SAF,
-    PROVIDER_AUTHORIZATION,
     LOCAL_ANDROID_PROVIDER,
 }
 
@@ -103,11 +102,6 @@ object SourceCapabilityPolicy {
                     "Folders selected with Android's system file picker",
                 ),
                 CategoryCapability(
-                    ConsentCategory.CLOUD_ACCOUNTS,
-                    AccessMode.PROVIDER_AUTHORIZATION,
-                    "Provider folders approved through Android's system file picker or OAuth",
-                ),
-                CategoryCapability(
                     ConsentCategory.SMS_EXPORTS,
                     AccessMode.LOCAL_ANDROID_PROVIDER,
                     "SMS/MMS from this Android device after permission approval; connected sources require migration or export",
@@ -139,7 +133,7 @@ object SourceCapabilityPolicy {
         ProtectedSurfacePolicy(
             ProtectedSurface.SMS_DATABASE,
             supported = false,
-            alternative = "Use Android's official SMS provider locally, Smart Switch migration, or a source export.",
+            alternative = "Use Android's official SMS provider locally or import a source export file.",
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.CHAT_APPLICATION_DATABASE,

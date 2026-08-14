@@ -14,6 +14,7 @@ import android.graphics.BitmapFactory
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.widget.MediaController
 import android.widget.Toast
@@ -78,7 +79,6 @@ import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
-import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
 import com.jerrywolff.phonesyncusbc.domain.TrustContext
 import com.jerrywolff.phonesyncusbc.domain.TrustDecision
 import com.jerrywolff.phonesyncusbc.domain.TrustPolicy
@@ -92,11 +92,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
-
-private data class CloudBackupTarget(
-    val label: String,
-    val packageName: String?,
-)
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 class MainActivity : ComponentActivity() {
@@ -162,11 +157,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     }
     var showTargetWizard by remember { mutableStateOf(false) }
     var targetUri by remember { mutableStateOf<Uri?>(null) }
-    var targetName by remember { mutableStateOf<String?>(null) }
-    var cloudTarget by remember { mutableStateOf<CloudBackupTarget?>(null) }
+    var targetName by remember { mutableStateOf(DEFAULT_MOBILE_TARGET_NAME) }
     var pendingTargetName by remember { mutableStateOf<String?>(null) }
-    var awaitingCloudCompletion by remember { mutableStateOf(false) }
-    var backupStatus by remember { mutableStateOf("Select data and a destination to begin.") }
+    var backupStatus by remember {
+        mutableStateOf("${selectedBackupIds.size} items ready for $DEFAULT_MOBILE_TARGET_NAME.")
+    }
     val existingPersonalExports = remember {
         application.auditLog.completedTransfers(LOCAL_ANDROID_PEER_ID)
     }
@@ -192,17 +187,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var targetRestored by remember { mutableStateOf(false) }
     var refreshToken by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
-    val smartSwitchAvailable = remember {
-        context.packageManager.getLaunchIntentForPackage(SMART_SWITCH_PACKAGE) != null
-    }
 
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
             targetUri = savedTarget?.uri
-            targetName = savedTarget?.name
-            if (savedTarget != null) {
-                backupStatus = "${selectedBackupIds.size} items ready for ${savedTarget.name}."
-            }
+            targetName = savedTarget?.name ?: DEFAULT_MOBILE_TARGET_NAME
+            backupStatus = "${selectedBackupIds.size} items ready for $targetName."
             targetRestored = true
         }
     }
@@ -347,19 +337,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     ) { uri ->
         val currentIdentity = identity ?: return@rememberLauncherForActivityResult
         if (uri != null) {
+            if (!isLocalStorageTree(uri)) {
+                message = "Choose a folder on this phone, an SD card, or an attached USB drive."
+                return@rememberLauncherForActivityResult
+            }
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
-            val grantCategory = treeGrantCategory(uri)
             val grant = application.safGrantStore.add(
                 currentIdentity.peerId,
-                grantCategory,
+                ConsentCategory.SELECTED_FOLDERS,
                 uri,
-                if (grantCategory == ConsentCategory.CLOUD_ACCOUNTS) "Cloud provider" else "Selected folder",
+                "Selected local folder",
             )
             grants = grants + grant
-            selectedCategories = selectedCategories + grantCategory
+            selectedCategories = selectedCategories + ConsentCategory.SELECTED_FOLDERS
             trust?.let { storedTrust ->
                 trust = application.trustStore.updateCategories(storedTrust, selectedCategories)
             }
@@ -370,6 +363,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null && libraryEntries.isNotEmpty()) {
+            if (!isLocalStorageTree(uri)) {
+                message = "Export requires storage on this phone, an SD card, or an attached USB drive."
+                return@rememberLauncherForActivityResult
+            }
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     DataExportManager(context).export(libraryEntries, uri)
@@ -410,14 +407,18 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     ) { result ->
         val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
         if (uri != null) {
+            if (!isLocalStorageTree(uri)) {
+                pendingTargetName = null
+                message = "Only storage on this phone, an SD card, or an attached USB drive can be used."
+                scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
+                return@rememberLauncherForActivityResult
+            }
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
             val providerName = pendingTargetName ?: "Selected destination"
             val folderName = DocumentFile.fromTreeUri(context, uri)?.name
-            cloudTarget = null
-            awaitingCloudCompletion = false
             targetUri = uri
             targetName = listOfNotNull(providerName, folderName)
                 .distinctBy(String::lowercase)
@@ -435,17 +436,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
-    val cloudUploadLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { _ ->
-        backingUp = false
-        awaitingCloudCompletion = true
-        val label = cloudTarget?.label ?: "cloud provider"
-        backupStatus = "If $label reported that the upload finished, tap Complete backup."
-        message = "Returned from $label. Confirm completion in Phone Sync."
-        scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
-    }
-
     fun launchTargetPicker(label: String) {
         pendingTargetName = label
         val picker = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -453,6 +443,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             putExtra(Intent.EXTRA_TITLE, "Choose backup folder")
+            putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildRootUri(LOCAL_STORAGE_AUTHORITY, PRIMARY_STORAGE_ROOT_ID),
+            )
         }
         val pickerInstruction = "Navigate to the $label folder, then tap USE THIS FOLDER at the bottom."
         message = pickerInstruction
@@ -460,84 +454,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         allDataExportLauncher.launch(picker)
     }
 
-    fun cloudUploadIntent(packageName: String?): Intent? {
-        val entries = backupEntries.filter { it.id in selectedBackupIds }
-        val destinations = ArrayList(
-            entries.mapNotNull { entry -> entry.destination?.let(Uri::parse) }.distinct(),
-        )
-        if (destinations.isEmpty()) return null
-        val action = if (destinations.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
-        return Intent(action).apply {
-            type = "*/*"
-            packageName?.let(::setPackage)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            clipData = ClipData.newUri(context.contentResolver, "Phone Sync backup", destinations.first()).apply {
-                destinations.drop(1).forEach { addItem(ClipData.Item(it)) }
-            }
-            if (destinations.size == 1) {
-                putExtra(Intent.EXTRA_STREAM, destinations.first())
-            } else {
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, destinations)
-            }
-            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
-        }
-    }
-
-    fun selectCloudTarget(label: String, packageNames: List<String>) {
-        if (cloudUploadIntent(null) == null) {
-            message = "Select at least one available collected item first."
-            showBackupSelection = true
-            return
-        }
-        val packageName = packageNames.firstOrNull { candidate ->
-            cloudUploadIntent(candidate)?.let { context.packageManager.resolveActivity(it, 0) } != null
-        }
-        if (packageNames.isNotEmpty() && packageName == null) {
-            val storePackage = packageNames.first()
-            message = "$label is not installed. Opening its Play Store page."
-            val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$storePackage"))
-            runCatching { context.startActivity(marketIntent) }
-                .onFailure {
-                    context.startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://play.google.com/store/apps/details?id=$storePackage"),
-                        ),
-                    )
-                }
-            return
-        }
-            targetSelectionStore.clear()
-            targetUri = null
-            targetName = label
-            cloudTarget = CloudBackupTarget(label, packageName)
-            awaitingCloudCompletion = false
-            showTargetWizard = false
-            backupStatus = "${selectedBackupIds.size} items ready for $label."
-            message = "$label selected. Tap Start backup."
-            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
-        }
-
-        fun startCloudBackup(target: CloudBackupTarget) {
-            val upload = cloudUploadIntent(target.packageName)
-            if (upload == null) {
-                backingUp = false
-                backupStatus = "Backup could not start because the selected items are unavailable."
-                return
-            }
-            val launchIntent = if (target.packageName == null) {
-                Intent.createChooser(upload, "Upload backup with")
-            } else {
-                upload
-            }
-            backingUp = true
-            awaitingCloudCompletion = false
-            backupStatus = "Opening ${target.label} to choose a folder and upload..."
-            runCatching { cloudUploadLauncher.launch(launchIntent) }
-                .onFailure { throwable ->
-                    backingUp = false
-                    backupStatus = "Could not open ${target.label}: ${throwable.message ?: throwable.javaClass.simpleName}"
-                }
+    fun useDefaultMobileTarget() {
+        targetSelectionStore.clear()
+        targetUri = null
+        targetName = DEFAULT_MOBILE_TARGET_NAME
+        showTargetWizard = false
+        backupStatus = "${selectedBackupIds.size} items ready for $targetName."
+        message = "Backups will stay on this phone in Downloads."
+        scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
     }
 
     Scaffold(
@@ -603,29 +527,24 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     backingUp = backingUp,
                     selectedItemCount = selectedBackupIds.size,
                     targetName = targetName,
-                    targetReady = targetUri != null || cloudTarget != null,
-                    awaitingCloudCompletion = awaitingCloudCompletion,
                     backupStatus = backupStatus,
                     onExecuteBackup = {
                         val selectedEntries = backupEntries.filter { it.id in selectedBackupIds }
-                        val selectedCloud = cloudTarget
                         val destination = targetUri
                         if (selectedEntries.isEmpty()) {
                             backupStatus = "Select at least one available item before starting backup."
-                        } else if (selectedCloud != null) {
-                            startCloudBackup(selectedCloud)
-                        } else if (destination != null && !backingUp) {
+                        } else if (!backingUp) {
                             backingUp = true
-                            awaitingCloudCompletion = false
-                            backupStatus = "Copying ${selectedEntries.size} items to ${targetName ?: "selected folder"}..."
+                            backupStatus = "Copying ${selectedEntries.size} items to $targetName..."
                             message = "BACKUP: moving collected source data to $targetName..."
                             scope.launch {
                                 runCatching {
                                     withContext(Dispatchers.IO) {
-                                        DataExportManager(context).export(
-                                            selectedEntries,
-                                            destination,
-                                        )
+                                        if (destination == null) {
+                                            DataExportManager(context).backupToDownloads(selectedEntries)
+                                        } else {
+                                            DataExportManager(context).export(selectedEntries, destination)
+                                        }
                                     }
                                 }.onSuccess { result ->
                                     backupStatus = if (result.failedItems == 0) {
@@ -643,11 +562,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                             }
                         }
                     },
-                    onCompleteCloudBackup = {
-                        awaitingCloudCompletion = false
-                        backupStatus = "Backup complete: ${selectedBackupIds.size} items confirmed in ${cloudTarget?.label ?: "cloud storage"}."
-                        message = backupStatus
-                    },
                 )
             }
             item {
@@ -655,22 +569,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     status = personalDataStatus,
                     collecting = collectingPersonalData,
                     notificationAccessEnabled = notificationAccessEnabled,
-                    smartSwitchAvailable = smartSwitchAvailable,
                     onCollect = ::requestPersonalDataCollection,
                     onEnableNotificationAccess = {
                         notificationAccessLauncher.launch(
                             Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
                         )
-                    },
-                    onOpenIphoneTransfer = {
-                        val launchIntent = context.packageManager
-                            .getLaunchIntentForPackage(SMART_SWITCH_PACKAGE)
-                        if (launchIntent == null) {
-                            message = "Samsung Smart Switch is not installed."
-                        } else {
-                            message = "Complete the iPhone transfer in Smart Switch, then return and collect Android personal data."
-                            context.startActivity(launchIntent)
-                        }
                     },
                 )
             }
@@ -684,12 +587,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         onContinue = {
                             showBackupSelection = false
                             backupStatus = "${selectedBackupIds.size} items selected."
-                            if (targetUri == null && cloudTarget == null) {
-                                showTargetWizard = true
-                            } else {
-                                backupStatus = "${selectedBackupIds.size} items ready for ${targetName}."
-                                scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
-                            }
+                            backupStatus = "${selectedBackupIds.size} items ready for $targetName."
+                            scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
                         },
                     )
                 }
@@ -698,11 +597,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 item {
                     TargetMediaWizard(
                         onBack = { showTargetWizard = false },
+                        onUsePhoneStorage = ::useDefaultMobileTarget,
                         onChooseFolder = { selectedTargetName ->
                             launchTargetPicker(selectedTargetName)
-                        },
-                        onUploadCloud = { label, packages ->
-                            selectCloudTarget(label, packages)
                         },
                     )
                 }
@@ -1021,7 +918,7 @@ private fun TrustedDashboard(
                 Button(onClick = onSync, enabled = !syncing) {
                     Text(if (syncing) "Syncing..." else "Sync connected files")
                 }
-                OutlinedButton(onClick = onSelectFolder) { Text("Add folder/cloud") }
+                OutlinedButton(onClick = onSelectFolder) { Text("Add local source folder") }
             }
             HorizontalDivider()
             Text("Import exports from the connected source", style = MaterialTheme.typography.titleMedium)
@@ -1047,7 +944,7 @@ private fun TrustedDashboard(
             if (grants.isNotEmpty()) Text("Authorized locations: ${grants.size}")
             Text(
                 "The connected iPhone exposes media over PTP, not its private SMS, call, chat, mail, or notification databases. " +
-                    "Use the source app's supported export for those records. No cloud client ID is required.",
+                    "Use a local source-app export file for those records.",
                 style = MaterialTheme.typography.bodySmall,
             )
             HorizontalDivider()
@@ -1209,10 +1106,8 @@ private fun AndroidPersonalDataPanel(
     status: String,
     collecting: Boolean,
     notificationAccessEnabled: Boolean,
-    smartSwitchAvailable: Boolean,
     onCollect: (Set<ConsentCategory>) -> Unit,
     onEnableNotificationAccess: () -> Unit,
-    onOpenIphoneTransfer: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1251,19 +1146,8 @@ private fun AndroidPersonalDataPanel(
             ) {
                 Text(if (notificationAccessEnabled) "Export captured notifications" else "Enable notification backup")
             }
-            HorizontalDivider()
-            Text("Transfer from iPhone", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Smart Switch can migrate supported iPhone SMS, call history, contacts, and calendar records to this Samsung without a client ID.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            OutlinedButton(
-                onClick = onOpenIphoneTransfer,
-                enabled = smartSwitchAvailable && !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Open Smart Switch for iPhone transfer") }
-            Text(
-                "After migration, collect all Android personal data to add those records to the backup set. Android requires owner approval for system permissions.",
+                "Everything stays in Phone Sync and local Android storage. Android requires owner approval for system permissions.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -1277,62 +1161,38 @@ private fun BackupPanel(
     backingUp: Boolean,
     selectedItemCount: Int,
     targetName: String?,
-    targetReady: Boolean,
-    awaitingCloudCompletion: Boolean,
     backupStatus: String,
     onExecuteBackup: () -> Unit,
-    onCompleteCloudBackup: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Collected source data -> target media", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Choose a local folder or send the selected data to a cloud app.",
+                "Back up on this phone, an SD card, or an attached USB drive.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Text("$selectedItemCount items selected")
-            if (targetReady) {
-                Text("Destination: ${targetName ?: "selected folder"}")
-                Text(backupStatus, style = MaterialTheme.typography.bodySmall)
-                if (awaitingCloudCompletion) {
-                    Button(
-                        onClick = onCompleteCloudBackup,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Complete backup") }
-                    OutlinedButton(
-                        onClick = onExecuteBackup,
-                        enabled = !backingUp,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Retry cloud upload") }
-                } else {
-                    Button(
-                        onClick = onExecuteBackup,
-                        enabled = !backingUp && selectedItemCount > 0,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (backingUp) "Backing up..." else "Start backup")
-                    }
-                }
-                OutlinedButton(
-                    onClick = onChooseTarget,
-                    enabled = !backingUp,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Change destination") }
-            } else {
-                Text(backupStatus, style = MaterialTheme.typography.bodySmall)
-                Button(
-                    onClick = onChooseTarget,
-                    enabled = !backingUp,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Choose backup destination") }
+            Text("Destination: ${targetName ?: DEFAULT_MOBILE_TARGET_NAME}")
+            Text(backupStatus, style = MaterialTheme.typography.bodySmall)
+            Button(
+                onClick = onExecuteBackup,
+                enabled = !backingUp && selectedItemCount > 0,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (backingUp) "Backing up..." else "Start backup")
             }
+            OutlinedButton(
+                onClick = onChooseTarget,
+                enabled = !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Change local destination") }
             OutlinedButton(
                 onClick = onSelectBackup,
                 enabled = !backingUp,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Select data to back up") }
             Text(
-                "Target options: device folder, SD card, USB drive, OneDrive, Google Drive, Dropbox, or another upload app.",
+                "Default target: Downloads / Phone Sync Backups. Optional targets: SD card or attached USB storage.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -1342,35 +1202,22 @@ private fun BackupPanel(
 @androidx.compose.runtime.Composable
 private fun TargetMediaWizard(
     onBack: () -> Unit,
+    onUsePhoneStorage: () -> Unit,
     onChooseFolder: (String) -> Unit,
-    onUploadCloud: (String, List<String>) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Select backup target media", style = MaterialTheme.typography.headlineSmall)
-            Text("Choose a destination here, then return to the backup card and tap Start backup.")
             Button(
-                onClick = { onChooseFolder("device, SD card, or USB drive") },
+                onClick = onUsePhoneStorage,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Device / SD card / USB folder") }
+            ) { Text("Use this phone's Downloads") }
             OutlinedButton(
-                onClick = { onUploadCloud("OneDrive", listOf("com.microsoft.skydrive")) },
+                onClick = { onChooseFolder("SD card or USB drive") },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Use OneDrive") }
-            OutlinedButton(
-                onClick = { onUploadCloud("Google Drive", listOf("com.google.android.apps.docs")) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Use Google Drive") }
-            OutlinedButton(
-                onClick = { onUploadCloud("Dropbox", listOf("com.dropbox.android")) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Use Dropbox") }
-            OutlinedButton(
-                onClick = { onUploadCloud("Cloud app", emptyList()) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Other cloud app") }
+            ) { Text("Choose SD card / USB folder") }
             Text(
-                "The cloud app must be installed and signed in. It controls the final folder choice and upload confirmation.",
+                "Phone Sync accepts local Android storage only. Cloud document providers are not used.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
@@ -1379,8 +1226,11 @@ private fun TargetMediaWizard(
 }
 
 private const val BACKUP_PANEL_INDEX = 3
-private const val SMART_SWITCH_PACKAGE = "com.sec.android.easyMover"
 private const val LOCAL_ANDROID_PEER_ID = "local-android"
+private const val DEFAULT_MOBILE_TARGET_NAME = "This phone / Downloads / Phone Sync Backups"
+private const val LOCAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+private const val DOWNLOADS_STORAGE_AUTHORITY = "com.android.providers.downloads.documents"
+private const val PRIMARY_STORAGE_ROOT_ID = "primary"
 
 @androidx.compose.runtime.Composable
 private fun BackupSelectionView(
@@ -1445,7 +1295,7 @@ private fun categoryDescription(category: ConsentCategory): String = when (categ
     ConsentCategory.CALL_LOGS -> "Call history exported from this Android device."
     ConsentCategory.CALENDAR -> "Calendar events exported from this Android device."
     ConsentCategory.SELECTED_FOLDERS -> "Files collected from the selected source folder."
-    ConsentCategory.CLOUD_ACCOUNTS -> "Files collected from the authorized cloud provider."
+    ConsentCategory.CLOUD_ACCOUNTS -> "Legacy cloud-provider data retained from an earlier app version."
     ConsentCategory.SMS_EXPORTS -> "User-created SMS export files, not private SMS databases."
     ConsentCategory.CHAT_EXPORTS -> "User-created chat export files, not private chat databases."
     ConsentCategory.EMAIL_EXPORTS -> "User-created email export files, not private mail databases."
@@ -1472,14 +1322,8 @@ private fun combineSyncResults(first: SyncResult, second: SyncResult): SyncResul
     )
 }
 
-private fun treeGrantCategory(uri: Uri): ConsentCategory {
-    return if (uri.authority == "com.android.externalstorage.documents" ||
-        uri.authority == "com.android.providers.downloads.documents"
-    ) {
-        ConsentCategory.SELECTED_FOLDERS
-    } else {
-        ConsentCategory.CLOUD_ACCOUNTS
-    }
+private fun isLocalStorageTree(uri: Uri): Boolean {
+    return uri.authority == LOCAL_STORAGE_AUTHORITY || uri.authority == DOWNLOADS_STORAGE_AUTHORITY
 }
 
 private fun isNotificationAccessEnabled(context: Context): Boolean {
