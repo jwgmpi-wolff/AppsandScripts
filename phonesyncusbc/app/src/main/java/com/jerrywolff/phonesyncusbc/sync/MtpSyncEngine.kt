@@ -29,6 +29,8 @@ data class MtpScanSummary(
     val visibleCategories: Set<ConsentCategory> = emptySet(),
     val downloadDirectoryVisible: Boolean = false,
     val phoneSyncDirectoryVisible: Boolean = false,
+    val fullObjectSupported: Boolean? = null,
+    val partialObject64Supported: Boolean? = null,
 )
 
 data class SyncResult(
@@ -69,6 +71,8 @@ class MtpSyncEngine(
         val visibleCategories = linkedSetOf<ConsentCategory>()
         var downloadDirectoryVisible = false
         var phoneSyncDirectoryVisible = false
+        var fullObjectSupported: Boolean? = null
+        var partialObject64Supported: Boolean? = null
 
         val mtpSession = sourceResolver.openMtp(source.device)
         if (mtpSession == null) {
@@ -79,6 +83,14 @@ class MtpSyncEngine(
 
         return try {
             mtpSession.use { session ->
+                runCatching { session.device.deviceInfo }.getOrNull()?.let { deviceInfo ->
+                    fullObjectSupported = deviceInfo.isOperationSupported(
+                        MtpConstants.OPERATION_GET_OBJECT,
+                    )
+                    partialObject64Supported = deviceInfo.isOperationSupported(
+                        MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
+                    )
+                }
                 walkObjects(session.device) { candidate ->
                     scannedItems += 1
                     val normalizedPath = candidate.path.replace('\\', '/').lowercase()
@@ -185,6 +197,8 @@ class MtpSyncEngine(
                     visibleCategories = visibleCategories,
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
+                    fullObjectSupported = fullObjectSupported,
+                    partialObject64Supported = partialObject64Supported,
                 ),
             )
         } catch (throwable: Throwable) {
@@ -208,6 +222,8 @@ class MtpSyncEngine(
                     visibleCategories = visibleCategories,
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
+                    fullObjectSupported = fullObjectSupported,
+                    partialObject64Supported = partialObject64Supported,
                 ),
             )
         }

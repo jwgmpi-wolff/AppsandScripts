@@ -9,7 +9,7 @@ Android USB host for consent-based phone synchronization and backup.
 ## Workflow
 
 1. Open **USB Source**, connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
-2. Authorize the available source categories, then tap **Scan and pull USB-visible data**. Phone Sync copies every exposed media/document file and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, and notification exports.
+2. Authorize the available source categories, then tap **Request all USB-visible files**. Phone Sync copies every exposed media/document file and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, and notification exports.
 3. Open **This Device** to prepare protected Android data or browse data already collected on this phone.
 4. Open **Backup Activity** to select collected items, choose Android Downloads or another destination, and start a backup or provider upload.
 
@@ -18,6 +18,7 @@ Installed storage apps handle their own authentication through Android. Phone Sy
 ## Source Coverage
 
 - **MTP Android/Windows sources:** media, documents, and export files exposed in shared storage.
+- **Legacy MTP sources:** when a phone such as a Lumia rejects 64-bit chunked reads, Phone Sync automatically retries with MTP's standard full-object request.
 - **PTP iPhone sources:** photos and videos exposed by iOS.
 - **Android protected data:** install/open Phone Sync on the source Android, expand **This Device > Prepare this Android phone**, and create the exports first. Connect that source using **File transfer / Android Auto** USB mode; another Phone Sync device can then pull the shared-storage exports.
 - **Email and chat:** use the source app's supported export, then choose **Add email export files** or **Add chat export files** in the collapsed preparation panel. Phone Sync copies those files into USB-visible shared storage.
@@ -33,9 +34,11 @@ If **USB export readiness** reports that SMS, calls, or email were not exposed:
 2. Tap **Collect SMS and MMS** and **Collect call history**.
 3. Export email from the source mail app, then tap **Add email export files** in Phone Sync.
 4. Reconnect the source to the collecting device, keep it unlocked, and select **File transfer / Android Auto** rather than **Photo transfer** or charging-only mode.
-5. On the collecting device, tap **Scan and pull USB-visible data** again.
+5. On the collecting device, tap **Request all USB-visible files** again.
 
 iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. Those records require a supported source-app or backup export before Phone Sync can import them.
+
+Windows Phone exposes shared media through MTP but does not publish its private SMS, call-history, or email stores as MTP objects. Phone Sync requests every object the phone advertises, including a legacy full-file compatibility request, but no collecting-device app can force Windows Phone to expose stores its OS withholds. Use Microsoft-account SMS backup when available and export email from its server/provider; Windows Phone has no standard USB call-history export.
 
 ## Destinations
 

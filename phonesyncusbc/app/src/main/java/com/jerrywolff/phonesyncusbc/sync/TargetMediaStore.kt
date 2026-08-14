@@ -2,6 +2,7 @@ package com.jerrywolff.phonesyncusbc.sync
 
 import android.content.ContentValues
 import android.content.Context
+import android.mtp.MtpConstants
 import android.mtp.MtpDevice
 import android.net.Uri
 import android.os.Environment
@@ -33,24 +34,101 @@ class TargetMediaStore(private val context: Context) {
             modifiedAtEpochMillis = modifiedAtEpochMillis,
             mimeType = mimeType(displayName, category),
         ) { destination ->
-            context.contentResolver.openOutputStream(destination, "w").use { output ->
-                checkNotNull(output) { "Android could not open the destination item." }
-                if (expectedBytes > 0) {
-                    val buffer = ByteArray(MTP_CHUNK_BYTES)
-                    var offset = 0L
-                    while (offset < expectedBytes) {
-                        val requested = minOf(buffer.size.toLong(), expectedBytes - offset)
-                        val read = mtpDevice.getPartialObject64(objectHandle, offset, requested, buffer)
-                        check(read > 0) { "The source phone stopped transferring this item." }
-                        val bytesRead = read.coerceAtMost(buffer.size.toLong()).toInt()
-                        output.write(buffer, 0, bytesRead)
-                        offset += bytesRead
-                        onBytesTransferred(offset)
-                    }
+            val supportsPartial64 = runCatching {
+                mtpDevice.deviceInfo?.isOperationSupported(
+                    MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
+                ) == true
+            }.getOrDefault(false)
+            val partialFailure = if (supportsPartial64 && expectedBytes > 0) {
+                runCatching {
+                    importPartialObject(
+                        mtpDevice = mtpDevice,
+                        objectHandle = objectHandle,
+                        destination = destination,
+                        expectedBytes = expectedBytes,
+                        onBytesTransferred = onBytesTransferred,
+                    )
+                }.exceptionOrNull()
+            } else {
+                null
+            }
+            if (supportsPartial64 && expectedBytes > 0 && partialFailure == null) {
+                expectedBytes
+            } else {
+                importWholeObject(
+                    mtpDevice = mtpDevice,
+                    objectHandle = objectHandle,
+                    destination = destination,
+                    expectedBytes = expectedBytes,
+                    partialFailure = partialFailure,
+                    onBytesTransferred = onBytesTransferred,
+                )
+            }
+        }
+    }
+
+    private fun importPartialObject(
+        mtpDevice: MtpDevice,
+        objectHandle: Int,
+        destination: Uri,
+        expectedBytes: Long,
+        onBytesTransferred: (Long) -> Unit,
+    ) {
+        context.contentResolver.openOutputStream(destination, "w").use { output ->
+            checkNotNull(output) { "Android could not open the destination item." }
+            val buffer = ByteArray(MTP_CHUNK_BYTES)
+            var offset = 0L
+            while (offset < expectedBytes) {
+                val requested = minOf(buffer.size.toLong(), expectedBytes - offset)
+                val read = mtpDevice.getPartialObject64(objectHandle, offset, requested, buffer)
+                check(read > 0) { "The source phone stopped transferring this item." }
+                val bytesRead = read.coerceAtMost(buffer.size.toLong()).toInt()
+                output.write(buffer, 0, bytesRead)
+                offset += bytesRead
+                onBytesTransferred(offset)
+            }
+        }
+    }
+
+    private fun importWholeObject(
+        mtpDevice: MtpDevice,
+        objectHandle: Int,
+        destination: Uri,
+        expectedBytes: Long,
+        partialFailure: Throwable?,
+        onBytesTransferred: (Long) -> Unit,
+    ): Long {
+        val fullObjectFailure = runCatching {
+            val descriptor = context.contentResolver.openFileDescriptor(destination, "w")
+                ?: error("Android could not open the destination item.")
+            descriptor.use {
+                check(mtpDevice.importFile(objectHandle, it)) {
+                    "The source refused the standard full-object transfer request."
                 }
             }
-            expectedBytes.coerceAtLeast(0)
+        }.exceptionOrNull()
+        if (fullObjectFailure != null) {
+            val partialDetail = partialFailure?.message?.let { " Partial read failed: $it" }.orEmpty()
+            error("Full-object transfer failed: ${fullObjectFailure.message.orEmpty()}$partialDetail")
         }
+        val copiedBytes = destinationSize(destination).takeIf { it > 0 }
+            ?: expectedBytes.coerceAtLeast(0)
+        onBytesTransferred(copiedBytes)
+        return copiedBytes
+    }
+
+    private fun destinationSize(destination: Uri): Long {
+        return runCatching {
+            context.contentResolver.query(
+                destination,
+                arrayOf(MediaStore.MediaColumns.SIZE),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else 0L
+            } ?: 0L
+        }.getOrDefault(0L)
     }
 
     fun copyFromProvider(

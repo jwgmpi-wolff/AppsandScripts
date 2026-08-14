@@ -1213,7 +1213,7 @@ private fun TrustedDashboard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSync, enabled = !syncing) {
-                    Text(if (syncing) "Scanning and pulling..." else "Scan and pull USB-visible data")
+                    Text(if (syncing) "Requesting and pulling..." else "Request all USB-visible files")
                 }
                 OutlinedButton(onClick = onSelectFolder) { Text("Add local source folder") }
             }
@@ -1235,6 +1235,9 @@ private fun TrustedDashboard(
                     SourcePlatform.IOS ->
                         "iPhone PTP exposes media, not its private SMS, call, chat, mail, or notification databases. " +
                             "Use supported source-app export files for those records."
+                    SourcePlatform.WINDOWS_PHONE ->
+                        "Windows Phone MTP exposes shared media files, not its private SMS, call, or email stores. " +
+                            "Phone Sync requests every object that the source publishes, but USB cannot force those stores public."
                     else ->
                         "USB can pull files exposed by the source. Private app databases require supported exports."
                 },
@@ -1265,12 +1268,23 @@ private fun SourceExportReadiness(
             "Phone Sync exports visible: ${if (scan.phoneSyncDirectoryVisible) "Yes" else "No"}",
         style = MaterialTheme.typography.bodySmall,
     )
+    Text(
+        when {
+            scan.partialObject64Supported == true ->
+                "MTP request mode: chunked transfer with automatic full-file retry."
+            scan.fullObjectSupported == true ->
+                "MTP request mode: legacy full-file transfer."
+            else ->
+                "MTP request mode: best-effort full-file compatibility transfer."
+        },
+        style = MaterialTheme.typography.bodySmall,
+    )
     if (found.isNotEmpty()) {
-        Text("Found: ${found.joinToString { it.label() }}")
+        Text("Found: ${found.joinToString { sourceExportLabel(it) }}")
     }
     if (missing.isNotEmpty()) {
         Text(
-            "Not exposed by source: ${missing.joinToString { it.label() }}",
+            "Not exposed by source: ${missing.joinToString { sourceExportLabel(it) }}",
             color = MaterialTheme.colorScheme.error,
         )
         Text(
@@ -1282,6 +1296,10 @@ private fun SourceExportReadiness(
                 SourcePlatform.IOS ->
                     "iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. " +
                         "Create supported exports first, then use Import exported SMS, email, chat, calls, or notifications."
+                SourcePlatform.WINDOWS_PHONE ->
+                    "Phone Sync already requested every MTP-visible Lumia object. Windows Phone provides no USB consent " +
+                        "request for private SMS, call history, or email. Restore SMS through the phone's Microsoft account " +
+                        "backup when available, and export email from its mail provider; call history has no standard USB export."
                 else ->
                     "Create SMS, call, and email export files on the source, expose their folder over MTP, then pull again."
             },
@@ -1367,8 +1385,15 @@ private fun buildSyncCompletionStatus(result: SyncResult): String {
     return if (missingExports.isEmpty()) {
         base
     } else {
-        "$base Source did not expose: ${missingExports.joinToString { it.label() }}."
+        "$base Source did not expose: ${missingExports.joinToString { sourceExportLabel(it) }}."
     }
+}
+
+private fun sourceExportLabel(category: ConsentCategory): String = when (category) {
+    ConsentCategory.SMS_EXPORTS -> "SMS/MMS"
+    ConsentCategory.CALL_LOGS -> "call logs"
+    ConsentCategory.EMAIL_EXPORTS -> "email exports"
+    else -> category.label()
 }
 
 @androidx.compose.runtime.Composable
@@ -1471,7 +1496,7 @@ private fun SourceConnectionPanel(
                 if (source.permissionGranted) {
                     Text("USB data access authorized")
                     Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                        Text("Authorize and pull source data")
+                        Text("Continue to full USB request")
                     }
                     OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
                         Text("Refresh source")
