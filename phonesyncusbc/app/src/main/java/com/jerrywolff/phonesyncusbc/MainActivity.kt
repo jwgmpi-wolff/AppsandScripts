@@ -68,6 +68,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.jerrywolff.phonesyncusbc.data.AndroidPersonalDataCollector
+import com.jerrywolff.phonesyncusbc.data.BackupTargetType
 import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
@@ -77,6 +78,8 @@ import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
 import com.jerrywolff.phonesyncusbc.data.StoredTrust
 import com.jerrywolff.phonesyncusbc.data.TargetSelectionStore
+import com.jerrywolff.phonesyncusbc.data.primaryActionLabel
+import com.jerrywolff.phonesyncusbc.data.providerTarget
 import com.jerrywolff.phonesyncusbc.data.SafGrant
 import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
@@ -193,6 +196,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var selectedUsbPeerId by remember { mutableStateOf<String?>(null) }
     var knownUsbBackupIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showTargetWizard by remember { mutableStateOf(false) }
+    var targetType by remember { mutableStateOf(BackupTargetType.PHONE_DOWNLOADS) }
     var targetUri by remember { mutableStateOf<Uri?>(null) }
     var targetName by remember { mutableStateOf(DEFAULT_MOBILE_TARGET_NAME) }
     var pendingTargetName by remember { mutableStateOf<String?>(null) }
@@ -226,16 +230,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var refreshToken by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(showBackupSelection, showTargetWizard, backupWorkflowSection, activeSection) {
-        if (activeSection == backupWorkflowSection && (showBackupSelection || showTargetWizard)) {
-            val requestedIndex = if (backupWorkflowSection == AppSection.USB_SOURCE) 2 else 3
-            val lastValidIndex = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-            listState.animateScrollToItem(minOf(requestedIndex, lastValidIndex))
-        }
-    }
-
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
+            targetType = savedTarget?.type ?: BackupTargetType.PHONE_DOWNLOADS
             targetUri = savedTarget?.uri
             targetName = savedTarget?.name ?: DEFAULT_MOBILE_TARGET_NAME
             backupStatus = "${selectedBackupIds.size} items ready for $targetName."
@@ -552,10 +549,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             val providerName = pendingTargetName ?: "Selected destination"
             val folderName = DocumentFile.fromTreeUri(context, uri)?.name
             targetUri = uri
+            targetType = BackupTargetType.DOCUMENT_TREE
             targetName = listOfNotNull(providerName, folderName)
                 .distinctBy(String::lowercase)
                 .joinToString(" / ")
-            targetSelectionStore.save(uri, targetName!!)
+            targetSelectionStore.saveFolder(uri, targetName!!)
             pendingTargetName = null
             showTargetWizard = false
             updateBackupWorkflowStatus(
@@ -592,6 +590,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
     fun useDefaultMobileTarget() {
         targetSelectionStore.clear()
+        targetType = BackupTargetType.PHONE_DOWNLOADS
         targetUri = null
         targetName = DEFAULT_MOBILE_TARGET_NAME
         showTargetWizard = false
@@ -600,6 +599,20 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             "${backupWorkflowSelectedCount()} items ready for $targetName.",
         )
         message = "Backups will stay on this phone in Downloads."
+        messageSection = backupWorkflowSection
+    }
+
+    fun selectProviderTarget(type: BackupTargetType, name: String) {
+        targetType = type
+        targetUri = null
+        targetName = name
+        targetSelectionStore.saveProvider(type, name)
+        showTargetWizard = false
+        updateBackupWorkflowStatus(
+            backupWorkflowSection,
+            "${backupWorkflowSelectedCount()} items ready to push to $name.",
+        )
+        message = "Destination selected: $name. Use the primary push button to continue."
         messageSection = backupWorkflowSection
     }
 
@@ -627,10 +640,16 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 },
             )
         }.onSuccess {
-            message = "$label opened with one backup package containing $itemCount items. Choose the folder and tap Upload."
+            val nextStep = if (packageName == null) {
+                "Choose an app, select its destination, and confirm the upload."
+            } else {
+                "In $label, choose the destination folder and tap Upload."
+            }
+            message = "Package prepared with $itemCount items. $nextStep"
             messageSection = ownerSection
+            updateBackupWorkflowStatus(ownerSection, message.orEmpty())
             backupActivity = backupActivity.copy(
-                title = "$label upload",
+                title = "Package ready for $label",
                 status = message.orEmpty(),
                 completedItems = itemCount,
                 totalItems = itemCount,
@@ -823,6 +842,23 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
+    fun executeBackupForSelectedTarget(
+        entries: List<AuditEntry>,
+        ownerSection: AppSection,
+    ) {
+        val providerTarget = targetType.providerTarget()
+        if (providerTarget == null) {
+            backupEntriesToSelectedTarget(entries, ownerSection)
+        } else {
+            uploadBackupEntries(
+                entries,
+                providerTarget.packageName,
+                providerTarget.label,
+                ownerSection,
+            )
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -907,34 +943,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                     backingUp = backingUp,
                     selectedItemCount = selectedBackupIds.size,
+                    targetType = targetType,
                     targetName = targetName,
                     backupStatus = backupStatus,
-                    onUploadOneDrive = {
-                        uploadBackupEntries(
-                            backupEntries.filter { it.id in selectedBackupIds },
-                            ONEDRIVE_PACKAGE,
-                            "OneDrive",
-                            AppSection.BACKUP_ACTIVITY,
-                        )
-                    },
-                    onUploadGoogleDrive = {
-                        uploadBackupEntries(
-                            backupEntries.filter { it.id in selectedBackupIds },
-                            GOOGLE_DRIVE_PACKAGE,
-                            "Google Drive",
-                            AppSection.BACKUP_ACTIVITY,
-                        )
-                    },
-                    onUploadOther = {
-                        uploadBackupEntries(
-                            backupEntries.filter { it.id in selectedBackupIds },
-                            null,
-                            "Android app chooser",
-                            AppSection.BACKUP_ACTIVITY,
-                        )
-                    },
                     onExecuteBackup = {
-                        backupEntriesToSelectedTarget(
+                        executeBackupForSelectedTarget(
                             backupEntries.filter { it.id in selectedBackupIds },
                             AppSection.BACKUP_ACTIVITY,
                         )
@@ -967,7 +980,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                 )
             }
-            if (activeSection == backupWorkflowSection && showBackupSelection) {
+            if (
+                activeSection == AppSection.BACKUP_ACTIVITY &&
+                backupWorkflowSection == AppSection.BACKUP_ACTIVITY &&
+                showBackupSelection
+            ) {
                 item {
                     val workflowEntries = if (backupWorkflowSection == AppSection.USB_SOURCE) {
                         usbCollectedEntries
@@ -1004,13 +1021,26 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     )
                 }
             }
-            if (activeSection == backupWorkflowSection && showTargetWizard) {
+            if (
+                activeSection == AppSection.BACKUP_ACTIVITY &&
+                backupWorkflowSection == AppSection.BACKUP_ACTIVITY &&
+                showTargetWizard
+            ) {
                 item {
                     TargetMediaWizard(
                         onBack = { showTargetWizard = false },
                         onUsePhoneStorage = ::useDefaultMobileTarget,
                         onChooseFolder = { selectedTargetName ->
                             launchTargetPicker(selectedTargetName)
+                        },
+                        onUseOneDrive = {
+                            selectProviderTarget(BackupTargetType.ONEDRIVE, "OneDrive")
+                        },
+                        onUseGoogleDrive = {
+                            selectProviderTarget(BackupTargetType.GOOGLE_DRIVE, "Google Drive")
+                        },
+                        onUseOtherApp = {
+                            selectProviderTarget(BackupTargetType.OTHER_APP, "Another app")
                         },
                     )
                 }
@@ -1256,39 +1286,61 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 },
                                 backingUp = backingUp,
                                 selectedItemCount = selectedUsbBackupIds.size,
+                                targetType = targetType,
                                 targetName = targetName,
                                 backupStatus = usbBackupStatus,
-                                onUploadOneDrive = {
-                                    uploadBackupEntries(
-                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
-                                        ONEDRIVE_PACKAGE,
-                                        "OneDrive",
-                                        AppSection.USB_SOURCE,
-                                    )
-                                },
-                                onUploadGoogleDrive = {
-                                    uploadBackupEntries(
-                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
-                                        GOOGLE_DRIVE_PACKAGE,
-                                        "Google Drive",
-                                        AppSection.USB_SOURCE,
-                                    )
-                                },
-                                onUploadOther = {
-                                    uploadBackupEntries(
-                                        usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
-                                        null,
-                                        "Android app chooser",
-                                        AppSection.USB_SOURCE,
-                                    )
-                                },
                                 onExecuteBackup = {
-                                    backupEntriesToSelectedTarget(
+                                    executeBackupForSelectedTarget(
                                         usbCollectedEntries.filter { it.id in selectedUsbBackupIds },
                                         AppSection.USB_SOURCE,
                                     )
                                 },
                             )
+                        }
+                        if (
+                            backupWorkflowSection == AppSection.USB_SOURCE &&
+                            showBackupSelection
+                        ) {
+                            item {
+                                BackupSelectionView(
+                                    entries = usbCollectedEntries,
+                                    selectedIds = selectedUsbBackupIds,
+                                    onSelectionChanged = { selected ->
+                                        selectedUsbBackupIds = selected
+                                        usbBackupStatus =
+                                            "${selected.size} items ready for $targetName."
+                                    },
+                                    onCancel = { showBackupSelection = false },
+                                    onContinue = {
+                                        showBackupSelection = false
+                                        usbBackupStatus =
+                                            "${selectedUsbBackupIds.size} items ready for $targetName."
+                                    },
+                                )
+                            }
+                        }
+                        if (
+                            backupWorkflowSection == AppSection.USB_SOURCE &&
+                            showTargetWizard
+                        ) {
+                            item {
+                                TargetMediaWizard(
+                                    onBack = { showTargetWizard = false },
+                                    onUsePhoneStorage = ::useDefaultMobileTarget,
+                                    onChooseFolder = { selectedTargetName ->
+                                        launchTargetPicker(selectedTargetName)
+                                    },
+                                    onUseOneDrive = {
+                                        selectProviderTarget(BackupTargetType.ONEDRIVE, "OneDrive")
+                                    },
+                                    onUseGoogleDrive = {
+                                        selectProviderTarget(BackupTargetType.GOOGLE_DRIVE, "Google Drive")
+                                    },
+                                    onUseOtherApp = {
+                                        selectProviderTarget(BackupTargetType.OTHER_APP, "Another app")
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -1838,13 +1890,12 @@ private fun BackupPanel(
     onChooseTarget: () -> Unit,
     backingUp: Boolean,
     selectedItemCount: Int,
+    targetType: BackupTargetType,
     targetName: String?,
     backupStatus: String,
-    onUploadOneDrive: () -> Unit,
-    onUploadGoogleDrive: () -> Unit,
-    onUploadOther: () -> Unit,
     onExecuteBackup: () -> Unit,
 ) {
+    val primaryActionLabel = targetType.primaryActionLabel()
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -1852,45 +1903,46 @@ private fun BackupPanel(
                 description,
                 style = MaterialTheme.typography.bodySmall,
             )
+            Text("1. Data", style = MaterialTheme.typography.titleSmall)
             Text("$selectedItemCount items selected")
-            Text("Destination: ${targetName ?: DEFAULT_MOBILE_TARGET_NAME}")
+            OutlinedButton(
+                onClick = onSelectBackup,
+                enabled = !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Change selected data") }
+            HorizontalDivider()
+            Text("2. Destination", style = MaterialTheme.typography.titleSmall)
+            Text(targetName ?: DEFAULT_MOBILE_TARGET_NAME)
+            Text(
+                when (targetType) {
+                    BackupTargetType.PHONE_DOWNLOADS ->
+                        "The backup will be written directly to this phone's Downloads folder."
+                    BackupTargetType.DOCUMENT_TREE ->
+                        "The backup will be written directly to the selected folder."
+                    BackupTargetType.ONEDRIVE ->
+                        "Next, Phone Sync opens OneDrive. Choose the folder there and tap Upload."
+                    BackupTargetType.GOOGLE_DRIVE ->
+                        "Next, Phone Sync opens Google Drive. Choose the folder there and confirm the upload."
+                    BackupTargetType.OTHER_APP ->
+                        "Next, choose an installed app, its destination, and confirm the upload."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(
+                onClick = onChooseTarget,
+                enabled = !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Choose destination") }
+            HorizontalDivider()
+            Text("3. Push", style = MaterialTheme.typography.titleSmall)
             Text(backupStatus, style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = onExecuteBackup,
                 enabled = !backingUp && selectedItemCount > 0,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (backingUp) "Backing up..." else "Start backup")
+                Text(if (backingUp) "Preparing transfer..." else primaryActionLabel)
             }
-            OutlinedButton(
-                onClick = onChooseTarget,
-                enabled = !backingUp,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Change local destination") }
-            OutlinedButton(
-                onClick = onUploadOneDrive,
-                enabled = !backingUp && selectedItemCount > 0,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload to OneDrive") }
-            OutlinedButton(
-                onClick = onUploadGoogleDrive,
-                enabled = !backingUp && selectedItemCount > 0,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload to Google Drive") }
-            OutlinedButton(
-                onClick = onUploadOther,
-                enabled = !backingUp && selectedItemCount > 0,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Upload using another app") }
-            OutlinedButton(
-                onClick = onSelectBackup,
-                enabled = !backingUp,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Select data to back up") }
-            Text(
-                "Default target: Downloads / Phone Sync Backups. Optional targets: SD card or attached USB storage.",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }
@@ -1900,20 +1952,32 @@ private fun TargetMediaWizard(
     onBack: () -> Unit,
     onUsePhoneStorage: () -> Unit,
     onChooseFolder: (String) -> Unit,
+    onUseOneDrive: () -> Unit,
+    onUseGoogleDrive: () -> Unit,
+    onUseOtherApp: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Select backup target media", style = MaterialTheme.typography.headlineSmall)
+            Text("Choose destination", style = MaterialTheme.typography.headlineSmall)
             Button(
                 onClick = onUsePhoneStorage,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Use this phone's Downloads") }
             OutlinedButton(
-                onClick = { onChooseFolder("local or provider folder") },
+                onClick = { onChooseFolder("local, SD, USB, or document-provider folder") },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Choose folder from Android picker") }
+            OutlinedButton(onClick = onUseOneDrive, modifier = Modifier.fillMaxWidth()) {
+                Text("OneDrive")
+            }
+            OutlinedButton(onClick = onUseGoogleDrive, modifier = Modifier.fillMaxWidth()) {
+                Text("Google Drive")
+            }
+            OutlinedButton(onClick = onUseOtherApp, modifier = Modifier.fillMaxWidth()) {
+                Text("Another installed app")
+            }
             Text(
-                "The Android picker may show phone storage, SD/USB storage, and installed document providers.",
+                "Folder targets write directly. App targets prepare one package, open the selected app, then let you choose its folder and confirm Upload.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
@@ -1923,8 +1987,6 @@ private fun TargetMediaWizard(
 
 private const val SOURCE_SYNC_SECTION_INDEX = 3
 private const val LOCAL_ANDROID_PEER_ID = "local-android"
-private const val ONEDRIVE_PACKAGE = "com.microsoft.skydrive"
-private const val GOOGLE_DRIVE_PACKAGE = "com.google.android.apps.docs"
 private const val DEFAULT_MOBILE_TARGET_NAME = "This phone / Downloads / Phone Sync Backups"
 private const val LOCAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 private const val PRIMARY_STORAGE_ROOT_ID = "primary"

@@ -10,7 +10,7 @@ Android USB host for consent-based phone synchronization and backup.
 
 1. Open **USB Source**, connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
 2. Authorize the available source categories, then tap **Request all USB-visible files**. Phone Sync copies every exposed media/document file and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, and notification exports.
-3. After collection, use **Push this USB source data** on the same tab to select that source's items and send them to Android Downloads, another local folder, OneDrive, Google Drive, or another installed provider.
+3. After collection, use **Push this USB source data** on the same tab: choose data, choose one destination, then use the single destination-specific action such as **Push to OneDrive**.
 4. Open **This Device** to prepare protected Android data or browse data already collected on this phone.
 5. Open **Backup** for consolidated progress and destination activity across collected data.
 
@@ -50,6 +50,8 @@ Windows Phone exposes shared media through MTP but does not publish its private 
 The **Backup Activity** tab keeps overall item progress, current-file byte progress, processed bytes, and the latest result together. USB pull progress stays in **USB Source**, while Android personal-data collection progress stays in **This Device**. For multi-item provider uploads, Phone Sync creates one ZIP64 package with a SHA-256 manifest before opening the provider. This avoids OneDrive's broken bulk-file checkmark screen. Provider upload completion is controlled by the selected provider app.
 
 When a USB source is connected, its destination panel is scoped to that source's completed transfers. It does not mix in exports prepared on the collecting Android device or files collected from another USB peer.
+
+The selected destination persists across app restarts. Phone Downloads and writable folder targets receive files directly. OneDrive, Google Drive, and other app targets prepare one package and open that provider from the primary push button; choose the provider folder and confirm Upload there.
 
 ## Permissions
 
