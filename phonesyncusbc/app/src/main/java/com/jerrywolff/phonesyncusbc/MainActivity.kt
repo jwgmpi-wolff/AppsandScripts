@@ -81,6 +81,8 @@ import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
+import com.jerrywolff.phonesyncusbc.domain.SourceExportRequirements
+import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
 import com.jerrywolff.phonesyncusbc.domain.TrustContext
 import com.jerrywolff.phonesyncusbc.domain.TrustDecision
 import com.jerrywolff.phonesyncusbc.domain.TrustPolicy
@@ -89,6 +91,7 @@ import com.jerrywolff.phonesyncusbc.usb.PeerIdentity
 import com.jerrywolff.phonesyncusbc.data.SyncStatus
 import com.jerrywolff.phonesyncusbc.sync.SyncProgress
 import com.jerrywolff.phonesyncusbc.sync.SyncResult
+import com.jerrywolff.phonesyncusbc.sync.MtpScanSummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -169,6 +172,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var messageSection by remember { mutableStateOf(AppSection.USB_SOURCE) }
     var backupActivity by remember { mutableStateOf(BackupActivityUi()) }
     var liveProgress by remember { mutableStateOf<SyncProgress?>(null) }
+    var mtpScanSummary by remember { mutableStateOf<MtpScanSummary?>(null) }
     var showLibrary by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
     var previewEntry by remember { mutableStateOf<AuditEntry?>(null) }
@@ -327,6 +331,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         identity = null
         trust = null
         capabilities = null
+        mtpScanSummary = null
     }
 
     val source = selectedSource
@@ -1030,6 +1035,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 grants = grants,
                                 syncing = syncing,
                                 liveProgress = liveProgress,
+                                mtpScanSummary = mtpScanSummary,
+                                sourcePlatform = source.detected.platform,
                                 auditLog = application.auditLog,
                                 onSelectFolder = { folderLauncher.launch(null) },
                                 onImportExports = {
@@ -1056,6 +1063,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     val currentIdentity = identity ?: return@sync
                                     syncing = true
                                     liveProgress = SyncProgress(null, 0, 0, 0, 0)
+                                    mtpScanSummary = null
                                     message = "LIVE: 0 transferred, 0 already audited, 0 failed."
                                     messageSection = AppSection.USB_SOURCE
                                     scope.launch {
@@ -1089,7 +1097,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             failedItems = result.failedItems,
                                             bytesTransferred = result.bytesTransferred,
                                         )
-                                        message = "${result.status}: ${result.transferredItems} transferred, ${result.skippedItems} already audited."
+                                        mtpScanSummary = result.mtpScan
+                                        message = buildSyncCompletionStatus(result)
                                         messageSection = AppSection.USB_SOURCE
                                         refreshToken += 1
                                     }
@@ -1151,6 +1160,8 @@ private fun TrustedDashboard(
     grants: List<SafGrant>,
     syncing: Boolean,
     liveProgress: SyncProgress?,
+    mtpScanSummary: MtpScanSummary?,
+    sourcePlatform: SourcePlatform,
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onSelectFolder: () -> Unit,
     onImportExports: () -> Unit,
@@ -1162,7 +1173,7 @@ private fun TrustedDashboard(
     val audit = remember(trust.updatedAtEpochMillis) { auditLog.recentTransfers(trust.record.peerDeviceId, 10) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Pull all available source data", style = MaterialTheme.typography.titleMedium)
+            Text("Pull USB-visible source data", style = MaterialTheme.typography.titleMedium)
             Text("All available categories authorized: ${categories.joinToString { it.label() }}")
             Text("Last sync: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
             liveProgress?.let { progress ->
@@ -1197,9 +1208,12 @@ private fun TrustedDashboard(
                 }
                 Text("Transferred: ${formatBytes(progress.bytesTransferred)}")
             }
+            mtpScanSummary?.let { scan ->
+                SourceExportReadiness(sourcePlatform, scan)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSync, enabled = !syncing) {
-                    Text(if (syncing) "Pulling data..." else "Pull all available data")
+                    Text(if (syncing) "Scanning and pulling..." else "Scan and pull USB-visible data")
                 }
                 OutlinedButton(onClick = onSelectFolder) { Text("Add local source folder") }
             }
@@ -1214,8 +1228,16 @@ private fun TrustedDashboard(
             }
             if (grants.isNotEmpty()) Text("Authorized locations: ${grants.size}")
             Text(
-                "The connected iPhone exposes media over PTP, not its private SMS, call, chat, mail, or notification databases. " +
-                    "Use a local source-app export file for those records.",
+                when (sourcePlatform) {
+                    SourcePlatform.ANDROID ->
+                        "Android MTP cannot read app-private SMS, call, or mail databases. Prepare USB-visible exports " +
+                            "on the source phone first."
+                    SourcePlatform.IOS ->
+                        "iPhone PTP exposes media, not its private SMS, call, chat, mail, or notification databases. " +
+                            "Use supported source-app export files for those records."
+                    else ->
+                        "USB can pull files exposed by the source. Private app databases require supported exports."
+                },
                 style = MaterialTheme.typography.bodySmall,
             )
             HorizontalDivider()
@@ -1224,6 +1246,49 @@ private fun TrustedDashboard(
             audit.forEach { entry -> Text("${entry.category.label()}: ${entry.sourceItem}") }
             OutlinedButton(onClick = onRevoke, modifier = Modifier.fillMaxWidth()) { Text("Revoke trust") }
         }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun SourceExportReadiness(
+    sourcePlatform: SourcePlatform,
+    scan: MtpScanSummary,
+) {
+    val found = SourceExportRequirements.categories.filter { it in scan.visibleCategories }
+    val missing = SourceExportRequirements.missingFrom(scan.visibleCategories)
+
+    HorizontalDivider()
+    Text("USB export readiness", style = MaterialTheme.typography.titleMedium)
+    Text("${scan.scannedItems} USB-visible files scanned.")
+    Text(
+        "Downloads visible: ${if (scan.downloadDirectoryVisible) "Yes" else "No"} · " +
+            "Phone Sync exports visible: ${if (scan.phoneSyncDirectoryVisible) "Yes" else "No"}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (found.isNotEmpty()) {
+        Text("Found: ${found.joinToString { it.label() }}")
+    }
+    if (missing.isNotEmpty()) {
+        Text(
+            "Not exposed by source: ${missing.joinToString { it.label() }}",
+            color = MaterialTheme.colorScheme.error,
+        )
+        Text(
+            when (sourcePlatform) {
+                SourcePlatform.ANDROID ->
+                    "On the source phone, open Phone Sync > This Device > Show preparation tools. " +
+                        "Collect SMS/MMS and call history, add the mail app's email export, then reconnect using " +
+                        "File transfer / Android Auto USB mode and pull again."
+                SourcePlatform.IOS ->
+                    "iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. " +
+                        "Create supported exports first, then use Import exported SMS, email, chat, calls, or notifications."
+                else ->
+                    "Create SMS, call, and email export files on the source, expose their folder over MTP, then pull again."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+    } else {
+        Text("SMS, call, and email exports are exposed and eligible to pull.")
     }
 }
 
@@ -1291,6 +1356,19 @@ private fun buildLiveStatus(progress: SyncProgress): String {
     }
     return "LIVE: ${progress.transferredItems} transferred, " +
         "${progress.skippedItems} already audited, ${progress.failedItems} failed.$current"
+}
+
+private fun buildSyncCompletionStatus(result: SyncResult): String {
+    val missingExports = result.mtpScan
+        ?.let { SourceExportRequirements.missingFrom(it.visibleCategories) }
+        .orEmpty()
+    val base = "${result.status}: ${result.transferredItems} transferred, " +
+        "${result.skippedItems} already audited, ${result.failedItems} failed."
+    return if (missingExports.isEmpty()) {
+        base
+    } else {
+        "$base Source did not expose: ${missingExports.joinToString { it.label() }}."
+    }
 }
 
 @androidx.compose.runtime.Composable
@@ -1733,6 +1811,7 @@ private fun combineSyncResults(first: SyncResult, second: SyncResult): SyncResul
         failedItems = failed,
         bytesTransferred = bytes,
         error = first.error ?: second.error,
+        mtpScan = first.mtpScan ?: second.mtpScan,
     )
 }
 

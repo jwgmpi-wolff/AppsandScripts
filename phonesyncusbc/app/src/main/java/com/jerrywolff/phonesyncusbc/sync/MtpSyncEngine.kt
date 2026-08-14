@@ -24,6 +24,13 @@ data class SyncProgress(
     val currentItemTotal: Long = 0,
 )
 
+data class MtpScanSummary(
+    val scannedItems: Int = 0,
+    val visibleCategories: Set<ConsentCategory> = emptySet(),
+    val downloadDirectoryVisible: Boolean = false,
+    val phoneSyncDirectoryVisible: Boolean = false,
+)
+
 data class SyncResult(
     val status: SyncStatus,
     val transferredItems: Int,
@@ -31,6 +38,7 @@ data class SyncResult(
     val failedItems: Int,
     val bytesTransferred: Long,
     val error: String? = null,
+    val mtpScan: MtpScanSummary? = null,
 )
 
 private data class MtpCandidate(
@@ -57,6 +65,10 @@ class MtpSyncEngine(
         var skipped = 0
         var failed = 0
         var transferredBytes = 0L
+        var scannedItems = 0
+        val visibleCategories = linkedSetOf<ConsentCategory>()
+        var downloadDirectoryVisible = false
+        var phoneSyncDirectoryVisible = false
 
         val mtpSession = sourceResolver.openMtp(source.device)
         if (mtpSession == null) {
@@ -68,11 +80,18 @@ class MtpSyncEngine(
         return try {
             mtpSession.use { session ->
                 walkObjects(session.device) { candidate ->
+                    scannedItems += 1
+                    val normalizedPath = candidate.path.replace('\\', '/').lowercase()
+                    downloadDirectoryVisible = downloadDirectoryVisible ||
+                        "/download/" in normalizedPath || "/downloads/" in normalizedPath
+                    phoneSyncDirectoryVisible = phoneSyncDirectoryVisible ||
+                        "/phone sync/" in normalizedPath || "/phonesync/" in normalizedPath
                     if (TransferClassifier.isProtectedPrivateDatabase(candidate.path)) {
                         skipped += 1
                         return@walkObjects
                     }
                     val category = TransferClassifier.classify(candidate.path)
+                    visibleCategories += category
                     if (category !in authorizedCategories) return@walkObjects
 
                     val fingerprint = DeviceIdentity.sha256(
@@ -155,7 +174,19 @@ class MtpSyncEngine(
             }
             val status = if (failed == 0) SyncStatus.COMPLETED else SyncStatus.PARTIAL
             auditLog.finishSession(sessionId, status, transferred, transferredBytes)
-            SyncResult(status, transferred, skipped, failed, transferredBytes)
+            SyncResult(
+                status = status,
+                transferredItems = transferred,
+                skippedItems = skipped,
+                failedItems = failed,
+                bytesTransferred = transferredBytes,
+                mtpScan = MtpScanSummary(
+                    scannedItems = scannedItems,
+                    visibleCategories = visibleCategories,
+                    downloadDirectoryVisible = downloadDirectoryVisible,
+                    phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
+                ),
+            )
         } catch (throwable: Throwable) {
             val error = throwable.message ?: throwable.javaClass.simpleName
             auditLog.finishSession(
@@ -172,6 +203,12 @@ class MtpSyncEngine(
                 failedItems = failed + 1,
                 bytesTransferred = transferredBytes,
                 error = error,
+                mtpScan = MtpScanSummary(
+                    scannedItems = scannedItems,
+                    visibleCategories = visibleCategories,
+                    downloadDirectoryVisible = downloadDirectoryVisible,
+                    phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
+                ),
             )
         }
     }

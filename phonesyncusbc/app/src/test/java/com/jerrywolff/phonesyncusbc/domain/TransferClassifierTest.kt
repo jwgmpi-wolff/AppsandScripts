@@ -57,6 +57,10 @@ class TransferClassifierTest {
             TransferClassifier.classify("/Download/Phone Sync/This Android/call_logs/call-log-20260814.json"),
         )
         assertEquals(
+            ConsentCategory.EMAIL_EXPORTS,
+            TransferClassifier.classify("/Download/Phone Sync/This Android/email_exports/account-mail.mbox"),
+        )
+        assertEquals(
             ConsentCategory.CALENDAR,
             TransferClassifier.classify("/Download/Phone Sync/This Android/calendar/calendar-20260814.json"),
         )
