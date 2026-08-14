@@ -45,6 +45,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Icon
@@ -92,6 +94,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+
+private enum class AppSection(val label: String) {
+    USB_SOURCE("USB Source"),
+    THIS_DEVICE("This Device"),
+    BACKUP_ACTIVITY("Backup"),
+}
+
+private data class BackupActivityUi(
+    val title: String = "Backup and export activity",
+    val status: String = "No backup or export is running.",
+    val completedItems: Int = 0,
+    val totalItems: Int = 0,
+    val currentItem: String? = null,
+    val bytesProcessed: Long = 0,
+    val currentItemBytes: Long = 0,
+    val currentItemTotal: Long = 0,
+    val running: Boolean = false,
+    val failed: Boolean = false,
+)
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 class MainActivity : ComponentActivity() {
@@ -144,6 +165,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var syncing by remember { mutableStateOf(false) }
     var backingUp by remember { mutableStateOf(false) }
+    var activeSection by remember { mutableStateOf(AppSection.USB_SOURCE) }
+    var messageSection by remember { mutableStateOf(AppSection.USB_SOURCE) }
+    var backupActivity by remember { mutableStateOf(BackupActivityUi()) }
     var liveProgress by remember { mutableStateOf<SyncProgress?>(null) }
     var showLibrary by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
@@ -230,6 +254,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     else -> "Collection failed: ${result.firstError ?: "No provider data was available."}"
                 }
                 message = personalDataStatus
+                messageSection = AppSection.THIS_DEVICE
                 collectingPersonalData = false
             }
         }
@@ -364,12 +389,42 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null && libraryEntries.isNotEmpty()) {
+            activeSection = AppSection.BACKUP_ACTIVITY
+            backupActivity = BackupActivityUi(
+                title = "Export collected data",
+                status = "Starting export...",
+                totalItems = libraryEntries.size,
+                running = true,
+            )
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
-                    DataExportManager(context).export(libraryEntries, uri)
+                    DataExportManager(context).export(libraryEntries, uri) { progress ->
+                        scope.launch(Dispatchers.Main.immediate) {
+                            backupActivity = BackupActivityUi(
+                                title = "Export collected data",
+                                status = "Exporting ${progress.completedItems} of ${progress.totalItems}",
+                                completedItems = progress.completedItems,
+                                totalItems = progress.totalItems,
+                                currentItem = progress.currentItem,
+                                bytesProcessed = progress.bytesExported,
+                                currentItemBytes = progress.currentItemBytes,
+                                currentItemTotal = progress.currentItemTotal,
+                                running = true,
+                            )
+                        }
+                    }
                 }
                 message = "Exported ${result.exportedItems} items (${formatBytes(result.bytesExported)})." +
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
+                messageSection = AppSection.BACKUP_ACTIVITY
+                backupActivity = BackupActivityUi(
+                    title = "Export collected data",
+                    status = message.orEmpty(),
+                    completedItems = result.exportedItems + result.failedItems,
+                    totalItems = libraryEntries.size,
+                    bytesProcessed = result.bytesExported,
+                    failed = result.failedItems > 0,
+                )
             }
         }
     }
@@ -392,6 +447,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 }
                 message = "Imported ${result.importedItems} exported files (${formatBytes(result.bytesImported)})." +
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
+                messageSection = AppSection.USB_SOURCE
                 libraryEntries = application.auditLog.allCompletedTransfers()
                 refreshToken += 1
                 importCategory = null
@@ -419,6 +475,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 personalDataStatus = "Imported ${result.importedItems} ${category.label()} files (${formatBytes(result.bytesImported)})." +
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
                 message = personalDataStatus
+                messageSection = AppSection.THIS_DEVICE
                 localImportCategory = null
             }
         } else {
@@ -446,10 +503,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             showTargetWizard = false
             backupStatus = "${selectedBackupIds.size} items ready for ${targetName}."
             message = "Destination saved: ${targetName}."
+            messageSection = AppSection.BACKUP_ACTIVITY
             scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
         } else {
             pendingTargetName = null
             message = "Folder selection canceled."
+            messageSection = AppSection.BACKUP_ACTIVITY
             scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
         }
     }
@@ -468,6 +527,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
         val pickerInstruction = "Navigate to the $label folder, then tap USE THIS FOLDER at the bottom."
         message = pickerInstruction
+        messageSection = AppSection.BACKUP_ACTIVITY
         Toast.makeText(context, pickerInstruction, Toast.LENGTH_LONG).show()
         allDataExportLauncher.launch(picker)
     }
@@ -479,6 +539,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         showTargetWizard = false
         backupStatus = "${selectedBackupIds.size} items ready for $targetName."
         message = "Backups will stay on this phone in Downloads."
+        messageSection = AppSection.BACKUP_ACTIVITY
         scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
     }
 
@@ -501,12 +562,29 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
         }.onSuccess {
             message = "$label opened with one backup package containing $itemCount items. Choose the folder and tap Upload."
+            messageSection = AppSection.BACKUP_ACTIVITY
+            backupActivity = backupActivity.copy(
+                title = "$label upload",
+                status = message.orEmpty(),
+                completedItems = itemCount,
+                totalItems = itemCount,
+                running = false,
+                failed = false,
+            )
         }.onFailure { throwable ->
             message = "Could not open $label. Install/sign in to it or choose another destination. ${throwable.message.orEmpty()}"
+            messageSection = AppSection.BACKUP_ACTIVITY
+            backupActivity = backupActivity.copy(
+                title = "$label upload",
+                status = message.orEmpty(),
+                running = false,
+                failed = true,
+            )
         }
     }
 
     fun uploadSelectedBackup(packageName: String?, label: String) {
+        activeSection = AppSection.BACKUP_ACTIVITY
         val entries = backupEntries.filter { it.id in selectedBackupIds }
         if (entries.isEmpty()) {
             backupStatus = "Select at least one available item before uploading."
@@ -517,6 +595,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             if (uri == null) {
                 backupStatus = "The selected item is no longer available."
             } else {
+                backupActivity = BackupActivityUi(
+                    title = "$label upload",
+                    status = "Opening $label with one item...",
+                    completedItems = 1,
+                    totalItems = 1,
+                    running = true,
+                )
                 launchProviderUpload(uri, packageName, label, 1)
             }
             return
@@ -524,11 +609,28 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
         backingUp = true
         backupStatus = "Preparing one upload package for ${entries.size} items..."
+        backupActivity = BackupActivityUi(
+            title = "Prepare $label upload package",
+            status = backupStatus,
+            totalItems = entries.size,
+            running = true,
+        )
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 DataExportManager(context).createUploadArchive(entries) { progress ->
                     scope.launch(Dispatchers.Main.immediate) {
                         backupStatus = "Preparing upload: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
+                        backupActivity = BackupActivityUi(
+                            title = "Prepare $label upload package",
+                            status = backupStatus,
+                            completedItems = progress.completedItems,
+                            totalItems = progress.totalItems,
+                            currentItem = progress.currentItem,
+                            bytesProcessed = progress.sourceBytesArchived,
+                            currentItemBytes = progress.currentItemBytes,
+                            currentItemTotal = progress.currentItemTotal,
+                            running = true,
+                        )
                     }
                 }
             }
@@ -536,8 +638,21 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             if (result.uri == null) {
                 backupStatus = "Could not prepare upload: ${result.error ?: "unknown error"}"
                 message = backupStatus
+                messageSection = AppSection.BACKUP_ACTIVITY
+                backupActivity = backupActivity.copy(
+                    status = backupStatus,
+                    running = false,
+                    failed = true,
+                )
             } else {
                 backupStatus = "Upload package ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}."
+                backupActivity = BackupActivityUi(
+                    title = "Prepare $label upload package",
+                    status = backupStatus,
+                    completedItems = result.archivedItems,
+                    totalItems = result.archivedItems,
+                    bytesProcessed = result.archiveBytes,
+                )
                 launchProviderUpload(result.uri, packageName, label, result.archivedItems)
             }
         }
@@ -557,25 +672,41 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
         },
     ) { padding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            TabRow(selectedTabIndex = activeSection.ordinal) {
+                AppSection.entries.forEach { section ->
+                    Tab(
+                        selected = activeSection == section,
+                        onClick = {
+                            activeSection = section
+                            scope.launch { listState.scrollToItem(0) }
+                        },
+                        text = { Text(section.label) },
+                    )
+                }
+            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             item {
                 Spacer(Modifier.height(12.dp))
             }
-            item {
+            if (activeSection == AppSection.USB_SOURCE) item {
                 SourceConnectionPanel(
                     source = source,
                     onRefresh = ::refreshSource,
                     onRequestUsbPermission = onRequestUsbPermission,
                     onContinue = {
-                        scope.launch { listState.animateScrollToItem(SOURCE_SYNC_SECTION_INDEX) }
+                        scope.launch {
+                            val lastItem = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            listState.animateScrollToItem(minOf(SOURCE_SYNC_SECTION_INDEX, lastItem))
+                        }
                     },
                 )
             }
-            item {
+            if (activeSection == AppSection.THIS_DEVICE) item {
                 OutlinedButton(
                     onClick = {
                         libraryEntries = application.auditLog.allCompletedTransfers()
@@ -586,7 +717,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     Text("View collected data")
                 }
             }
-            item {
+            if (activeSection == AppSection.BACKUP_ACTIVITY) item {
+                BackupActivityPanel(backupActivity)
+            }
+            if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupPanel(
                     onSelectBackup = {
                         if (!backingUp) {
@@ -621,16 +755,52 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         if (selectedEntries.isEmpty()) {
                             backupStatus = "Select at least one available item before starting backup."
                         } else if (!backingUp) {
+                            activeSection = AppSection.BACKUP_ACTIVITY
                             backingUp = true
                             backupStatus = "Copying ${selectedEntries.size} items to $targetName..."
                             message = "BACKUP: moving collected source data to $targetName..."
+                            messageSection = AppSection.BACKUP_ACTIVITY
+                            backupActivity = BackupActivityUi(
+                                title = "Backup to $targetName",
+                                status = backupStatus,
+                                totalItems = selectedEntries.size,
+                                running = true,
+                            )
                             scope.launch {
                                 runCatching {
                                     withContext(Dispatchers.IO) {
                                         if (destination == null) {
-                                            DataExportManager(context).backupToDownloads(selectedEntries)
+                                            DataExportManager(context).backupToDownloads(selectedEntries) { progress ->
+                                                scope.launch(Dispatchers.Main.immediate) {
+                                                    backupActivity = BackupActivityUi(
+                                                        title = "Backup to $targetName",
+                                                        status = "Copying ${progress.completedItems} of ${progress.totalItems}",
+                                                        completedItems = progress.completedItems,
+                                                        totalItems = progress.totalItems,
+                                                        currentItem = progress.currentItem,
+                                                        bytesProcessed = progress.bytesExported,
+                                                        currentItemBytes = progress.currentItemBytes,
+                                                        currentItemTotal = progress.currentItemTotal,
+                                                        running = true,
+                                                    )
+                                                }
+                                            }
                                         } else {
-                                            DataExportManager(context).export(selectedEntries, destination)
+                                            DataExportManager(context).export(selectedEntries, destination) { progress ->
+                                                scope.launch(Dispatchers.Main.immediate) {
+                                                    backupActivity = BackupActivityUi(
+                                                        title = "Backup to $targetName",
+                                                        status = "Copying ${progress.completedItems} of ${progress.totalItems}",
+                                                        completedItems = progress.completedItems,
+                                                        totalItems = progress.totalItems,
+                                                        currentItem = progress.currentItem,
+                                                        bytesProcessed = progress.bytesExported,
+                                                        currentItemBytes = progress.currentItemBytes,
+                                                        currentItemTotal = progress.currentItemTotal,
+                                                        running = true,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }.onSuccess { result ->
@@ -641,9 +811,24 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             result.error?.let { " First error: $it" }.orEmpty()
                                     }
                                     message = backupStatus
+                                    messageSection = AppSection.BACKUP_ACTIVITY
+                                    backupActivity = BackupActivityUi(
+                                        title = "Backup to $targetName",
+                                        status = backupStatus,
+                                        completedItems = result.exportedItems + result.failedItems,
+                                        totalItems = selectedEntries.size,
+                                        bytesProcessed = result.bytesExported,
+                                        failed = result.failedItems > 0,
+                                    )
                                 }.onFailure { throwable ->
                                     backupStatus = "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
                                     message = backupStatus
+                                    messageSection = AppSection.BACKUP_ACTIVITY
+                                    backupActivity = backupActivity.copy(
+                                        status = backupStatus,
+                                        running = false,
+                                        failed = true,
+                                    )
                                 }
                                 backingUp = false
                             }
@@ -651,7 +836,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                 )
             }
-            item {
+            if (activeSection == AppSection.THIS_DEVICE) item {
                 AndroidPersonalDataPanel(
                     status = personalDataStatus,
                     collecting = collectingPersonalData,
@@ -677,7 +862,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                 )
             }
-            if (showBackupSelection) {
+            if (activeSection == AppSection.BACKUP_ACTIVITY && showBackupSelection) {
                 item {
                     BackupSelectionView(
                         entries = backupEntries,
@@ -696,7 +881,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     )
                 }
             }
-            if (showTargetWizard) {
+            if (activeSection == AppSection.BACKUP_ACTIVITY && showTargetWizard) {
                 item {
                     TargetMediaWizard(
                         onBack = { showTargetWizard = false },
@@ -707,7 +892,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     )
                 }
             }
-            if (showLibrary) {
+            if (activeSection == AppSection.THIS_DEVICE && showLibrary) {
                 item {
                     if (previewEntry != null && previewText != null) {
                         TextPreview(
@@ -747,6 +932,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                                 previewText = text
                                             } else {
                                                 message = "This collected item could not be read."
+                                                messageSection = AppSection.THIS_DEVICE
                                             }
                                         }
                                     } else if (isImageLike(entry)) {
@@ -759,6 +945,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                                 previewBitmap = bitmap
                                             } else {
                                                 message = "This collected image could not be read."
+                                                messageSection = AppSection.THIS_DEVICE
                                             }
                                         }
                                     } else if (isVideoLike(entry)) {
@@ -773,6 +960,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             context.startActivity(intent)
                                         }.onFailure {
                                             message = "No installed app can open this collected item type."
+                                            messageSection = AppSection.THIS_DEVICE
                                         }
                                     }
                                 }
@@ -781,9 +969,23 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         )
                     }
                 }
-            } else if (source == null) {
+            }
+            if (activeSection == AppSection.USB_SOURCE && source == null) {
                 item { Text("Connect a source phone using a data-capable USB cable.") }
-            } else {
+            } else if (activeSection == AppSection.USB_SOURCE && source != null) {
+                if (capabilities == null || identity == null) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text("Reading USB source", style = MaterialTheme.typography.titleMedium)
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                }
                 capabilities?.let { policy ->
                     item {
                         Text(policy.connectionMessage)
@@ -816,6 +1018,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 application.trustStore.save(created)
                                 trust = created
                                 message = "USB source authorized for every available data category."
+                                messageSection = AppSection.USB_SOURCE
                             },
                         )
                     }
@@ -845,6 +1048,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 onViewLibrary = {
                                     libraryEntries = application.auditLog.completedTransfers(trust!!.record.peerDeviceId)
                                     showLibrary = true
+                                    activeSection = AppSection.THIS_DEVICE
+                                    scope.launch { listState.scrollToItem(0) }
                                 },
                                 onSync = sync@{
                                     val currentSource = source ?: return@sync
@@ -852,12 +1057,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     syncing = true
                                     liveProgress = SyncProgress(null, 0, 0, 0, 0)
                                     message = "LIVE: 0 transferred, 0 already audited, 0 failed."
+                                    messageSection = AppSection.USB_SOURCE
                                     scope.launch {
                                         val result = withContext(Dispatchers.IO) {
                                             val publishProgress: (SyncProgress) -> Unit = { progress ->
                                                 scope.launch(Dispatchers.Main.immediate) {
                                                     liveProgress = progress
                                                     message = buildLiveStatus(progress)
+                                                    messageSection = AppSection.USB_SOURCE
                                                 }
                                             }
                                             val mtpResult = application.mtpSyncEngine.sync(
@@ -883,6 +1090,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             bytesTransferred = result.bytesTransferred,
                                         )
                                         message = "${result.status}: ${result.transferredItems} transferred, ${result.skippedItems} already audited."
+                                        messageSection = AppSection.USB_SOURCE
                                         refreshToken += 1
                                     }
                                 },
@@ -891,12 +1099,16 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     trust = application.trustStore.revoke(trust!!)
                                     grants = emptyList()
                                     message = "Trust revoked. Re-approval is required before syncing."
+                                    messageSection = AppSection.USB_SOURCE
                                 },
                         )
                     }
                 }
             }
-            message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
+            message?.takeIf { messageSection == activeSection }?.let {
+                item { Text(it, color = MaterialTheme.colorScheme.primary) }
+            }
+            }
         }
     }
 
@@ -966,6 +1178,9 @@ private fun TrustedDashboard(
                 )
                 progress.currentItem?.let { currentItem ->
                     Text("Pulling: ${currentItem.substringAfterLast('/')}" )
+                }
+                if (syncing && progress.currentItemTotal <= 0) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 if (progress.currentItemTotal > 0) {
                     LinearProgressIndicator(
@@ -1209,6 +1424,9 @@ private fun AndroidPersonalDataPanel(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Prepare this Android phone", style = MaterialTheme.typography.titleMedium)
             Text(status, style = MaterialTheme.typography.bodySmall)
+            if (collecting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             OutlinedButton(
                 onClick = { expanded = !expanded },
                 modifier = Modifier.fillMaxWidth(),
@@ -1268,6 +1486,63 @@ private fun AndroidPersonalDataPanel(
                     "Everything stays in Phone Sync and local Android storage. Android requires owner approval for system permissions.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun BackupActivityPanel(activity: BackupActivityUi) {
+    val progress = if (activity.totalItems > 0) {
+        (activity.completedItems.toFloat() / activity.totalItems).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Backup and export activity", style = MaterialTheme.typography.titleMedium)
+            if (activity.title != "Backup and export activity") Text(activity.title)
+            if (activity.totalItems > 0 || activity.running) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "${activity.completedItems} of ${activity.totalItems} items",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            activity.currentItem?.let { currentItem ->
+                Text("Current: $currentItem", style = MaterialTheme.typography.bodySmall)
+            }
+            if (activity.running && activity.currentItemTotal > 0) {
+                LinearProgressIndicator(
+                    progress = {
+                        (activity.currentItemBytes.toFloat() / activity.currentItemTotal)
+                            .coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Current file: ${formatBytes(activity.currentItemBytes)} / " +
+                        formatBytes(activity.currentItemTotal),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (activity.running && activity.currentItem != null && activity.currentItemTotal <= 0) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text("Current file size is unavailable.", style = MaterialTheme.typography.bodySmall)
+            }
+            if (activity.bytesProcessed > 0) {
+                Text("Processed: ${formatBytes(activity.bytesProcessed)}", style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                activity.status,
+                color = if (activity.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (activity.running && activity.totalItems <= 0) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -1362,8 +1637,8 @@ private fun TargetMediaWizard(
     }
 }
 
-private const val BACKUP_PANEL_INDEX = 3
-private const val SOURCE_SYNC_SECTION_INDEX = 5
+private const val BACKUP_PANEL_INDEX = 2
+private const val SOURCE_SYNC_SECTION_INDEX = 3
 private const val LOCAL_ANDROID_PEER_ID = "local-android"
 private const val ONEDRIVE_PACKAGE = "com.microsoft.skydrive"
 private const val GOOGLE_DRIVE_PACKAGE = "com.google.android.apps.docs"

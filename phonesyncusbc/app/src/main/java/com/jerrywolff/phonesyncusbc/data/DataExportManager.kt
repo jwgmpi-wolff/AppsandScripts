@@ -24,10 +24,22 @@ data class ExportResult(
     val error: String? = null,
 )
 
+data class ExportProgress(
+    val completedItems: Int,
+    val totalItems: Int,
+    val currentItem: String,
+    val bytesExported: Long,
+    val currentItemBytes: Long = 0,
+    val currentItemTotal: Long = 0,
+)
+
 data class ArchiveProgress(
     val completedItems: Int,
     val totalItems: Int,
     val currentItem: String,
+    val currentItemBytes: Long = 0,
+    val currentItemTotal: Long = 0,
+    val sourceBytesArchived: Long = 0,
 )
 
 data class ArchiveResult(
@@ -40,25 +52,33 @@ data class ArchiveResult(
 )
 
 class DataExportManager(private val context: Context) {
-    fun backupToDownloads(entries: List<AuditEntry>): ExportResult {
+    fun backupToDownloads(
+        entries: List<AuditEntry>,
+        onProgress: (ExportProgress) -> Unit = {},
+    ): ExportResult {
         if (entries.isEmpty()) return ExportResult(0, 0, 0, "No collected items are available to back up.")
         val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Backups/" +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var exported = 0
         var failed = 0
         var bytes = 0L
+        var processed = 0
         var firstError: String? = null
 
         entries.forEach { entry ->
+            val displayName = sanitizeName(entry.sourceItem.substringAfterLast('/'))
+                .ifBlank { "collected-item" }
+            onProgress(ExportProgress(processed, entries.size, displayName, bytes))
             val source = entry.destination?.let(Uri::parse)
             if (source == null) {
                 failed += 1
+                processed += 1
                 firstError = firstError ?: "A collected item has no stored location."
+                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
                 return@forEach
             }
-            val displayName = sanitizeName(entry.sourceItem.substringAfterLast('/'))
             val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName.ifBlank { "collected-item" })
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                 put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType(entry))
                 put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "$folder/${entry.category.name.lowercase()}")
                 put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
@@ -71,10 +91,28 @@ class DataExportManager(private val context: Context) {
             }.getOrNull()
             if (target == null) {
                 failed += 1
+                processed += 1
                 firstError = firstError ?: "Could not create the backup destination for $displayName."
+                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
                 return@forEach
             }
-            runCatching { copy(source, target) }
+            val itemTotal = sourceSize(source)
+            var itemBytes = 0L
+            runCatching {
+                copy(source, target) { copied ->
+                    itemBytes = copied
+                    onProgress(
+                        ExportProgress(
+                            processed,
+                            entries.size,
+                            displayName,
+                            bytes + copied,
+                            copied,
+                            itemTotal,
+                        ),
+                    )
+                }
+            }
                 .onSuccess {
                     context.contentResolver.update(
                         target,
@@ -92,11 +130,19 @@ class DataExportManager(private val context: Context) {
                     failed += 1
                     firstError = firstError ?: (throwable.message ?: "Could not back up $displayName.")
                 }
+            processed += 1
+            onProgress(
+                ExportProgress(processed, entries.size, displayName, bytes, itemBytes, itemTotal),
+            )
         }
         return ExportResult(exported, failed, bytes, firstError)
     }
 
-    fun export(entries: List<AuditEntry>, destinationTree: Uri): ExportResult {
+    fun export(
+        entries: List<AuditEntry>,
+        destinationTree: Uri,
+        onProgress: (ExportProgress) -> Unit = {},
+    ): ExportResult {
         val root = DocumentFile.fromTreeUri(context, destinationTree)
             ?: return ExportResult(0, entries.size, 0, "The selected destination is unavailable.")
         if (!root.canWrite()) {
@@ -111,18 +157,24 @@ class DataExportManager(private val context: Context) {
         var exported = 0
         var failed = 0
         var bytes = 0L
+        var processed = 0
         var firstError: String? = null
         entries.forEach { entry ->
             val source = entry.destination?.let(Uri::parse)
+            val sourceName = source?.let { sourceDisplayName(it, entry) }
+                ?: entry.sourceItem.substringAfterLast('/').ifBlank { "collected-item" }
+            onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
             if (source == null) {
                 failed += 1
+                processed += 1
                 firstError = firstError ?: "A collected item has no stored location."
+                onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
                 return@forEach
             }
 
             val displayName = uniqueName(
                 exportFolder,
-                sanitizeName(sourceDisplayName(source, entry)),
+                sanitizeName(sourceName),
             )
             val target = exportFolder.createFile(
                 context.contentResolver.getType(source) ?: mimeType(entry),
@@ -130,12 +182,28 @@ class DataExportManager(private val context: Context) {
             )
             if (target == null) {
                 failed += 1
+                processed += 1
                 firstError = firstError ?: "Could not create $displayName."
+                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
                 return@forEach
             }
 
+            val itemTotal = sourceSize(source)
+            var itemBytes = 0L
             runCatching {
-                copy(source, target.uri)
+                copy(source, target.uri) { copied ->
+                    itemBytes = copied
+                    onProgress(
+                        ExportProgress(
+                            processed,
+                            entries.size,
+                            displayName,
+                            bytes + copied,
+                            copied,
+                            itemTotal,
+                        ),
+                    )
+                }
             }.onSuccess { copied ->
                 exported += 1
                 bytes += copied
@@ -144,6 +212,10 @@ class DataExportManager(private val context: Context) {
                 failed += 1
                 firstError = firstError ?: (throwable.message ?: "Could not export $displayName.")
             }
+            processed += 1
+            onProgress(
+                ExportProgress(processed, entries.size, displayName, bytes, itemBytes, itemTotal),
+            )
         }
         return ExportResult(exported, failed, bytes, firstError)
     }
@@ -188,7 +260,16 @@ class DataExportManager(private val context: Context) {
                         usedPaths,
                         "${entry.category.name.lowercase()}/$sourceName",
                     )
-                    onProgress(ArchiveProgress(index, entries.size, sourceName))
+                    val itemTotal = sourceSize(source)
+                    onProgress(
+                        ArchiveProgress(
+                            index,
+                            entries.size,
+                            sourceName,
+                            currentItemTotal = itemTotal,
+                            sourceBytesArchived = sourceBytes,
+                        ),
+                    )
                     archive.putNextEntry(
                         ZipEntry(archivePath).apply {
                             time = entry.transferredAtEpochMillis
@@ -200,12 +281,26 @@ class DataExportManager(private val context: Context) {
                     val copied = input.use { sourceStream ->
                         val buffer = ByteArray(BUFFER_SIZE)
                         var total = 0L
+                        var lastReported = 0L
                         while (true) {
                             val count = sourceStream.read(buffer)
                             if (count < 0) break
                             archive.write(buffer, 0, count)
                             digest.update(buffer, 0, count)
                             total += count
+                            if (total - lastReported >= PROGRESS_REPORT_BYTES) {
+                                onProgress(
+                                    ArchiveProgress(
+                                        index,
+                                        entries.size,
+                                        sourceName,
+                                        total,
+                                        itemTotal,
+                                        sourceBytes + total,
+                                    ),
+                                )
+                                lastReported = total
+                            }
                         }
                         total
                     }
@@ -219,7 +314,16 @@ class DataExportManager(private val context: Context) {
                             .put("bytes", copied)
                             .put("sha256", digest.digest().joinToString("") { "%02x".format(it) }),
                     )
-                    onProgress(ArchiveProgress(index + 1, entries.size, sourceName))
+                    onProgress(
+                        ArchiveProgress(
+                            index + 1,
+                            entries.size,
+                            sourceName,
+                            copied,
+                            itemTotal,
+                            sourceBytes,
+                        ),
+                    )
                 }
 
                 val manifest = JSONObject()
@@ -276,7 +380,25 @@ class DataExportManager(private val context: Context) {
             ?: "application/octet-stream"
     }
 
-    private fun copy(source: Uri, target: Uri): Long {
+    private fun sourceSize(source: Uri): Long {
+        return runCatching {
+            context.contentResolver.query(
+                source,
+                arrayOf(android.provider.OpenableColumns.SIZE),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).coerceAtLeast(0) else 0
+            } ?: 0
+        }.getOrDefault(0)
+    }
+
+    private fun copy(
+        source: Uri,
+        target: Uri,
+        onProgress: (Long) -> Unit = {},
+    ): Long {
         val input = context.contentResolver.openInputStream(source)
             ?: error("Could not read the imported item.")
         val output = context.contentResolver.openOutputStream(target, "w")
@@ -285,12 +407,18 @@ class DataExportManager(private val context: Context) {
             output.use { targetStream ->
                 val buffer = ByteArray(BUFFER_SIZE)
                 var total = 0L
+                var lastReported = 0L
                 while (true) {
                     val count = sourceStream.read(buffer)
                     if (count < 0) break
                     targetStream.write(buffer, 0, count)
                     total += count
+                    if (total - lastReported >= PROGRESS_REPORT_BYTES) {
+                        onProgress(total)
+                        lastReported = total
+                    }
                 }
+                if (total != lastReported) onProgress(total)
                 total
             }
         }
@@ -344,5 +472,6 @@ class DataExportManager(private val context: Context) {
 
     private companion object {
         const val BUFFER_SIZE = 1024 * 1024
+        const val PROGRESS_REPORT_BYTES = 1024 * 1024L
     }
 }
