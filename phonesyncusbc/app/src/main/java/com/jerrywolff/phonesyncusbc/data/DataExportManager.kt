@@ -5,14 +5,37 @@ import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 data class ExportResult(
     val exportedItems: Int,
     val failedItems: Int,
     val bytesExported: Long,
+    val error: String? = null,
+)
+
+data class ArchiveProgress(
+    val completedItems: Int,
+    val totalItems: Int,
+    val currentItem: String,
+)
+
+data class ArchiveResult(
+    val uri: Uri? = null,
+    val displayName: String? = null,
+    val archivedItems: Int = 0,
+    val sourceBytes: Long = 0,
+    val archiveBytes: Long = 0,
     val error: String? = null,
 )
 
@@ -125,6 +148,110 @@ class DataExportManager(private val context: Context) {
         return ExportResult(exported, failed, bytes, firstError)
     }
 
+    fun createUploadArchive(
+        entries: List<AuditEntry>,
+        onProgress: (ArchiveProgress) -> Unit = {},
+    ): ArchiveResult {
+        if (entries.isEmpty()) return ArchiveResult(error = "No collected items are selected for upload.")
+
+        val displayName = "PhoneSyncBackup-${timestamp()}.zip"
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+            put(
+                android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads",
+            )
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val destination = context.contentResolver.insert(
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            values,
+        ) ?: return ArchiveResult(error = "Android could not create the upload archive.")
+
+        return try {
+            val output = context.contentResolver.openOutputStream(destination, "w")
+                ?: error("Android could not open the upload archive.")
+            val countingOutput = CountingOutputStream(output)
+            val manifestEntries = JSONArray()
+            val usedPaths = mutableSetOf<String>()
+            var sourceBytes = 0L
+
+            ZipOutputStream(countingOutput).use { archive ->
+                archive.setLevel(Deflater.NO_COMPRESSION)
+                entries.forEachIndexed { index, entry ->
+                    val source = entry.destination?.let(Uri::parse)
+                        ?: error("${entry.sourceItem} has no stored location.")
+                    val sourceName = sanitizeName(sourceDisplayName(source, entry))
+                        .ifBlank { "collected-item" }
+                    val archivePath = uniqueArchivePath(
+                        usedPaths,
+                        "${entry.category.name.lowercase()}/$sourceName",
+                    )
+                    onProgress(ArchiveProgress(index, entries.size, sourceName))
+                    archive.putNextEntry(
+                        ZipEntry(archivePath).apply {
+                            time = entry.transferredAtEpochMillis
+                        },
+                    )
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val input = context.contentResolver.openInputStream(source)
+                        ?: error("Could not read $sourceName.")
+                    val copied = input.use { sourceStream ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        var total = 0L
+                        while (true) {
+                            val count = sourceStream.read(buffer)
+                            if (count < 0) break
+                            archive.write(buffer, 0, count)
+                            digest.update(buffer, 0, count)
+                            total += count
+                        }
+                        total
+                    }
+                    archive.closeEntry()
+                    sourceBytes += copied
+                    manifestEntries.put(
+                        JSONObject()
+                            .put("category", entry.category.name)
+                            .put("sourceItem", entry.sourceItem)
+                            .put("archivePath", archivePath)
+                            .put("bytes", copied)
+                            .put("sha256", digest.digest().joinToString("") { "%02x".format(it) }),
+                    )
+                    onProgress(ArchiveProgress(index + 1, entries.size, sourceName))
+                }
+
+                val manifest = JSONObject()
+                    .put("createdAtEpochMillis", System.currentTimeMillis())
+                    .put("itemCount", entries.size)
+                    .put("sourceBytes", sourceBytes)
+                    .put("entries", manifestEntries)
+                archive.putNextEntry(ZipEntry("backup-manifest.json"))
+                archive.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
+                archive.closeEntry()
+            }
+            context.contentResolver.update(
+                destination,
+                android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                },
+                null,
+                null,
+            )
+            ArchiveResult(
+                uri = destination,
+                displayName = displayName,
+                archivedItems = entries.size,
+                sourceBytes = sourceBytes,
+                archiveBytes = countingOutput.bytesWritten,
+            )
+        } catch (throwable: Throwable) {
+            context.contentResolver.delete(destination, null, null)
+            ArchiveResult(error = throwable.message ?: throwable.javaClass.simpleName)
+        }
+    }
+
     private fun sourceDisplayName(source: Uri, entry: AuditEntry): String {
         val queriedName = runCatching {
             context.contentResolver.query(
@@ -182,8 +309,37 @@ class DataExportManager(private val context: Context) {
         return candidate
     }
 
+    private fun uniqueArchivePath(usedPaths: MutableSet<String>, basePath: String): String {
+        val extension = basePath.substringAfterLast('.', missingDelimiterValue = "")
+        val stem = if (extension.isBlank()) basePath else basePath.removeSuffix(".$extension")
+        var candidate = basePath
+        var index = 2
+        while (!usedPaths.add(candidate)) {
+            candidate = if (extension.isBlank()) "$stem-$index" else "$stem-$index.$extension"
+            index += 1
+        }
+        return candidate
+    }
+
     private fun sanitizeName(value: String): String {
         return value.replace(Regex("[\\/:*?\"<>|\\p{Cntrl}]"), "_").take(180)
+    }
+
+    private fun timestamp(): String = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+
+    private class CountingOutputStream(output: OutputStream) : FilterOutputStream(output) {
+        var bytesWritten: Long = 0
+            private set
+
+        override fun write(value: Int) {
+            out.write(value)
+            bytesWritten += 1
+        }
+
+        override fun write(buffer: ByteArray, offset: Int, length: Int) {
+            out.write(buffer, offset, length)
+            bytesWritten += length
+        }
     }
 
     private companion object {

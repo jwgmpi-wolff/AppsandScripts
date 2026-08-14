@@ -31,7 +31,7 @@ Phone Sync never reports protected data as pulled unless the source actually exp
 - Any writable folder exposed by Android's system picker, including local, SD/USB, and supporting document providers
 - OneDrive, Google Drive, or another installed app through Android's upload chooser
 
-Local/picker backups display completed item and byte totals. Provider upload completion is controlled by the selected provider app.
+Local/picker backups display completed item and byte totals. For multi-item provider uploads, Phone Sync creates one ZIP64 package with a SHA-256 manifest before opening the provider. This avoids OneDrive's broken bulk-file checkmark screen. Provider upload completion is controlled by the selected provider app.
 
 ## Permissions
 

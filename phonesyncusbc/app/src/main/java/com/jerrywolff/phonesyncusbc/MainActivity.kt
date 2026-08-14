@@ -482,26 +482,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         scope.launch { listState.animateScrollToItem(BACKUP_PANEL_INDEX) }
     }
 
-    fun uploadSelectedBackup(packageName: String?, label: String) {
-        val entries = backupEntries.filter { it.id in selectedBackupIds }
-        val streams = ArrayList(entries.mapNotNull { it.destination?.let(Uri::parse) }.distinct())
-        if (streams.isEmpty()) {
-            backupStatus = "Select at least one available item before uploading."
-            return
-        }
-        val action = if (streams.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
-        val uploadIntent = Intent(action).apply {
+    fun launchProviderUpload(uri: Uri, packageName: String?, label: String, itemCount: Int) {
+        val uploadIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/octet-stream"
             packageName?.let(::setPackage)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            clipData = ClipData.newUri(context.contentResolver, "Phone Sync backup", streams.first()).apply {
-                streams.drop(1).forEach { addItem(ClipData.Item(it)) }
-            }
-            if (streams.size == 1) {
-                putExtra(Intent.EXTRA_STREAM, streams.first())
-            } else {
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, streams)
-            }
+            clipData = ClipData.newRawUri("Phone Sync backup", uri)
+            putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
         }
         runCatching {
@@ -513,9 +500,46 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 },
             )
         }.onSuccess {
-            message = "$label opened with ${streams.size} items. Choose the destination folder and complete the upload there."
+            message = "$label opened with one backup package containing $itemCount items. Choose the folder and tap Upload."
         }.onFailure { throwable ->
             message = "Could not open $label. Install/sign in to it or choose another destination. ${throwable.message.orEmpty()}"
+        }
+    }
+
+    fun uploadSelectedBackup(packageName: String?, label: String) {
+        val entries = backupEntries.filter { it.id in selectedBackupIds }
+        if (entries.isEmpty()) {
+            backupStatus = "Select at least one available item before uploading."
+            return
+        }
+        if (entries.size == 1) {
+            val uri = entries.first().destination?.let(Uri::parse)
+            if (uri == null) {
+                backupStatus = "The selected item is no longer available."
+            } else {
+                launchProviderUpload(uri, packageName, label, 1)
+            }
+            return
+        }
+
+        backingUp = true
+        backupStatus = "Preparing one upload package for ${entries.size} items..."
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                DataExportManager(context).createUploadArchive(entries) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        backupStatus = "Preparing upload: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
+                    }
+                }
+            }
+            backingUp = false
+            if (result.uri == null) {
+                backupStatus = "Could not prepare upload: ${result.error ?: "unknown error"}"
+                message = backupStatus
+            } else {
+                backupStatus = "Upload package ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}."
+                launchProviderUpload(result.uri, packageName, label, result.archivedItems)
+            }
         }
     }
 
@@ -658,7 +682,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     BackupSelectionView(
                         entries = backupEntries,
                         selectedIds = selectedBackupIds,
-                        onSelectionChanged = { selectedBackupIds = it },
+                        onSelectionChanged = { selected ->
+                            selectedBackupIds = selected
+                            backupStatus = "${selected.size} items ready for $targetName."
+                        },
                         onCancel = { showBackupSelection = false },
                         onContinue = {
                             showBackupSelection = false
