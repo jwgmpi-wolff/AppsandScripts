@@ -73,6 +73,7 @@ import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.DataImportManager
+import com.jerrywolff.phonesyncusbc.data.LOCAL_ANDROID_PEER_ID
 import com.jerrywolff.phonesyncusbc.data.displayName
 import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
@@ -179,6 +180,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var liveProgress by remember { mutableStateOf<SyncProgress?>(null) }
     var mtpScanSummary by remember { mutableStateOf<MtpScanSummary?>(null) }
     var showLibrary by remember { mutableStateOf(false) }
+    var librarySection by remember { mutableStateOf(AppSection.THIS_DEVICE) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
     var previewEntry by remember { mutableStateOf<AuditEntry?>(null) }
     var previewText by remember { mutableStateOf<String?>(null) }
@@ -187,7 +189,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var importCategory by remember { mutableStateOf<ConsentCategory?>(null) }
     var localImportCategory by remember { mutableStateOf<ConsentCategory?>(null) }
     var showBackupSelection by remember { mutableStateOf(false) }
-    val initialBackupEntries = remember { application.auditLog.allCompletedTransfers() }
+    val initialBackupPeerId = remember { application.auditLog.latestExternalPeerId() }
+    var backupPeerId by remember { mutableStateOf(initialBackupPeerId) }
+    val initialBackupEntries = remember(initialBackupPeerId) {
+        application.auditLog.completedExternalTransfers(initialBackupPeerId)
+    }
     var backupEntries by remember { mutableStateOf(initialBackupEntries) }
     var selectedBackupIds by remember {
         mutableStateOf<Set<Long>>(initialBackupEntries.mapTo(linkedSetOf()) { it.id })
@@ -214,8 +220,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             if (existingPersonalExports.isEmpty()) {
                 "Android personal data has not been collected yet."
             } else {
-                "Available in backup set: ${existingPersonalExports.map { it.category }.distinct().size} categories, " +
-                    "${existingPersonalExports.size} export files (${formatBytes(existingPersonalExports.sumOf { it.bytesTransferred })})."
+                "Prepared on this Android: ${existingPersonalExports.map { it.category }.distinct().size} categories, " +
+                    "${existingPersonalExports.size} export files (${formatBytes(existingPersonalExports.sumOf { it.bytesTransferred })}). " +
+                    "These are excluded from external-source backups."
             },
         )
     }
@@ -259,14 +266,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         }
                     }
                 }
-                backupEntries = application.auditLog.allCompletedTransfers()
-                selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                 personalDataStatus = when {
                     result.failedCategories == 0 ->
-                        "Collected ${result.records} records in ${result.exportedCategories} export files (${formatBytes(result.bytes)})."
+                        "Prepared ${result.records} records in ${result.exportedCategories} source export files (${formatBytes(result.bytes)})."
                     result.exportedCategories > 0 ->
-                        "Collected ${result.records} records; ${result.failedCategories} categories failed. ${result.firstError.orEmpty()}"
-                    else -> "Collection failed: ${result.firstError ?: "No provider data was available."}"
+                        "Prepared ${result.records} records; ${result.failedCategories} categories failed. ${result.firstError.orEmpty()}"
+                    else -> "Preparation failed: ${result.firstError ?: "No provider data was available."}"
                 }
                 message = personalDataStatus
                 messageSection = AppSection.THIS_DEVICE
@@ -375,6 +380,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         val resolved = runCatching { application.usbSourceResolver.resolveIdentity(source) }.getOrNull()
             ?: return@LaunchedEffect
         identity = resolved
+        backupPeerId = resolved.peerId
+        backupEntries = application.auditLog.completedExternalTransfers(resolved.peerId)
+        selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+        backupStatus = "${backupEntries.size} external-source items ready for $targetName."
         val resolvedCapabilities = SourceCapabilityPolicy.forSource(source.detected)
         capabilities = resolvedCapabilities
         when (val loaded = application.trustStore.load(resolved.peerId, resolved.profileId)) {
@@ -486,7 +495,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 message = "Imported ${result.importedItems} exported files (${formatBytes(result.bytesImported)})." +
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
                 messageSection = AppSection.USB_SOURCE
-                libraryEntries = application.auditLog.allCompletedTransfers()
+                libraryEntries = application.auditLog.completedExternalTransfers(currentIdentity.peerId)
+                librarySection = AppSection.USB_SOURCE
+                backupPeerId = currentIdentity.peerId
+                backupEntries = application.auditLog.completedExternalTransfers(currentIdentity.peerId)
+                selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+                backupStatus = "${backupEntries.size} external-source items ready for $targetName."
                 refreshToken += 1
                 importCategory = null
             }
@@ -508,8 +522,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         forcedCategory = category,
                     )
                 }
-                backupEntries = application.auditLog.allCompletedTransfers()
-                selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                 personalDataStatus = "Imported ${result.importedItems} ${category.label()} files (${formatBytes(result.bytesImported)})." +
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
                 message = personalDataStatus
@@ -910,12 +922,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             if (activeSection == AppSection.THIS_DEVICE) item {
                 OutlinedButton(
                     onClick = {
-                        libraryEntries = application.auditLog.allCompletedTransfers()
+                        libraryEntries = application.auditLog.completedTransfers(LOCAL_ANDROID_PEER_ID)
+                        librarySection = AppSection.THIS_DEVICE
                         showLibrary = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("View collected data")
+                    Text("View prepared data")
                 }
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
@@ -923,10 +936,17 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupPanel(
+                    title = "Push external source data",
+                    description = if (source != null) {
+                        "Only completed transfers from ${source.detected.displayName}. This Android's prepared SMS, calls, and other exports are excluded."
+                    } else {
+                        "Only completed transfers from the most recently collected external source. This Android's prepared data is excluded."
+                    },
                     onSelectBackup = {
                         if (!backingUp) {
                             backupWorkflowSection = AppSection.BACKUP_ACTIVITY
-                            backupEntries = application.auditLog.allCompletedTransfers()
+                            val peerId = identity?.peerId ?: backupPeerId
+                            backupEntries = application.auditLog.completedExternalTransfers(peerId)
                             selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                             showTargetWizard = false
                             showBackupSelection = true
@@ -934,7 +954,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                     onChooseTarget = {
                         backupWorkflowSection = AppSection.BACKUP_ACTIVITY
-                        backupEntries = application.auditLog.allCompletedTransfers()
+                        val peerId = identity?.peerId ?: backupPeerId
+                        backupEntries = application.auditLog.completedExternalTransfers(peerId)
                         if (selectedBackupIds.isEmpty()) {
                             selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                         }
@@ -1045,7 +1066,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     )
                 }
             }
-            if (activeSection == AppSection.THIS_DEVICE && showLibrary) {
+            if (activeSection == librarySection && showLibrary) {
                 item {
                     if (previewEntry != null && previewText != null) {
                         TextPreview(
@@ -1201,10 +1222,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     )
                                 },
                                 onViewLibrary = {
-                                    libraryEntries = application.auditLog.completedTransfers(trust!!.record.peerDeviceId)
+                                    libraryEntries = application.auditLog.completedExternalTransfers(
+                                        trust!!.record.peerDeviceId,
+                                    )
+                                    librarySection = AppSection.USB_SOURCE
                                     showLibrary = true
-                                    activeSection = AppSection.THIS_DEVICE
-                                    scope.launch { listState.scrollToItem(0) }
                                 },
                                 onSync = sync@{
                                     val currentSource = source ?: return@sync
@@ -1248,6 +1270,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                         mtpScanSummary = result.mtpScan
                                         message = buildSyncCompletionStatus(result)
                                         messageSection = AppSection.USB_SOURCE
+                                        backupPeerId = currentIdentity.peerId
+                                        backupEntries = application.auditLog.completedExternalTransfers(
+                                            currentIdentity.peerId,
+                                        )
+                                        selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                                         refreshToken += 1
                                     }
                                 },
@@ -1986,7 +2013,6 @@ private fun TargetMediaWizard(
 }
 
 private const val SOURCE_SYNC_SECTION_INDEX = 3
-private const val LOCAL_ANDROID_PEER_ID = "local-android"
 private const val DEFAULT_MOBILE_TARGET_NAME = "This phone / Downloads / Phone Sync Backups"
 private const val LOCAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 private const val PRIMARY_STORAGE_ROOT_ID = "primary"

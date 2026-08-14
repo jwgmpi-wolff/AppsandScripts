@@ -6,6 +6,10 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 
+const val LOCAL_ANDROID_PEER_ID = "local-android"
+
+fun isExternalSourcePeer(peerId: String): Boolean = peerId != LOCAL_ANDROID_PEER_ID
+
 enum class SyncStatus {
     RUNNING,
     COMPLETED,
@@ -219,12 +223,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
     }
 
     fun completedTransfers(peerId: String, limit: Int = 500): List<AuditEntry> {
-        return recentTransfers(peerId, limit)
-            .filter { it.status == TransferStatus.COMPLETED && !it.destination.isNullOrBlank() }
-    }
-
-    fun allCompletedTransfers(limit: Int = 500): List<AuditEntry> {
-        return readableDatabase.query(
+        readableDatabase.query(
             "transfers",
             arrayOf(
                 "id",
@@ -236,14 +235,14 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 "status",
                 "error",
             ),
-            "status = ? AND destination IS NOT NULL",
-            arrayOf(TransferStatus.COMPLETED.name),
+            "peer_id = ? AND status = ? AND destination IS NOT NULL",
+            arrayOf(peerId, TransferStatus.COMPLETED.name),
             null,
             null,
             "transferred_at DESC",
             limit.coerceIn(1, 1_000).toString(),
         ).use { cursor ->
-            buildList {
+            return buildList {
                 while (cursor.moveToNext()) {
                     add(
                         AuditEntry(
@@ -259,6 +258,26 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                     )
                 }
             }
+        }
+    }
+
+    fun completedExternalTransfers(peerId: String?, limit: Int = 500): List<AuditEntry> {
+        if (peerId == null || !isExternalSourcePeer(peerId)) return emptyList()
+        return completedTransfers(peerId, limit)
+    }
+
+    fun latestExternalPeerId(): String? {
+        readableDatabase.query(
+            "transfers",
+            arrayOf("peer_id"),
+            "peer_id != ? AND status = ? AND destination IS NOT NULL",
+            arrayOf(LOCAL_ANDROID_PEER_ID, TransferStatus.COMPLETED.name),
+            null,
+            null,
+            "transferred_at DESC",
+            "1",
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getString(0) else null
         }
     }
 

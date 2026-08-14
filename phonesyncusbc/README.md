@@ -51,6 +51,8 @@ The **Backup Activity** tab keeps overall item progress, current-file byte progr
 
 When a USB source is connected, its destination panel is scoped to that source's completed transfers. It does not mix in exports prepared on the collecting Android device or files collected from another USB peer.
 
+The consolidated **Backup** tab follows the connected external source, or the most recently collected external source when disconnected. Android collector exports under **This Device** remain preparation-only and are excluded from external-source backup counts, selection, manifests, and provider uploads.
+
 The selected destination persists across app restarts. Phone Downloads and writable folder targets receive files directly. OneDrive, Google Drive, and other app targets prepare one package and open that provider from the primary push button; choose the provider folder and confirm Upload there.
 
 ## Permissions

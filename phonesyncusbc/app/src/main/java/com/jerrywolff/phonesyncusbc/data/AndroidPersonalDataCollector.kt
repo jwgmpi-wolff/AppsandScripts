@@ -55,7 +55,7 @@ class AndroidPersonalDataCollector(
         if (requested.isEmpty()) return PersonalDataCollectionResult(emptyList())
 
         cleanupAbandonedPendingExports()
-        val peerId = "local-android"
+        val peerId = LOCAL_ANDROID_PEER_ID
         val sessionId = auditLog.beginSession(peerId)
         val results = requested.map { category ->
             runCatching {
