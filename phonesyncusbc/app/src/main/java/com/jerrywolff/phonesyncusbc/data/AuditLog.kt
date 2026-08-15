@@ -10,6 +10,18 @@ private const val LEGACY_COLLECTOR_PEER_ID = "local-android"
 
 fun isExternalSourcePeer(peerId: String): Boolean = peerId != LEGACY_COLLECTOR_PEER_ID
 
+fun isCollectorOwnedSourceItem(sourceItem: String): Boolean {
+    val normalized = "/" + sourceItem.replace('\\', '/').trim('/').lowercase() + "/"
+    return "/phone sync/this android/" in normalized ||
+        "/phonesync/this android/" in normalized ||
+        "/phone sync/local-android/" in normalized ||
+        "/phonesync/local-android/" in normalized
+}
+
+fun isExternalSourceRecord(peerId: String, sourceItem: String): Boolean {
+    return isExternalSourcePeer(peerId) && !isCollectorOwnedSourceItem(sourceItem)
+}
+
 enum class SyncStatus {
     RUNNING,
     COMPLETED,
@@ -35,7 +47,23 @@ data class AuditEntry(
     val sourceSize: Long = 0,
     val sourceModifiedAtEpochMillis: Long = 0,
     val contentSha256: String? = null,
+    val peerId: String = "",
+    val sourceFingerprint: String = "",
 )
+
+fun AuditEntry.idempotencyKey(): String = when {
+    contentSha256?.isNotBlank() == true -> "sha256:${contentSha256.lowercase()}"
+    sourceFingerprint.isNotBlank() -> "fingerprint:$sourceFingerprint"
+    else -> "metadata:${sourceItem.replace('\\', '/').lowercase()}|$sourceSize|$sourceModifiedAtEpochMillis"
+}
+
+fun externalDeviceRecoveryEntries(entries: List<AuditEntry>): List<AuditEntry> {
+    return entries
+        .asSequence()
+        .filter { (it.peerId.isBlank() || isExternalSourcePeer(it.peerId)) && !isCollectorOwnedSourceItem(it.sourceItem) }
+        .distinctBy(AuditEntry::idempotencyKey)
+        .toList()
+}
 
 fun AuditEntry.displayName(): String {
     return destination?.substringAfterLast('/')?.substringBefore('?')
@@ -56,6 +84,10 @@ data class SyncSummary(
 )
 
 class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+    override fun onConfigure(database: SQLiteDatabase) {
+        database.setForeignKeyConstraintsEnabled(true)
+    }
+
     override fun onCreate(database: SQLiteDatabase) {
         database.execSQL(
             """
@@ -98,6 +130,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         database.execSQL(
             "CREATE INDEX transfers_fingerprint ON transfers(peer_id, source_fingerprint, status)",
         )
+        createTransferAliases(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -106,6 +139,24 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
             addColumnIfMissing(database, "source_modified_at", "INTEGER NOT NULL DEFAULT 0")
             addColumnIfMissing(database, "content_sha256", "TEXT")
         }
+        if (oldVersion < 3) createTransferAliases(database)
+    }
+
+    private fun createTransferAliases(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS transfer_aliases (
+                peer_id TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                transfer_id INTEGER NOT NULL,
+                PRIMARY KEY(peer_id, source_fingerprint),
+                FOREIGN KEY(transfer_id) REFERENCES transfers(id) ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS transfer_alias_target ON transfer_aliases(transfer_id)",
+        )
     }
 
     private fun addColumnIfMissing(
@@ -182,7 +233,10 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
             put("status", status.name)
             put("error", error)
         }
-        writableDatabase.insertOrThrow("transfers", null, values)
+        val transferId = writableDatabase.insertOrThrow("transfers", null, values)
+        if (status == TransferStatus.COMPLETED) {
+            recordTransferAlias(peerId, sourceFingerprint, transferId)
+        }
     }
 
     fun updateTransferIntegrity(
@@ -206,43 +260,49 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
     }
 
     fun completedTransfer(peerId: String, sourceFingerprint: String): AuditEntry? {
+        readableDatabase.rawQuery(
+            """
+            SELECT t.id, t.transferred_at, t.category, t.source_item, t.destination,
+                   t.bytes_transferred, t.status, t.error, t.source_size, t.source_modified_at,
+                   t.content_sha256, t.peer_id, t.source_fingerprint
+            FROM transfers t
+            LEFT JOIN transfer_aliases a ON a.transfer_id = t.id
+            WHERE t.peer_id = ? AND (t.source_fingerprint = ? OR a.source_fingerprint = ?)
+              AND t.status = ?
+            ORDER BY t.transferred_at DESC
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(peerId, sourceFingerprint, sourceFingerprint, TransferStatus.COMPLETED.name),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return cursor.toAuditEntry()
+        }
+    }
+
+    fun completedTransferByContent(peerId: String, contentSha256: String): AuditEntry? {
         readableDatabase.query(
             "transfers",
-            arrayOf(
-                "id",
-                "transferred_at",
-                "category",
-                "source_item",
-                "destination",
-                "bytes_transferred",
-                "status",
-                "error",
-                "source_size",
-                "source_modified_at",
-                "content_sha256",
-            ),
-            "peer_id = ? AND source_fingerprint = ? AND status = ?",
-            arrayOf(peerId, sourceFingerprint, TransferStatus.COMPLETED.name),
+            AUDIT_ENTRY_COLUMNS,
+            "peer_id = ? AND content_sha256 = ? AND status = ? AND destination IS NOT NULL",
+            arrayOf(peerId, contentSha256, TransferStatus.COMPLETED.name),
             null,
             null,
             "transferred_at DESC",
             "1",
-        ).use { cursor ->
-            if (!cursor.moveToFirst()) return null
-            return AuditEntry(
-                id = cursor.getLong(0),
-                transferredAtEpochMillis = cursor.getLong(1),
-                category = ConsentCategory.valueOf(cursor.getString(2)),
-                sourceItem = cursor.getString(3),
-                destination = cursor.getString(4),
-                bytesTransferred = cursor.getLong(5),
-                status = TransferStatus.valueOf(cursor.getString(6)),
-                error = cursor.getString(7),
-                sourceSize = cursor.getLong(8),
-                sourceModifiedAtEpochMillis = cursor.getLong(9),
-                contentSha256 = cursor.getString(10),
-            )
-        }
+        ).use { cursor -> return if (cursor.moveToFirst()) cursor.toAuditEntry() else null }
+    }
+
+    fun recordTransferAlias(peerId: String, sourceFingerprint: String, transferId: Long) {
+        writableDatabase.insertWithOnConflict(
+            "transfer_aliases",
+            null,
+            ContentValues().apply {
+                put("peer_id", peerId)
+                put("source_fingerprint", sourceFingerprint)
+                put("transfer_id", transferId)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
     }
 
     fun latestSession(peerId: String): SyncSummary? {
@@ -282,6 +342,8 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 "source_size",
                 "source_modified_at",
                 "content_sha256",
+                "peer_id",
+                "source_fingerprint",
             ),
             "peer_id = ?",
             arrayOf(peerId),
@@ -305,6 +367,8 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                             sourceSize = cursor.getLong(8),
                             sourceModifiedAtEpochMillis = cursor.getLong(9),
                             contentSha256 = cursor.getString(10),
+                            peerId = cursor.getString(11),
+                            sourceFingerprint = cursor.getString(12),
                         ),
                     )
                 }
@@ -327,6 +391,8 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 "source_size",
                 "source_modified_at",
                 "content_sha256",
+                "peer_id",
+                "source_fingerprint",
             ),
             "peer_id = ? AND status = ? AND destination IS NOT NULL",
             arrayOf(peerId, TransferStatus.COMPLETED.name),
@@ -350,6 +416,8 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                             sourceSize = cursor.getLong(8),
                             sourceModifiedAtEpochMillis = cursor.getLong(9),
                             contentSha256 = cursor.getString(10),
+                            peerId = cursor.getString(11),
+                            sourceFingerprint = cursor.getString(12),
                         ),
                     )
                 }
@@ -359,21 +427,28 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
 
     fun completedExternalTransfers(peerId: String?, limit: Int? = null): List<AuditEntry> {
         if (peerId == null || !isExternalSourcePeer(peerId)) return emptyList()
-        return completedTransfers(peerId, limit)
+        return externalDeviceRecoveryEntries(completedTransfers(peerId))
+            .asSequence()
+            .let { entries -> limit?.let(entries::take) ?: entries }
+            .toList()
     }
 
     fun latestExternalPeerId(): String? {
         readableDatabase.query(
             "transfers",
-            arrayOf("peer_id"),
+            arrayOf("peer_id", "source_item"),
             "peer_id != ? AND status = ? AND destination IS NOT NULL",
             arrayOf(LEGACY_COLLECTOR_PEER_ID, TransferStatus.COMPLETED.name),
             null,
             null,
             "transferred_at DESC",
-            "1",
+            null,
         ).use { cursor ->
-            return if (cursor.moveToFirst()) cursor.getString(0) else null
+            while (cursor.moveToNext()) {
+                val peerId = cursor.getString(0)
+                if (isExternalSourceRecord(peerId, cursor.getString(1))) return peerId
+            }
+            return null
         }
     }
 
@@ -384,6 +459,39 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
 
     private companion object {
         const val DATABASE_NAME = "transfer_audit.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
+        val AUDIT_ENTRY_COLUMNS = arrayOf(
+            "id",
+            "transferred_at",
+            "category",
+            "source_item",
+            "destination",
+            "bytes_transferred",
+            "status",
+            "error",
+            "source_size",
+            "source_modified_at",
+            "content_sha256",
+            "peer_id",
+            "source_fingerprint",
+        )
+    }
+
+    private fun android.database.Cursor.toAuditEntry(): AuditEntry {
+        return AuditEntry(
+            id = getLong(0),
+            transferredAtEpochMillis = getLong(1),
+            category = ConsentCategory.valueOf(getString(2)),
+            sourceItem = getString(3),
+            destination = getString(4),
+            bytesTransferred = getLong(5),
+            status = TransferStatus.valueOf(getString(6)),
+            error = getString(7),
+            sourceSize = getLong(8),
+            sourceModifiedAtEpochMillis = getLong(9),
+            contentSha256 = getString(10),
+            peerId = getString(11),
+            sourceFingerprint = getString(12),
+        )
     }
 }

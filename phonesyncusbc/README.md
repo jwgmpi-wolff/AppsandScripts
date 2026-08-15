@@ -6,6 +6,11 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
+Windows archive reader 2.2.0:
+
+- [Windows ARM64](releases/PhoneSyncDataReader-2.2.0-win-arm64.zip)
+- [Windows x64](releases/PhoneSyncDataReader-2.2.0-win-x64.zip)
+
 ## Trusted Repository APK
 
 The repository pins the published APK's SHA-256, signing-certificate SHA-256, application ID, and version in [the APK trust manifest](releases/PhoneSyncUSB-C-debug.apk.trust.json). Verify a downloaded APK from PowerShell before installing it:
@@ -27,7 +32,8 @@ Android does not treat GitHub as an app store, so manual downloads still require
 2. Select the source profile: **Windows PC**, **Android**, **iPhone/iPad**, or **Camera/IoT**.
 3. Authorize the available categories, then tap **Recover all USB-visible data**. Phone Sync requests every advertised object and recognizes media, documents, application data, configuration, logs, system information, messages, and password artifacts.
 4. After acquisition, use **Preserve this recovery set** to copy verified artifacts to local or provider storage.
-5. Open **Backup** for consolidated preservation progress and destination activity for the active or most recently recovered external source.
+5. Open **Recovered files**, then **Parsed data reader**, to build or refresh the local searchable index.
+6. Open **Backup** for consolidated preservation progress and destination activity for the active or most recently recovered external source.
 
 Installed storage apps handle their own authentication through Android. Phone Sync does not require provider client IDs, OAuth configuration, or embedded credentials.
 
@@ -60,6 +66,14 @@ Password-manager vaults, browser credential stores, keychain or credential backu
 - **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, voicemail, mail, chat, passwords, or notification databases. Only objects iOS advertises over PTP can be recovered.
 
 Phone Sync never reports protected data as recovered unless the source actually exposes a readable object or export.
+
+## Parsed Data Readers
+
+The Android **Parsed data reader** builds a local SQLite index from the verified recovery set for the selected external source. It streams JSON and JSONL records, flattens nested fields, derives source and collection labels from folders and ZIP entry paths, and supports source/type filters, search, and full field detail.
+
+SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
+
+The native Windows reader under [windows/PhoneSyncDataReader](windows/PhoneSyncDataReader) selects a synchronized or local archive folder directly. It builds an atomic SQLite index under `%LOCALAPPDATA%\PhoneSync\DataReader\Indexes`, searches flattened records and fields, and previews loose or ZIP-contained images without modifying the archive. Exact files deduplicate by source-scoped SHA-256, and logical records deduplicate by canonical field hash within their labeled collection.
 
 ## iPhone Photos Missing
 

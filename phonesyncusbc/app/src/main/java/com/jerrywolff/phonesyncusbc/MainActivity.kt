@@ -70,6 +70,8 @@ import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.displayName
+import com.jerrywolff.phonesyncusbc.data.externalDeviceRecoveryEntries
+import com.jerrywolff.phonesyncusbc.data.isCollectorOwnedSourceItem
 import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
 import com.jerrywolff.phonesyncusbc.data.StoredTrust
@@ -182,6 +184,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var identityReadProgress by remember { mutableStateOf<IdentityReadProgress?>(null) }
     var identityReadError by remember { mutableStateOf<String?>(null) }
     var showLibrary by remember { mutableStateOf(false) }
+    var showParsedData by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
     var previewEntry by remember { mutableStateOf<AuditEntry?>(null) }
     var previewText by remember { mutableStateOf<String?>(null) }
@@ -711,12 +714,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         entries: List<AuditEntry>,
         ownerSection: AppSection,
     ) {
+        val externalEntries = externalDeviceRecoveryEntries(entries)
+        val excludedItems = entries.size - externalEntries.size
+        if (excludedItems > 0) {
+            val exclusionStatus =
+                "Excluded $excludedItems collector-origin item(s); only external-device recovery data is eligible."
+            updateBackupWorkflowStatus(ownerSection, exclusionStatus)
+            message = exclusionStatus
+            messageSection = ownerSection
+        }
+        if (externalEntries.isEmpty()) return
         val providerTarget = targetType.providerTarget()
         if (providerTarget == null) {
-            backupEntriesToSelectedTarget(entries, ownerSection)
+            backupEntriesToSelectedTarget(externalEntries, ownerSection)
         } else {
             uploadBackupEntries(
-                entries,
+                externalEntries,
                 providerTarget.packageName,
                 providerTarget.label,
                 ownerSection,
@@ -913,10 +926,21 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                             onBack = { clearPreview() },
                         )
                     } else {
-                        ImportedDataView(
-                            entries = libraryEntries,
-                            onBack = { showLibrary = false },
-                            onOpen = { entry ->
+                        if (showParsedData) {
+                            ArtifactDataReaderView(
+                                entries = libraryEntries,
+                                initialSourceId = identity?.peerId ?: backupPeerId,
+                                initialSourceName = source?.detected?.displayName ?: "External source",
+                                database = application.artifactIndexDatabase,
+                                indexer = application.artifactIndexer,
+                                onBack = { showParsedData = false },
+                            )
+                        } else {
+                            ImportedDataView(
+                                entries = libraryEntries,
+                                onBack = { showLibrary = false },
+                                onBrowseParsed = { showParsedData = true },
+                                onOpen = { entry ->
                                 val destination = entry.destination?.let(Uri::parse)
                                 if (destination != null) {
                                     if (isTextLike(entry)) {
@@ -961,9 +985,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                         }
                                     }
                                 }
-                            },
-                            onExport = { exportLauncher.launch(null) },
-                        )
+                                },
+                                onExport = { exportLauncher.launch(null) },
+                            )
+                        }
                     }
                 }
             }
@@ -1057,6 +1082,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     libraryEntries = application.auditLog.completedExternalTransfers(
                                         trust!!.record.peerDeviceId,
                                     )
+                                    showParsedData = false
                                     showLibrary = true
                                 },
                                 onSync = sync@{
@@ -1599,6 +1625,7 @@ private fun sourceExportLabel(category: ConsentCategory): String = when (categor
 private fun ImportedDataView(
     entries: List<AuditEntry>,
     onBack: () -> Unit,
+    onBrowseParsed: () -> Unit,
     onOpen: (AuditEntry) -> Unit,
     onExport: () -> Unit,
 ) {
@@ -1616,6 +1643,13 @@ private fun ImportedDataView(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onBack) { Text("Back") }
                 Button(onClick = onExport, enabled = entries.isNotEmpty()) { Text("Export all") }
+            }
+            Button(
+                onClick = onBrowseParsed,
+                enabled = entries.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Parse and browse JSON data")
             }
             Text("Recovered source folders", style = MaterialTheme.typography.titleMedium)
             Text(

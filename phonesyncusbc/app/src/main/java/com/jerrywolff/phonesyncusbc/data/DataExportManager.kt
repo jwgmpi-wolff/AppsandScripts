@@ -97,6 +97,10 @@ class DataExportManager(private val context: Context) {
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
         if (entries.isEmpty()) return ExportResult(0, 0, 0, "No recovered artifacts are available to preserve.")
+        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
+        if (collectorItems > 0) {
+            return ExportResult(0, collectorItems, 0, "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        }
         val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Backups/" +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var exported = 0
@@ -183,6 +187,10 @@ class DataExportManager(private val context: Context) {
         destinationTree: Uri,
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
+        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
+        if (collectorItems > 0) {
+            return ExportResult(0, collectorItems, 0, "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        }
         val root = DocumentFile.fromTreeUri(context, destinationTree)
             ?: return ExportResult(0, entries.size, 0, "The selected destination is unavailable.")
         if (!root.canWrite()) {
@@ -265,6 +273,10 @@ class DataExportManager(private val context: Context) {
         onProgress: (ArchiveProgress) -> Unit = {},
     ): ArchiveResult {
         if (entries.isEmpty()) return ArchiveResult(error = "No recovered artifacts are selected for preservation.")
+        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
+        if (collectorItems > 0) {
+            return ArchiveResult(error = "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        }
 
         val displayName = "PhoneSyncBackup-${timestamp()}.zip"
         val values = android.content.ContentValues().apply {

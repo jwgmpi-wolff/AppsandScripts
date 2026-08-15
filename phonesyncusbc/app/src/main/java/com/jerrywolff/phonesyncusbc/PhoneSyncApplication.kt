@@ -2,6 +2,8 @@ package com.jerrywolff.phonesyncusbc
 
 import android.app.Application
 import com.jerrywolff.phonesyncusbc.data.AuditLog
+import com.jerrywolff.phonesyncusbc.data.ArtifactIndexDatabase
+import com.jerrywolff.phonesyncusbc.data.ArtifactIndexer
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.DeviceKeyManager
 import com.jerrywolff.phonesyncusbc.data.TrustStore
@@ -24,6 +26,8 @@ class PhoneSyncApplication : Application() {
     val keyManager: DeviceKeyManager by lazy { DeviceKeyManager() }
     val trustStore: TrustStore by lazy { TrustStore(this, keyManager) }
     val auditLog: AuditLog by lazy { AuditLog(this) }
+    val artifactIndexDatabase: ArtifactIndexDatabase by lazy { ArtifactIndexDatabase(this) }
+    val artifactIndexer: ArtifactIndexer by lazy { ArtifactIndexer(this, artifactIndexDatabase) }
     val usbSourceResolver: UsbSourceResolver by lazy { UsbSourceResolver(this) }
     val mtpSyncEngine: MtpSyncEngine by lazy {
         MtpSyncEngine(this, auditLog, usbSourceResolver)

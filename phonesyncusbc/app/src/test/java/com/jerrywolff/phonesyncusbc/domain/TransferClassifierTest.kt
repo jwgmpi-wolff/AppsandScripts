@@ -53,6 +53,10 @@ class TransferClassifierTest {
             TransferClassifier.classify("/Download/Phone Sync/This Android/sms_exports/sms-mms-20260814.zip"),
         )
         assertEquals(
+            ConsentCategory.SMS_EXPORTS,
+            TransferClassifier.classify("sms-backup.zip"),
+        )
+        assertEquals(
             ConsentCategory.CALL_LOGS,
             TransferClassifier.classify("/Download/Phone Sync/This Android/call_logs/call-log-20260814.json"),
         )
@@ -80,6 +84,25 @@ class TransferClassifierTest {
             ConsentCategory.VOICEMAIL_EXPORTS,
             TransferClassifier.classify("/Downloads/visual-voicemail-export.zip"),
         )
+        listOf(
+            "message.amr",
+            "message.awb",
+            "message.qcp",
+            "message.evrc",
+            "message.caf",
+            "message.aiff",
+            "message.flac",
+            "message.opus",
+            "message.vvm",
+            "transcript.txt",
+            "metadata.json",
+        ).forEach { fileName ->
+            assertEquals(
+                fileName,
+                ConsentCategory.VOICEMAIL_EXPORTS,
+                TransferClassifier.classify("/PhoneSync/Exports/Voicemail/$fileName"),
+            )
+        }
         assertEquals(
             ConsentCategory.CALENDAR,
             TransferClassifier.classify("/Download/Phone Sync/This Android/calendar/calendar-20260814.json"),

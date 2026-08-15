@@ -4,6 +4,8 @@
 .kotlin/
 local.properties
 **/build/
+**/bin/
+**/obj/
 dist/
 captures/
 .externalNativeBuild/

@@ -44,6 +44,10 @@ fun mtpReadPlan(
 }
 
 class TargetMediaStore(private val context: Context) {
+    fun discardStoredItem(destination: Uri) {
+        context.contentResolver.delete(destination, null, null)
+    }
+
     fun verifyStoredItem(
         destination: String?,
         expectedBytes: Long,

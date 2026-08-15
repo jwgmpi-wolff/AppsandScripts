@@ -342,34 +342,61 @@ class MtpSyncEngine(
                         )
                     }
                     transfer.onSuccess { result ->
-                        transferred += 1
-                        if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
-                            mediaItemsTransferred += 1
+                        val contentMatch = auditLog.completedTransferByContent(identity.peerId, result.sha256)
+                        val contentMatchIntegrity = contentMatch?.let { existing ->
+                            targetMediaStore.verifyStoredItem(
+                                destination = existing.destination,
+                                expectedBytes = existing.bytesTransferred,
+                                expectedSha256 = result.sha256,
+                            )
                         }
-                        transferredBytes += result.bytesWritten
-                        auditLog.recordTransfer(
-                            sessionId = sessionId,
-                            peerId = identity.peerId,
-                            sourceFingerprint = fingerprint,
-                            category = category,
-                            sourceItem = candidate.path,
-                            destination = result.uri.toString(),
-                            bytesTransferred = result.bytesWritten,
-                            status = TransferStatus.COMPLETED,
-                            sourceSize = candidate.size,
-                            sourceModifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
-                            contentSha256 = result.sha256,
-                        )
-                        inventory(
-                            candidate,
-                            candidate.toInventoryItem(
+                        if (contentMatch != null && contentMatchIntegrity != null) {
+                            targetMediaStore.discardStoredItem(result.uri)
+                            auditLog.recordTransferAlias(identity.peerId, fingerprint, contentMatch.id)
+                            skipped += 1
+                            if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                                mediaItemsAlreadyCollected += 1
+                            }
+                            inventory(
+                                candidate,
+                                candidate.toInventoryItem(
+                                    category = category,
+                                    status = RecoveryItemStatus.ALREADY_RECOVERED,
+                                    destination = contentMatch.destination,
+                                    recoveredBytes = contentMatchIntegrity.bytes,
+                                    contentSha256 = contentMatchIntegrity.sha256,
+                                ),
+                            )
+                        } else {
+                            transferred += 1
+                            if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                                mediaItemsTransferred += 1
+                            }
+                            transferredBytes += result.bytesWritten
+                            auditLog.recordTransfer(
+                                sessionId = sessionId,
+                                peerId = identity.peerId,
+                                sourceFingerprint = fingerprint,
                                 category = category,
-                                status = RecoveryItemStatus.RECOVERED,
+                                sourceItem = candidate.path,
                                 destination = result.uri.toString(),
-                                recoveredBytes = result.bytesWritten,
+                                bytesTransferred = result.bytesWritten,
+                                status = TransferStatus.COMPLETED,
+                                sourceSize = candidate.size,
+                                sourceModifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
                                 contentSha256 = result.sha256,
-                            ),
-                        )
+                            )
+                            inventory(
+                                candidate,
+                                candidate.toInventoryItem(
+                                    category = category,
+                                    status = RecoveryItemStatus.RECOVERED,
+                                    destination = result.uri.toString(),
+                                    recoveredBytes = result.bytesWritten,
+                                    contentSha256 = result.sha256,
+                                ),
+                            )
+                        }
                     }.onFailure { throwable ->
                         failed += 1
                         if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {

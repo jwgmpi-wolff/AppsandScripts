@@ -38,7 +38,7 @@ object TransferClassifier {
     )
 
     fun classify(path: String): ConsentCategory {
-        val normalizedPath = path.replace('\\', '/').lowercase()
+        val normalizedPath = "/" + path.replace('\\', '/').lowercase().trimStart('/')
         val extension = normalizedPath.substringAfterLast('.', missingDelimiterValue = "")
         val fileName = normalizedPath.substringAfterLast('/')
 
@@ -129,8 +129,10 @@ object TransferClassifier {
 
     private fun isSmsExport(path: String, fileName: String): Boolean {
         return (
-            "/sms/" in path || "/sms_exports/" in path || "sms-export" in path ||
-                "sms_backup" in path || "smsbackup" in path || fileName.startsWith("sms-mms-")
+            "/sms/" in path || "/sms_exports/" in path || "/sms-exports/" in path ||
+                "/sms exports/" in path || "sms-export" in path || "sms_backup" in path ||
+                "sms-backup" in path || "sms backup" in path || "smsbackup" in path ||
+                fileName.startsWith("sms-mms-")
             ) &&
             fileName.substringAfterLast('.', "") in setOf("xml", "json", "csv", "txt", "html", "zip")
     }
@@ -183,14 +185,33 @@ object TransferClassifier {
         ).any { it in path || it in fileName }
         return voicemailName && extension in setOf(
             "3gp",
+            "3gpp",
             "aac",
+            "aif",
+            "aiff",
             "amr",
+            "au",
+            "awb",
+            "caf",
+            "evrc",
+            "flac",
             "m4a",
+            "m4b",
             "mp3",
+            "mp4",
+            "oga",
             "ogg",
             "opus",
+            "qcp",
+            "snd",
             "wav",
+            "weba",
+            "wma",
+            "csv",
+            "html",
             "json",
+            "txt",
+            "vvm",
             "xml",
             "zip",
         )
