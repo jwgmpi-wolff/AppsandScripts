@@ -42,6 +42,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -79,6 +82,9 @@ import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
 import com.jerrywolff.phonesyncusbc.domain.SourceExportRequirements
 import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
+import com.jerrywolff.phonesyncusbc.domain.RecoveryDeviceType
+import com.jerrywolff.phonesyncusbc.domain.RecoveryProfiles
+import com.jerrywolff.phonesyncusbc.domain.LOGICAL_ACQUISITION_LIMIT
 import com.jerrywolff.phonesyncusbc.domain.TrustContext
 import com.jerrywolff.phonesyncusbc.domain.TrustDecision
 import com.jerrywolff.phonesyncusbc.domain.TrustPolicy
@@ -157,6 +163,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     val scope = rememberCoroutineScope()
     var sources by remember { mutableStateOf(application.usbSourceResolver.attachedSources()) }
     var selectedSource by remember { mutableStateOf<AttachedSource?>(sources.firstOrNull()) }
+    var recoveryDeviceType by remember {
+        mutableStateOf(RecoveryDeviceType.defaultFor(selectedSource?.detected))
+    }
     var identity by remember { mutableStateOf<PeerIdentity?>(null) }
     var trust by remember { mutableStateOf<StoredTrust?>(null) }
     var capabilities by remember { mutableStateOf<SourceCapabilities?>(null) }
@@ -199,7 +208,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var backupStatus by remember {
         mutableStateOf("${selectedBackupIds.size} items ready for $DEFAULT_MOBILE_TARGET_NAME.")
     }
-    var usbBackupStatus by remember { mutableStateOf("No USB source data has been collected yet.") }
+    var usbBackupStatus by remember { mutableStateOf("No USB source data has been recovered yet.") }
     val targetSelectionStore = remember { TargetSelectionStore(context) }
     val savedTarget = remember { targetSelectionStore.load() }
     var targetRestored by remember { mutableStateOf(false) }
@@ -226,6 +235,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     fun refreshSource() {
         sources = application.usbSourceResolver.attachedSources()
         selectedSource = sources.firstOrNull()
+        recoveryDeviceType = RecoveryDeviceType.defaultFor(selectedSource?.detected)
         identity = null
         trust = null
         capabilities = null
@@ -252,7 +262,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         selectedUsbPeerId = peerId
         knownUsbBackupIds = currentIds
         usbBackupStatus = if (usbCollectedEntries.isEmpty()) {
-            "No USB source data has been collected yet."
+            "No USB source data has been recovered yet."
         } else {
             "${usbCollectedEntries.size} source items ready for $targetName."
         }
@@ -311,7 +321,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         if (uri != null && libraryEntries.isNotEmpty()) {
             activeSection = AppSection.BACKUP_ACTIVITY
             backupActivity = BackupActivityUi(
-                title = "Export collected data",
+                title = "Export recovered data",
                 status = "Starting export...",
                 totalItems = libraryEntries.size,
                 running = true,
@@ -321,7 +331,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     DataExportManager(context).export(libraryEntries, uri) { progress ->
                         scope.launch(Dispatchers.Main.immediate) {
                             backupActivity = BackupActivityUi(
-                                title = "Export collected data",
+                                title = "Export recovered data",
                                 status = "Exporting ${progress.completedItems} of ${progress.totalItems}",
                                 completedItems = progress.completedItems,
                                 totalItems = progress.totalItems,
@@ -338,7 +348,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     if (result.failedItems > 0) " ${result.failedItems} failed." else ""
                 messageSection = AppSection.BACKUP_ACTIVITY
                 backupActivity = BackupActivityUi(
-                    title = "Export collected data",
+                    title = "Export recovered data",
                     status = message.orEmpty(),
                     completedItems = result.exportedItems + result.failedItems,
                     totalItems = libraryEntries.size,
@@ -601,7 +611,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         backingUp = true
         val startingStatus = "Copying ${entries.size} items to $destinationName..."
         updateBackupWorkflowStatus(ownerSection, startingStatus)
-        message = "BACKUP: moving collected source data to $destinationName..."
+        message = "BACKUP: preserving recovered source data at $destinationName..."
         messageSection = ownerSection
         backupActivity = BackupActivityUi(
             title = "Backup to $destinationName",
@@ -725,6 +735,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             if (activeSection == AppSection.USB_SOURCE) item {
                 SourceConnectionPanel(
                     source = source,
+                    recoveryDeviceType = recoveryDeviceType,
+                    onRecoveryDeviceTypeSelected = { recoveryDeviceType = it },
                     onRefresh = ::refreshSource,
                     onRequestUsbPermission = onRequestUsbPermission,
                     onContinue = {
@@ -740,11 +752,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupPanel(
-                    title = "Push external source data",
+                    title = "Preserve recovered source data",
                     description = if (source != null) {
-                        "Only completed transfers collected from ${source.detected.displayName}."
+                        "Only verified recovery results from ${source.detected.displayName}."
                     } else {
-                        "Only completed transfers from the most recently collected external source."
+                        "Only verified results from the most recently recovered external source."
                     },
                     onSelectBackup = {
                         if (!backingUp) {
@@ -886,7 +898,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                                 previewEntry = entry
                                                 previewText = text
                                             } else {
-                                                message = "This collected item could not be read."
+                                                message = "This recovered artifact could not be read."
                                                 messageSection = AppSection.USB_SOURCE
                                             }
                                         }
@@ -899,7 +911,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                                 previewEntry = entry
                                                 previewBitmap = bitmap
                                             } else {
-                                                message = "This collected image could not be read."
+                                                message = "This recovered image could not be read."
                                                 messageSection = AppSection.USB_SOURCE
                                             }
                                         }
@@ -914,7 +926,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                         runCatching {
                                             context.startActivity(intent)
                                         }.onFailure {
-                                            message = "No installed app can open this collected item type."
+                                            message = "No installed app can open this recovered artifact type."
                                             messageSection = AppSection.USB_SOURCE
                                         }
                                     }
@@ -1030,7 +1042,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                         phase = SyncPhase.DISCOVERING,
                                     )
                                     mtpScanSummary = null
-                                    message = "LIVE: 0 transferred, 0 already audited, 0 failed."
+                                    message = "LIVE: 0 recovered, 0 already verified, 0 failed."
                                     messageSection = AppSection.USB_SOURCE
                                     scope.launch {
                                         val result = withContext(Dispatchers.IO) {
@@ -1044,6 +1056,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             application.mtpSyncEngine.sync(
                                                 source = currentSource,
                                                 identity = currentIdentity,
+                                                recoveryDeviceType = recoveryDeviceType,
                                                 authorizedCategories = selectedCategories,
                                                 onProgress = publishProgress,
                                             )
@@ -1075,7 +1088,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 },
                                 onRevoke = {
                                     trust = application.trustStore.revoke(trust!!)
-                                    message = "Trust revoked. Re-approval is required before syncing."
+                                    message = "Trust revoked. Re-approval is required before another acquisition."
                                     messageSection = AppSection.USB_SOURCE
                                 },
                         )
@@ -1089,9 +1102,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         }
                         item {
                             BackupPanel(
-                                title = "Push this USB source data",
+                                title = "Preserve this recovery set",
                                 description =
-                                    "Send only the items collected from ${source.detected.displayName} to local or provider storage.",
+                                    "Send only verified artifacts recovered from ${source.detected.displayName} to preservation storage.",
                                 onSelectBackup = {
                                     if (!backingUp) {
                                         backupWorkflowSection = AppSection.USB_SOURCE
@@ -1225,20 +1238,25 @@ private fun TrustedDashboard(
     val audit = remember(trust.updatedAtEpochMillis) { auditLog.recentTransfers(trust.record.peerDeviceId, 10) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Pull USB-visible source data", style = MaterialTheme.typography.titleMedium)
+            Text("Read-only logical recovery", style = MaterialTheme.typography.titleMedium)
             Text("All available categories authorized: ${categories.joinToString { it.label() }}")
-            Text("Last sync: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
+            Text("Last acquisition: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
             liveProgress?.let { progress ->
                 Text(
                     when {
                         syncing && progress.phase == SyncPhase.DISCOVERING -> "Discovering USB-visible files"
+                        syncing && progress.phase == SyncPhase.VERIFYING -> "Verifying recovered copy"
                         syncing -> "Reading USB source"
                         else -> "Last USB read"
                     },
                     style = MaterialTheme.typography.titleMedium,
                 )
                 progress.currentItem?.let { currentItem ->
-                    val action = if (progress.phase == SyncPhase.DISCOVERING) "Inspecting" else "Reading"
+                    val action = when (progress.phase) {
+                        SyncPhase.DISCOVERING -> "Inspecting"
+                        SyncPhase.VERIFYING -> "Hashing"
+                        else -> "Reading"
+                    }
                     Text("$action: ${currentItem.substringAfterLast('/')}")
                 }
                 if (syncing && progress.phase == SyncPhase.DISCOVERING) {
@@ -1276,7 +1294,7 @@ private fun TrustedDashboard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "$currentPercentage% of current file · " +
+                        "$currentPercentage% ${if (progress.phase == SyncPhase.VERIFYING) "verified" else "of current file"} · " +
                             "${formatBytes(progress.currentItemBytes)} / ${formatBytes(progress.currentItemTotal)}",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -1302,14 +1320,14 @@ private fun TrustedDashboard(
                 enabled = !syncing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (syncing) "Requesting and pulling..." else "Collect all USB-visible source data")
+                Text(if (syncing) "Recovering and verifying..." else "Recover all USB-visible data")
             }
             HorizontalDivider()
             OutlinedButton(onClick = onViewLibrary, modifier = Modifier.fillMaxWidth()) {
-                Text("View external source data")
+                Text("View recovered artifacts")
             }
             Text(
-                "Every collected item must be advertised by the active tethered device over MTP/PTP. " +
+                "Every recovered item must be advertised by the active tethered device over MTP/PTP. " +
                     "Password vaults, voicemails, and app records must first be exported on that device into USB-visible storage.",
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -1325,13 +1343,13 @@ private fun TrustedDashboard(
                         "Windows Phone MTP exposes shared media files, not its private SMS, call, or email stores. " +
                             "Phone Sync requests every object that the source publishes, but USB cannot force those stores public."
                     else ->
-                        "USB can pull files exposed by the source. Private app databases require supported exports."
+                        "USB can recover files exposed by the source. Private app databases require supported exports."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
             HorizontalDivider()
-            Text("Recent transfers", style = MaterialTheme.typography.titleMedium)
-            if (audit.isEmpty()) Text("No transferred items yet.")
+            Text("Recent recovery records", style = MaterialTheme.typography.titleMedium)
+            if (audit.isEmpty()) Text("No recovered artifacts yet.")
             audit.forEach { entry -> Text("${entry.category.label()}: ${entry.sourceItem}") }
             OutlinedButton(onClick = onRevoke, modifier = Modifier.fillMaxWidth()) { Text("Revoke trust") }
         }
@@ -1373,7 +1391,7 @@ private fun SourceExportReadiness(
         Text(
             "PTP exposed ${scan.mediaItemsVisible} media files this scan: " +
                 "${scan.mediaItemsTransferred} new, " +
-                "${scan.mediaItemsAlreadyCollected} already collected, " +
+                "${scan.mediaItemsAlreadyCollected} already recovered, " +
                 "${scan.mediaItemsNotAuthorized} not authorized, " +
                 "${scan.mediaItemsFailed} failed.",
         )
@@ -1404,28 +1422,28 @@ private fun SourceExportReadiness(
             when (sourcePlatform) {
                 SourcePlatform.ANDROID ->
                     "On the external source phone, use each source app's supported export and save the result in " +
-                        "shared USB-visible storage. Reconnect using File transfer / Android Auto mode and collect again."
+                        "shared USB-visible storage. Reconnect using File transfer / Android Auto mode and recover again."
                 SourcePlatform.IOS ->
                     "iPhone PTP exposes downloaded photos and videos, not private SMS, call, voicemail, mail, or password databases. " +
-                        "Only files that iOS itself advertises over PTP can be collected."
+                        "Only files that iOS itself advertises over PTP can be recovered."
                 SourcePlatform.WINDOWS_PHONE ->
                     "Phone Sync already requested every MTP-visible Lumia object. Windows Phone provides no USB consent " +
                         "request for private SMS, call history, or email. Restore SMS through the phone's Microsoft account " +
                         "backup when available, and export email from its mail provider; call history has no standard USB export."
                 else ->
-                    "Create SMS, call, and email export files on the source, expose their folder over MTP, then pull again."
+                    "Create SMS, call, and email export files on the source, expose their folder over MTP, then recover again."
             },
             style = MaterialTheme.typography.bodySmall,
         )
     } else {
-        Text("SMS, call, and email exports are exposed and eligible to pull.")
+        Text("SMS, call, and email exports are exposed and eligible for recovery.")
     }
 }
 
 private fun ConsentCategory.label(): String = name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
 
 private fun AuditEntry.displayName(): String {
-    return sourceItem.substringAfterLast('/').ifBlank { "Collected item" }
+    return sourceItem.substringAfterLast('/').ifBlank { "Recovered artifact" }
 }
 
 private fun AuditEntry.storageLocation(): String {
@@ -1456,7 +1474,7 @@ private fun readPreviewText(context: Context, uri: Uri): String? {
         input.use { stream ->
             val buffer = ByteArray(PREVIEW_MAX_BYTES)
             val count = stream.read(buffer)
-            if (count <= 0) "(Empty collected item)"
+            if (count <= 0) "(Empty recovered artifact)"
             else String(buffer, 0, count, Charsets.UTF_8)
         }
     }.getOrNull()
@@ -1467,7 +1485,7 @@ private fun collectedItemIntent(destination: Uri, mimeType: String): Intent {
         data = destination
         type = mimeType
         putExtra(Intent.EXTRA_STREAM, destination)
-        clipData = ClipData.newRawUri("Collected item", destination)
+        clipData = ClipData.newRawUri("Recovered artifact", destination)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }
@@ -1515,11 +1533,25 @@ private fun buildSyncCompletionStatus(result: SyncResult): String {
         ?.let { SourceExportRequirements.missingFrom(it.visibleCategories) }
         .orEmpty()
     val base = "${result.status}: ${result.transferredItems} transferred, " +
-        "${result.skippedItems} already audited, ${result.failedItems} failed."
+        "${result.skippedItems} already verified, ${result.failedItems} failed."
+    val inventory = result.recoveryInventory
+    val inventoryStatus = when {
+        inventory?.uri != null -> {
+            val passwordStatus = if (inventory.passwordArtifactCount > 0) {
+                " ${inventory.recoveredPasswordArtifactCount}/${inventory.passwordArtifactCount} " +
+                    "password artifacts accounted for as opaque files."
+            } else {
+                " No USB-visible password artifacts were found."
+            }
+            " Inventory saved as ${inventory.displayName}.$passwordStatus"
+        }
+        inventory?.error != null -> " Inventory generation failed: ${inventory.error}."
+        else -> ""
+    }
     return if (missingExports.isEmpty()) {
-        base
+        base + inventoryStatus
     } else {
-        "$base Source did not expose: ${missingExports.joinToString { sourceExportLabel(it) }}."
+        "$base Source did not expose: ${missingExports.joinToString { sourceExportLabel(it) }}.$inventoryStatus"
     }
 }
 
@@ -1546,15 +1578,15 @@ private fun ImportedDataView(
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Imported data", style = MaterialTheme.typography.headlineSmall)
-            Text("${entries.size} completed imports available in Android storage.")
+            Text("Recovered artifacts", style = MaterialTheme.typography.headlineSmall)
+            Text("${entries.size} verified recovery results available in Android storage.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onBack) { Text("Back") }
                 Button(onClick = onExport, enabled = entries.isNotEmpty()) { Text("Export all") }
             }
-            Text("Collected source folders", style = MaterialTheme.typography.titleMedium)
+            Text("Recovered source folders", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Items open from their recorded Android storage location. Choose a type to browse its collected folder.",
+                "Items open from their recorded Android storage location. Choose a type to browse its recovery folder.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1573,7 +1605,7 @@ private fun ImportedDataView(
             }
             HorizontalDivider()
             if (visibleEntries.isEmpty()) {
-                Text("No completed imports yet.")
+                Text("No verified recovery results yet.")
             } else {
                 groupedEntries.forEach { (category, categoryEntries) ->
                     Text(category.label(), style = MaterialTheme.typography.titleLarge)
@@ -1589,8 +1621,31 @@ private fun ImportedDataView(
                                 "${formatBytes(entry.bytesTransferred)} · ${formatTime(entry.transferredAtEpochMillis)}",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            if (entry.sourceSize > 0) {
+                                Text("Source size: ${formatBytes(entry.sourceSize)}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            if (entry.sourceModifiedAtEpochMillis > 0) {
+                                Text(
+                                    "Source modified: ${formatTime(entry.sourceModifiedAtEpochMillis)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            entry.contentSha256?.let { sha256 ->
+                                Text("SHA-256: $sha256", style = MaterialTheme.typography.bodySmall)
+                            }
                             Text("Stored at: ${entry.storageLocation()}", style = MaterialTheme.typography.bodySmall)
-                            OutlinedButton(onClick = { onOpen(entry) }) { Text("Open collected item") }
+                            OutlinedButton(
+                                onClick = { onOpen(entry) },
+                                enabled = entry.category != ConsentCategory.PASSWORD_EXPORTS,
+                            ) {
+                                Text(
+                                    if (entry.category == ConsentCategory.PASSWORD_EXPORTS) {
+                                        "Sensitive artifact opening disabled"
+                                    } else {
+                                        "Open recovered artifact"
+                                    },
+                                )
+                            }
                             HorizontalDivider()
                         }
                     }
@@ -1612,13 +1667,15 @@ private fun FilterButton(label: String, selected: Boolean, onClick: () -> Unit) 
 @androidx.compose.runtime.Composable
 private fun SourceConnectionPanel(
     source: AttachedSource?,
+    recoveryDeviceType: RecoveryDeviceType,
+    onRecoveryDeviceTypeSelected: (RecoveryDeviceType) -> Unit,
     onRefresh: () -> Unit,
     onRequestUsbPermission: (AttachedSource) -> Unit,
     onContinue: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Connect and authorize source", style = MaterialTheme.typography.titleMedium)
+            Text("Connect an owned recovery source", style = MaterialTheme.typography.titleMedium)
             if (source == null) {
                 Text("Connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable.")
                 Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
@@ -1627,10 +1684,34 @@ private fun SourceConnectionPanel(
             } else {
                 Text(source.detected.displayName, style = MaterialTheme.typography.titleMedium)
                 Text("${source.detected.platform} · ${source.detected.family} · ${source.detected.physicalConnection}")
+                Text("Recovery device type", style = MaterialTheme.typography.labelLarge)
+                RecoveryDeviceType.entries.chunked(2).forEach { types ->
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        types.forEachIndexed { index, type ->
+                            SegmentedButton(
+                                selected = recoveryDeviceType == type,
+                                onClick = { onRecoveryDeviceTypeSelected(type) },
+                                shape = SegmentedButtonDefaults.itemShape(index, types.size),
+                            ) {
+                                Text(type.label)
+                            }
+                        }
+                    }
+                }
+                Text(
+                    RecoveryProfiles.forDevice(recoveryDeviceType).passwordTarget +
+                        " are copied intact without decryption.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Purpose: ${RecoveryProfiles.forDevice(recoveryDeviceType).purposes.joinToString { it.label }}.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(LOGICAL_ACQUISITION_LIMIT, style = MaterialTheme.typography.bodySmall)
                 if (source.permissionGranted) {
                     Text("USB data access authorized")
                     Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                        Text("Continue to full USB request")
+                        Text("Continue to recovery acquisition")
                     }
                     OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
                         Text("Refresh source")
@@ -1706,8 +1787,8 @@ private fun BackupActivityPanel(activity: BackupActivityUi) {
 
 @androidx.compose.runtime.Composable
 private fun BackupPanel(
-    title: String = "Back up collected data",
-    description: String = "Back up on this phone, an SD card, or an attached USB drive.",
+    title: String = "Preserve recovered data",
+    description: String = "Preserve on this phone, an SD card, or an attached USB drive.",
     onSelectBackup: () -> Unit,
     onChooseTarget: () -> Unit,
     backingUp: Boolean,
@@ -1730,8 +1811,8 @@ private fun BackupPanel(
             Text("$selectedItemCount items selected")
             if (passwordVaultItemCount > 0) {
                 Text(
-                    "$passwordVaultItemCount password vault export(s) selected. Use an encrypted vault format and " +
-                        "protect the destination account. Phone Sync does not preview or parse credentials.",
+                    "$passwordVaultItemCount sensitive password artifact(s) selected. Protect the destination account. " +
+                        "Phone Sync copies them intact and does not preview, parse, or decrypt credentials.",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -1765,14 +1846,14 @@ private fun BackupPanel(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Choose destination") }
             HorizontalDivider()
-            Text("3. Push", style = MaterialTheme.typography.titleSmall)
+            Text("3. Preserve", style = MaterialTheme.typography.titleSmall)
             Text(backupStatus, style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = onExecuteBackup,
                 enabled = !backingUp && selectedItemCount > 0,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (backingUp) "Preparing transfer..." else primaryActionLabel)
+                Text(if (backingUp) "Preparing preservation..." else primaryActionLabel)
             }
         }
     }
@@ -1831,8 +1912,8 @@ private fun BackupSelectionView(
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Select collected backup", style = MaterialTheme.typography.headlineSmall)
-            Text("Choose the collected source data to push to target media.")
+            Text("Select recovery artifacts", style = MaterialTheme.typography.headlineSmall)
+            Text("Choose verified recovery results to preserve on target media.")
             Text("${selectedIds.size} of ${entries.size} items selected")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onSelectionChanged(entries.mapTo(linkedSetOf()) { it.id }) }) {
@@ -1843,7 +1924,7 @@ private fun BackupSelectionView(
                 }
             }
             if (entries.isEmpty()) {
-                Text("No collected data is available to back up.")
+                Text("No recovered data is available to preserve.")
             } else {
                 entries.forEach { entry ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1878,8 +1959,13 @@ private fun BackupSelectionView(
 }
 
 private fun categoryDescription(category: ConsentCategory): String = when (category) {
-    ConsentCategory.PHOTOS_AND_VIDEOS -> "Photos and videos collected from the external source."
-    ConsentCategory.DOCUMENTS -> "Documents collected from the external source."
+    ConsentCategory.PHOTOS_AND_VIDEOS -> "Photos and videos recovered from the external source."
+    ConsentCategory.DOCUMENTS -> "Documents recovered from the external source."
+    ConsentCategory.APPLICATION_DATA ->
+        "Application data files that the external source exposes through normal USB access."
+    ConsentCategory.CONFIGURATION -> "Configuration and settings files exposed by the external source."
+    ConsentCategory.LOGS -> "Logs, diagnostics, and crash reports exposed by the external source."
+    ConsentCategory.SYSTEM_INFORMATION -> "System-information reports exposed by the external source."
     ConsentCategory.CONTACTS -> "vCard contacts exported by the external source."
     ConsentCategory.CALL_LOGS -> "Call history exported by the external source."
     ConsentCategory.CALENDAR -> "Calendar events exported by the external source."
@@ -1890,7 +1976,7 @@ private fun categoryDescription(category: ConsentCategory): String = when (categ
     ConsentCategory.EMAIL_EXPORTS -> "User-created email export files, not private mail databases."
     ConsentCategory.NOTIFICATION_EXPORTS -> "Notification records exported by the external source."
     ConsentCategory.PASSWORD_EXPORTS ->
-        "Owner-created password-manager vault exports. Phone Sync copies the file but never reads saved credentials."
+        "Sensitive password vaults, browser credential stores, and credential backups copied without decryption."
     ConsentCategory.VOICEMAIL_EXPORTS ->
         "Voicemail audio or visual-voicemail files explicitly exported from the source phone or carrier app."
 }
@@ -1907,7 +1993,7 @@ private fun TextPreview(
             Text("${entry.category.label()} · ${formatBytes(entry.bytesTransferred)}")
             Text("Stored at: ${entry.storageLocation()}", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onBack) { Text("Back to collected data") }
+                OutlinedButton(onClick = onBack) { Text("Back to recovered artifacts") }
             }
             HorizontalDivider()
             Text(
@@ -1932,7 +2018,7 @@ private fun ImagePreview(
             Text(entry.displayName(), style = MaterialTheme.typography.headlineSmall)
             Text("${entry.category.label()} · ${formatBytes(entry.bytesTransferred)}")
             Text("Stored at: ${entry.storageLocation()}", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onBack) { Text("Back to collected data") }
+            OutlinedButton(onClick = onBack) { Text("Back to recovered artifacts") }
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = entry.displayName(),
@@ -1955,7 +2041,7 @@ private fun VideoPreview(
             Text(entry.displayName(), style = MaterialTheme.typography.headlineSmall)
             Text("${entry.category.label()} · ${formatBytes(entry.bytesTransferred)}")
             Text("Stored at: ${entry.storageLocation()}", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onBack) { Text("Back to collected data") }
+            OutlinedButton(onClick = onBack) { Text("Back to recovered artifacts") }
             AndroidView(
                 factory = {
                     VideoView(context).apply {
@@ -1982,11 +2068,13 @@ private fun readPreviewBitmap(context: Context, uri: Uri): Bitmap? {
 }
 
 private fun isImageLike(entry: AuditEntry): Boolean {
+    if (entry.category == ConsentCategory.PASSWORD_EXPORTS) return false
     val extension = entry.sourceItem.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return extension in setOf("bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp")
 }
 
 private fun isVideoLike(entry: AuditEntry): Boolean {
+    if (entry.category == ConsentCategory.PASSWORD_EXPORTS) return false
     val extension = entry.sourceItem.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return extension in setOf("3g2", "3gp", "avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "webm", "wmv")
 }

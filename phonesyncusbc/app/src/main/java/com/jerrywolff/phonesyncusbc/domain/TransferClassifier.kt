@@ -8,6 +8,10 @@ object TransferClassifier {
         "/passwords/",
         "/password_exports/",
         "/password-exports/",
+        "/credential/",
+        "/credentials/",
+        "/credential-backups/",
+        "/browser-data/",
         "keepass",
         "bitwarden",
         "1password",
@@ -17,6 +21,20 @@ object TransferClassifier {
         "enpass",
         "passwordsafe",
         "password-vault",
+        "credential-backup",
+        "credential_store",
+        "keychain",
+    )
+    private val portableCredentialFileNames = setOf(
+        "login data",
+        "logins.json",
+        "key3.db",
+        "key4.db",
+        "signons.sqlite",
+        "passwords.csv",
+        "passwords.json",
+        "credentials.csv",
+        "credentials.json",
     )
 
     fun classify(path: String): ConsentCategory {
@@ -25,7 +43,6 @@ object TransferClassifier {
         val fileName = normalizedPath.substringAfterLast('/')
 
         return when {
-            isProtectedPrivateDatabase(normalizedPath) -> ConsentCategory.DOCUMENTS
             isSmsExport(normalizedPath, fileName) -> ConsentCategory.SMS_EXPORTS
             isCallLogExport(normalizedPath, fileName) -> ConsentCategory.CALL_LOGS
             isCalendarExport(normalizedPath, fileName) -> ConsentCategory.CALENDAR
@@ -36,8 +53,78 @@ object TransferClassifier {
             isNotificationExport(normalizedPath, fileName) -> ConsentCategory.NOTIFICATION_EXPORTS
             extension == "vcf" || extension == "vcard" -> ConsentCategory.CONTACTS
             extension in imageExtensions || extension in videoExtensions -> ConsentCategory.PHOTOS_AND_VIDEOS
+            isSystemInformation(normalizedPath, fileName) -> ConsentCategory.SYSTEM_INFORMATION
+            isLog(normalizedPath, fileName) -> ConsentCategory.LOGS
+            isRegistryHive(normalizedPath, fileName) -> ConsentCategory.CONFIGURATION
+            isConfiguration(normalizedPath, fileName) -> ConsentCategory.CONFIGURATION
+            isApplicationData(normalizedPath, extension) -> ConsentCategory.APPLICATION_DATA
             else -> ConsentCategory.DOCUMENTS
         }
+    }
+
+    private fun isSystemInformation(path: String, fileName: String): Boolean {
+        val systemMarker = listOf(
+            "/system-info/",
+            "/system_information/",
+            "/device-info/",
+            "/diagnostics/",
+            "system-info",
+            "system_information",
+            "device-info",
+            "device_information",
+            "bugreport",
+            "build.prop",
+        ).any { it in path || it in fileName }
+        return systemMarker && fileName.substringAfterLast('.', "") in setOf(
+            "json",
+            "xml",
+            "csv",
+            "txt",
+            "html",
+            "prop",
+            "zip",
+        )
+    }
+
+    private fun isLog(path: String, fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "")
+        val logMarker = "/log/" in path || "/logs/" in path || "/winevt/logs/" in path ||
+            "crash" in fileName || "tombstone" in fileName || "diagnostic" in fileName
+        return extension in setOf("log", "evtx", "etl") ||
+            (logMarker && extension in setOf("txt", "json", "xml", "zip", "dmp"))
+    }
+
+    private fun isRegistryHive(path: String, fileName: String): Boolean {
+        val registryPath = "/system32/config/" in path || "/registry/" in path
+        return registryPath || fileName in setOf(
+            "sam",
+            "security",
+            "software",
+            "system",
+            "default",
+            "ntuser.dat",
+            "usrclass.dat",
+        )
+    }
+
+    private fun isConfiguration(path: String, fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "")
+        val configurationPath = listOf("/config/", "/configs/", "/configuration/", "/settings/")
+            .any(path::contains)
+        return extension in setOf("cfg", "conf", "config", "ini", "plist", "properties", "toml", "yaml", "yml") ||
+            (configurationPath && extension in setOf("json", "xml", "txt", "zip"))
+    }
+
+    private fun isApplicationData(path: String, extension: String): Boolean {
+        val applicationPath = listOf(
+            "/android/data/",
+            "/application-data/",
+            "/application_data/",
+            "/app-data/",
+            "/app_data/",
+            "/apps/",
+        ).any(path::contains)
+        return applicationPath || extension in setOf("db", "sqlite", "sqlite3")
     }
 
     private fun isSmsExport(path: String, fileName: String): Boolean {
@@ -63,16 +150,22 @@ object TransferClassifier {
 
     private fun isPasswordExport(path: String, fileName: String): Boolean {
         val extension = fileName.substringAfterLast('.', "")
-        if (extension in setOf("kdb", "kdbx", "psafe3", "enpassbackup", "1pux")) return true
+        if (fileName in portableCredentialFileNames) return true
+        if (extension in setOf("kdb", "kdbx", "psafe3", "enpassbackup", "1pux", "crd", "vcrd", "keychain-db")) {
+            return true
+        }
         val passwordExportName = passwordExportMarkers.any { it in path || it in fileName }
         return passwordExportName && extension in setOf(
             "json",
             "csv",
             "xml",
             "zip",
+            "bak",
+            "backup",
             "db",
             "sqlite",
             "sqlite3",
+            "plist",
         )
     }
 
@@ -104,14 +197,20 @@ object TransferClassifier {
     }
 
     private fun isChatExport(path: String, fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "")
         val chatName = listOf("whatsapp", "signal", "telegram", "messenger", "chat", "conversation")
             .any { it in path || it in fileName }
-        return chatName && fileName.substringAfterLast('.', "") in setOf("txt", "json", "html", "xml", "zip", "csv", "db")
+        val explicitExportLocation = listOf("/export", "/backup", "/download", "/phone sync/")
+            .any(path::contains)
+        if ("whatsapp" in path && extension.startsWith("crypt")) return true
+        if ("signal" in path && extension == "backup") return true
+        return chatName && extension in setOf("txt", "json", "html", "xml", "zip", "csv", "db") &&
+            (extension != "db" || explicitExportLocation)
     }
 
     private fun isEmailExport(path: String, fileName: String): Boolean {
         val extension = fileName.substringAfterLast('.', "")
-        if (extension in setOf("eml", "mbox", "msg", "pst")) return true
+        if (extension in setOf("eml", "mbox", "msg", "ost", "pst")) return true
         val mailName = listOf("email", "mail", "gmail", "outlook", "thunderbird", "inbox", "sent")
             .any { it in path || it in fileName }
         return mailName && extension in setOf("txt", "html", "json", "xml", "zip")

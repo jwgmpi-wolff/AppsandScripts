@@ -32,16 +32,19 @@ data class AuditEntry(
     val bytesTransferred: Long,
     val status: TransferStatus,
     val error: String?,
+    val sourceSize: Long = 0,
+    val sourceModifiedAtEpochMillis: Long = 0,
+    val contentSha256: String? = null,
 )
 
 fun AuditEntry.displayName(): String {
     return destination?.substringAfterLast('/')?.substringBefore('?')
         ?.takeIf { it.isNotBlank() }
-        ?: sourceItem.substringAfterLast('/').ifBlank { "Imported item" }
+        ?: sourceItem.substringAfterLast('/').ifBlank { "Recovered artifact" }
 }
 
 fun AuditEntry.storageLocation(): String {
-    return destination ?: "Collected item is no longer available"
+    return destination ?: "Recovered artifact is no longer available"
 }
 
 data class SyncSummary(
@@ -78,8 +81,11 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 transferred_at INTEGER NOT NULL,
                 category TEXT NOT NULL,
                 source_item TEXT NOT NULL,
+                source_size INTEGER NOT NULL DEFAULT 0,
+                source_modified_at INTEGER NOT NULL DEFAULT 0,
                 destination TEXT,
                 bytes_transferred INTEGER NOT NULL DEFAULT 0,
+                content_sha256 TEXT,
                 status TEXT NOT NULL,
                 error TEXT,
                 FOREIGN KEY(session_id) REFERENCES sync_sessions(id)
@@ -94,7 +100,32 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         )
     }
 
-    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            addColumnIfMissing(database, "source_size", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfMissing(database, "source_modified_at", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfMissing(database, "content_sha256", "TEXT")
+        }
+    }
+
+    private fun addColumnIfMissing(
+        database: SQLiteDatabase,
+        columnName: String,
+        definition: String,
+    ) {
+        if (hasColumn(database, columnName)) return
+        database.execSQL("ALTER TABLE transfers ADD COLUMN $columnName $definition")
+    }
+
+    private fun hasColumn(database: SQLiteDatabase, columnName: String): Boolean {
+        database.rawQuery("PRAGMA table_info(transfers)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == columnName) return true
+            }
+        }
+        return false
+    }
 
     fun beginSession(peerId: String): Long {
         val values = ContentValues().apply {
@@ -131,6 +162,9 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         destination: String?,
         bytesTransferred: Long,
         status: TransferStatus,
+        sourceSize: Long = 0,
+        sourceModifiedAtEpochMillis: Long = 0,
+        contentSha256: String? = null,
         error: String? = null,
     ) {
         val values = ContentValues().apply {
@@ -140,25 +174,75 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
             put("transferred_at", System.currentTimeMillis())
             put("category", category.name)
             put("source_item", sourceItem)
+            put("source_size", sourceSize)
+            put("source_modified_at", sourceModifiedAtEpochMillis)
             put("destination", destination)
             put("bytes_transferred", bytesTransferred)
+            put("content_sha256", contentSha256)
             put("status", status.name)
             put("error", error)
         }
         writableDatabase.insertOrThrow("transfers", null, values)
     }
 
+    fun updateTransferIntegrity(
+        transferId: Long,
+        sourceSize: Long,
+        sourceModifiedAtEpochMillis: Long,
+        bytesTransferred: Long,
+        contentSha256: String,
+    ) {
+        val values = ContentValues().apply {
+            put("source_size", sourceSize)
+            put("source_modified_at", sourceModifiedAtEpochMillis)
+            put("bytes_transferred", bytesTransferred)
+            put("content_sha256", contentSha256)
+        }
+        writableDatabase.update("transfers", values, "id = ?", arrayOf(transferId.toString()))
+    }
+
     fun wasTransferred(peerId: String, sourceFingerprint: String): Boolean {
+        return completedTransfer(peerId, sourceFingerprint) != null
+    }
+
+    fun completedTransfer(peerId: String, sourceFingerprint: String): AuditEntry? {
         readableDatabase.query(
             "transfers",
-            arrayOf("id"),
+            arrayOf(
+                "id",
+                "transferred_at",
+                "category",
+                "source_item",
+                "destination",
+                "bytes_transferred",
+                "status",
+                "error",
+                "source_size",
+                "source_modified_at",
+                "content_sha256",
+            ),
             "peer_id = ? AND source_fingerprint = ? AND status = ?",
             arrayOf(peerId, sourceFingerprint, TransferStatus.COMPLETED.name),
             null,
             null,
-            null,
+            "transferred_at DESC",
             "1",
-        ).use { cursor -> return cursor.moveToFirst() }
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return AuditEntry(
+                id = cursor.getLong(0),
+                transferredAtEpochMillis = cursor.getLong(1),
+                category = ConsentCategory.valueOf(cursor.getString(2)),
+                sourceItem = cursor.getString(3),
+                destination = cursor.getString(4),
+                bytesTransferred = cursor.getLong(5),
+                status = TransferStatus.valueOf(cursor.getString(6)),
+                error = cursor.getString(7),
+                sourceSize = cursor.getLong(8),
+                sourceModifiedAtEpochMillis = cursor.getLong(9),
+                contentSha256 = cursor.getString(10),
+            )
+        }
     }
 
     fun latestSession(peerId: String): SyncSummary? {
@@ -195,6 +279,9 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 "bytes_transferred",
                 "status",
                 "error",
+                "source_size",
+                "source_modified_at",
+                "content_sha256",
             ),
             "peer_id = ?",
             arrayOf(peerId),
@@ -215,6 +302,9 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                             bytesTransferred = cursor.getLong(5),
                             status = TransferStatus.valueOf(cursor.getString(6)),
                             error = cursor.getString(7),
+                            sourceSize = cursor.getLong(8),
+                            sourceModifiedAtEpochMillis = cursor.getLong(9),
+                            contentSha256 = cursor.getString(10),
                         ),
                     )
                 }
@@ -222,7 +312,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         }
     }
 
-    fun completedTransfers(peerId: String, limit: Int = 500): List<AuditEntry> {
+    fun completedTransfers(peerId: String, limit: Int? = null): List<AuditEntry> {
         readableDatabase.query(
             "transfers",
             arrayOf(
@@ -234,13 +324,16 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                 "bytes_transferred",
                 "status",
                 "error",
+                "source_size",
+                "source_modified_at",
+                "content_sha256",
             ),
             "peer_id = ? AND status = ? AND destination IS NOT NULL",
             arrayOf(peerId, TransferStatus.COMPLETED.name),
             null,
             null,
             "transferred_at DESC",
-            limit.coerceIn(1, 1_000).toString(),
+            limit?.coerceIn(1, 100_000)?.toString(),
         ).use { cursor ->
             return buildList {
                 while (cursor.moveToNext()) {
@@ -254,6 +347,9 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
                             bytesTransferred = cursor.getLong(5),
                             status = TransferStatus.valueOf(cursor.getString(6)),
                             error = cursor.getString(7),
+                            sourceSize = cursor.getLong(8),
+                            sourceModifiedAtEpochMillis = cursor.getLong(9),
+                            contentSha256 = cursor.getString(10),
                         ),
                     )
                 }
@@ -261,7 +357,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         }
     }
 
-    fun completedExternalTransfers(peerId: String?, limit: Int = 500): List<AuditEntry> {
+    fun completedExternalTransfers(peerId: String?, limit: Int? = null): List<AuditEntry> {
         if (peerId == null || !isExternalSourcePeer(peerId)) return emptyList()
         return completedTransfers(peerId, limit)
     }
@@ -288,6 +384,6 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
 
     private companion object {
         const val DATABASE_NAME = "transfer_audit.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
     }
 }

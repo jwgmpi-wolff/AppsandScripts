@@ -87,9 +87,9 @@ class TransferClassifierTest {
     }
 
     @Test
-    fun `does not infer protected data from arbitrary files`() {
+    fun `classifies normally exposed recovery artifacts without bypassing access controls`() {
         assertEquals(
-            ConsentCategory.DOCUMENTS,
+            ConsentCategory.APPLICATION_DATA,
             TransferClassifier.classify("/Android/data/chat.application/private.db"),
         )
         assertTrue(
@@ -124,6 +124,57 @@ class TransferClassifierTest {
             TransferClassifier.isProtectedPrivateDatabase(
                 "/Android/data/com.android.dialer/files/voicemail-message.m4a",
             ),
+        )
+        assertEquals(
+            ConsentCategory.CONFIGURATION,
+            TransferClassifier.classify("/PhoneSync/Exports/Configuration/application.yaml"),
+        )
+        assertEquals(
+            ConsentCategory.LOGS,
+            TransferClassifier.classify("/PhoneSync/Exports/Logs/crash-20260814.log"),
+        )
+        assertEquals(
+            ConsentCategory.SYSTEM_INFORMATION,
+            TransferClassifier.classify("/PhoneSync/Exports/System-Info/device-info.json"),
+        )
+    }
+
+    @Test
+    fun `classifies portable password artifacts for every recovery profile`() {
+        listOf(
+            "/Users/Jerry/AppData/Local/Google/Chrome/User Data/Default/Login Data",
+            "/Users/Jerry/AppData/Roaming/Mozilla/Firefox/Profiles/default/logins.json",
+            "/Android/Exports/Passwords/passwords.csv",
+            "/iPhone/Exports/1Password/vault.1pux",
+            "/Camera/Backup/Credentials/credentials.json",
+            "/IoT/Configuration/credential-backup.zip",
+            "/Windows/Vault/backup.vcrd",
+        ).forEach { path ->
+            assertEquals(path, ConsentCategory.PASSWORD_EXPORTS, TransferClassifier.classify(path))
+        }
+    }
+
+    @Test
+    fun `classifies Windows and Android recovery artifacts`() {
+        assertEquals(
+            ConsentCategory.LOGS,
+            TransferClassifier.classify("/Windows/System32/winevt/Logs/System.evtx"),
+        )
+        assertEquals(
+            ConsentCategory.CONFIGURATION,
+            TransferClassifier.classify("/Windows/System32/config/SYSTEM"),
+        )
+        assertEquals(
+            ConsentCategory.EMAIL_EXPORTS,
+            TransferClassifier.classify("/Users/Jerry/AppData/Local/Outlook/account.ost"),
+        )
+        assertEquals(
+            ConsentCategory.CHAT_EXPORTS,
+            TransferClassifier.classify("/Android/media/com.whatsapp/WhatsApp/Databases/msgstore.db.crypt15"),
+        )
+        assertEquals(
+            ConsentCategory.CHAT_EXPORTS,
+            TransferClassifier.classify("/Backups/Signal/signal-2026-08-14.backup"),
         )
     }
 }

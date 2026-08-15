@@ -10,10 +10,22 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.TransferClassifier
+import java.security.MessageDigest
 
 data class TargetWriteResult(
     val uri: Uri,
     val bytesWritten: Long,
+    val sha256: String,
+)
+
+data class StoredItemIntegrity(
+    val bytes: Long,
+    val sha256: String,
+)
+
+private data class IntegrityResult(
+    val bytesRead: Long,
+    val sha256: String,
 )
 
 enum class MtpReadMode {
@@ -32,6 +44,26 @@ fun mtpReadPlan(
 }
 
 class TargetMediaStore(private val context: Context) {
+    fun verifyStoredItem(
+        destination: String?,
+        expectedBytes: Long,
+        expectedSha256: String?,
+        onBytesRead: (Long) -> Unit = {},
+    ): StoredItemIntegrity? {
+        val uri = destination?.let(Uri::parse) ?: return null
+        return runCatching {
+            val integrity = calculateIntegrity(uri, onBytesRead)
+            val sizeMatches = expectedBytes <= 0 || integrity.bytesRead == expectedBytes
+            val hashMatches = expectedSha256 == null ||
+                integrity.sha256.equals(expectedSha256, ignoreCase = true)
+            if (sizeMatches && hashMatches) {
+                StoredItemIntegrity(integrity.bytesRead, integrity.sha256)
+            } else {
+                null
+            }
+        }.getOrNull()
+    }
+
     fun importMtpObject(
         mtpDevice: MtpDevice,
         objectHandle: Int,
@@ -41,6 +73,7 @@ class TargetMediaStore(private val context: Context) {
         modifiedAtEpochMillis: Long,
         expectedBytes: Long,
         onBytesTransferred: (Long) -> Unit = {},
+        onIntegrityBytesRead: (Long) -> Unit = {},
     ): TargetWriteResult {
         return writePendingItem(
             displayName = displayName,
@@ -48,6 +81,8 @@ class TargetMediaStore(private val context: Context) {
             sourceName = sourceName,
             modifiedAtEpochMillis = modifiedAtEpochMillis,
             mimeType = mimeType(displayName, category),
+            expectedBytes = expectedBytes,
+            onIntegrityBytesRead = onIntegrityBytesRead,
         ) { destination ->
             val deviceInfo = runCatching { mtpDevice.deviceInfo }.getOrNull()
             val readPlan = mtpReadPlan(
@@ -195,6 +230,8 @@ class TargetMediaStore(private val context: Context) {
         sourceName: String,
         modifiedAtEpochMillis: Long,
         mimeType: String,
+        expectedBytes: Long = 0,
+        onIntegrityBytesRead: (Long) -> Unit = {},
         writer: (Uri) -> Long,
     ): TargetWriteResult {
         val safeName = sanitizePathSegment(displayName)
@@ -221,18 +258,46 @@ class TargetMediaStore(private val context: Context) {
         val destination = context.contentResolver.insert(collection, values)
             ?: error("Android could not create the destination item.")
         try {
-            val bytesWritten = writer(destination)
+            writer(destination)
+            val integrity = calculateIntegrity(destination, onIntegrityBytesRead)
+            check(expectedBytes <= 0 || integrity.bytesRead == expectedBytes) {
+                "Recovered size mismatch: expected $expectedBytes bytes but verified ${integrity.bytesRead} bytes."
+            }
             context.contentResolver.update(
                 destination,
                 ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
                 null,
                 null,
             )
-            return TargetWriteResult(destination, bytesWritten)
+            return TargetWriteResult(destination, integrity.bytesRead, integrity.sha256)
         } catch (throwable: Throwable) {
             context.contentResolver.delete(destination, null, null)
             throw throwable
         }
+    }
+
+    private fun calculateIntegrity(
+        destination: Uri,
+        onBytesRead: (Long) -> Unit,
+    ): IntegrityResult {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val input = context.contentResolver.openInputStream(destination)
+            ?: error("Android could not reopen the recovered item for integrity verification.")
+        var total = 0L
+        input.use { source ->
+            val buffer = ByteArray(MTP_CHUNK_BYTES)
+            while (true) {
+                val count = source.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+                total += count
+                onBytesRead(total)
+            }
+        }
+        return IntegrityResult(
+            bytesRead = total,
+            sha256 = digest.digest().joinToString("") { "%02x".format(it) },
+        )
     }
 
     private fun mimeType(displayName: String, category: ConsentCategory): String {

@@ -1,6 +1,6 @@
 # Phone Sync USB-C
 
-Android USB host for consent-based, external-device-only phone collection and backup.
+Android USB host for owner-authorized, external-device-only data recovery and read-only logical acquisition.
 
 ## Download
 
@@ -23,12 +23,30 @@ Android does not treat GitHub as an app store, so manual downloads still require
 
 ## Workflow
 
-1. Open **USB Source**, connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
-2. Authorize the available source categories, then tap **Collect all USB-visible source data**. Phone Sync requests every object advertised by the tethered device and recognizes USB-visible SMS/MMS, calls, contacts, calendar, email, chat, notification, voicemail, and password-vault exports.
-3. After collection, use **Push this USB source data** on the same tab: choose data, choose one destination, then use the single destination-specific action such as **Push to OneDrive**.
-4. Open **Backup** for consolidated progress and destination activity for the active or most recently collected external source.
+1. Open **USB Source**, connect an owned Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
+2. Select the source profile: **Windows PC**, **Android**, **iPhone/iPad**, or **Camera/IoT**.
+3. Authorize the available categories, then tap **Recover all USB-visible data**. Phone Sync requests every advertised object and recognizes media, documents, application data, configuration, logs, system information, messages, and password artifacts.
+4. After acquisition, use **Preserve this recovery set** to copy verified artifacts to local or provider storage.
+5. Open **Backup** for consolidated preservation progress and destination activity for the active or most recently recovered external source.
 
 Installed storage apps handle their own authentication through Android. Phone Sync does not require provider client IDs, OAuth configuration, or embedded credentials.
+
+## Recovery Purpose and Limits
+
+The generated inventory identifies these purposes: data recovery, read-only logical forensic acquisition of an owned device, file recovery, artifact extraction, backup-restoration input recovery, and USB-visible storage analysis.
+
+This is a logical MTP/PTP acquisition, not a physical forensic image. Phone Sync does not write to the source, image raw storage, recover deleted blocks, carve unallocated space, decrypt protected data, guess passwords, or bypass device, account, password, or encryption controls. Windows PC, camera, and IoT files are recoverable only when the source exposes them through authorized MTP/PTP or a readable export presented by such a device.
+
+Every newly recovered copy is reopened, checked against the source-advertised size when available, and hashed with SHA-256 before publication. Each session writes `PhoneSync-Recovery-Inventory-*.json` under **Downloads / Phone Sync / Recovery Inventories** with source paths, timestamps, sizes, MTP metadata, outcomes, destinations, hashes, errors, profile, and acquisition limits.
+
+## Device Profiles
+
+- **Windows PC:** USB-visible user-profile exports, Desktop/Documents/Downloads, browser data, PST/OST files, OneDrive cache exports, event logs, registry hives, application databases, configuration, and credential stores.
+- **Android:** internal/SD-card media and documents plus USB-visible SMS/MMS, contacts, calls, app databases, chat backups, logs, configuration, system information, and password exports.
+- **iPhone/iPad:** PTP media plus encrypted backups and message, note, contact, app-document, configuration, iCloud-synchronized, and password artifacts that iOS or its apps explicitly expose.
+- **Camera/IoT:** exposed SD-card contents, footage, configuration, logs, settings backups, application databases, system reports, and credential backups.
+
+Password-manager vaults, browser credential stores, keychain or credential backups, and password exports are recovered for every profile when visible. They are classified as sensitive, copied intact, never previewed or parsed, and recorded as `COPIED_OPAQUE_NO_DECRYPTION` in the inventory.
 
 ## Source Coverage
 
@@ -37,28 +55,28 @@ Installed storage apps handle their own authentication through Android. Phone Sy
 - **PTP iPhone sources:** locally available photos and videos exposed by iOS. Phone Sync tries 64-bit chunked, standard chunked, and full-file PTP reads in order.
 - **Android protected data:** use each app's supported export on the external phone and save the export in shared storage before connecting with **File transfer / Android Auto** mode.
 - **Email and chat:** exports must already exist in USB-visible shared storage on the external device.
-- **Voicemail:** export voicemail audio or visual-voicemail data on the external device into USB-visible storage before collection.
+- **Voicemail:** export voicemail audio or visual-voicemail data on the external device into USB-visible storage before recovery.
 - **Password vaults:** export on the external device, preferably to an encrypted format such as KeePass `.kdbx`. Phone Sync copies the USB-visible file unchanged and never previews or parses credentials.
-- **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, voicemail, mail, chat, passwords, or notification databases. Only objects iOS advertises over PTP can be collected.
+- **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, voicemail, mail, chat, passwords, or notification databases. Only objects iOS advertises over PTP can be recovered.
 
-Phone Sync never reports protected data as pulled unless the source actually exposes a readable export.
+Phone Sync never reports protected data as recovered unless the source actually exposes a readable object or export.
 
 ## iPhone Photos Missing
 
-After each iPhone scan, **iPhone photo coverage** reports the exact PTP-visible count and how many files were new, already collected, unauthorized, or failed. Photos stored only in iCloud are not visible to generic USB PTP and cannot be counted or downloaded by Phone Sync.
+After each iPhone scan, **iPhone photo coverage** reports the exact PTP-visible count and how many files were new, already recovered, unauthorized, or failed. Photos stored only in iCloud are not visible to generic USB PTP and cannot be counted or downloaded by Phone Sync.
 
 1. On the iPhone, open iCloud Photos settings and choose **Download and Keep Originals**.
 2. Leave the iPhone charging and on Wi-Fi until original downloads finish and sufficient local storage is available.
 3. Under Photos transfer settings, choose **Keep Originals** for transfer to Mac or PC.
-4. Keep the iPhone unlocked and trusted while connected, then tap **Collect all USB-visible source data** again.
+4. Keep the iPhone unlocked and trusted while connected, then tap **Recover all USB-visible data** again.
 
 ## SMS, Call, or Email Exports Missing
 
-If **USB export readiness** reports that SMS, calls, or email were not exposed, create supported exports using apps on the external device, save them in that device's shared storage, reconnect it unlocked in **File transfer / Android Auto** mode, and collect again.
+If **USB export readiness** reports that SMS, calls, or email were not exposed, create supported exports using apps on the external device, save them in that device's shared storage, reconnect it unlocked in **File transfer / Android Auto** mode, and recover again.
 
-iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. Those records require a supported source-app or backup export before Phone Sync can import them.
+iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. Those records require a supported source-app or backup export before Phone Sync can recover them.
 
-Windows Phone exposes shared media through MTP but does not publish its private SMS, call-history, or email stores as MTP objects. Phone Sync requests every object the phone advertises, including a legacy full-file compatibility request, but no collecting-device app can force Windows Phone to expose stores its OS withholds. Use Microsoft-account SMS backup when available and export email from its server/provider; Windows Phone has no standard USB call-history export.
+Windows Phone exposes shared media through MTP but does not publish its private SMS, call-history, or email stores as MTP objects. Phone Sync requests every object the phone advertises, including a legacy full-file compatibility request, but no acquisition-host app can force Windows Phone to expose stores its OS withholds. Use Microsoft-account SMS backup when available and export email from its server/provider; Windows Phone has no standard USB call-history export.
 
 ## Destinations
 
@@ -68,15 +86,15 @@ Windows Phone exposes shared media through MTP but does not publish its private 
 
 The **Backup** tab keeps overall item progress, current-file byte progress, processed bytes, and the latest result together. For multi-item provider uploads, Phone Sync creates one ZIP64 package with a SHA-256 manifest before opening the provider. Provider upload completion is controlled by the selected provider app.
 
-When a USB source is connected, its destination panel is scoped to that source's completed transfers. It does not mix in exports prepared on the collecting Android device or files collected from another USB peer.
+When a USB source is connected, its destination panel is scoped to that source's verified recovery results. It does not mix in files from the Android acquisition host or another USB peer.
 
-The consolidated **Backup** tab follows the connected external source, or the most recently collected external source when disconnected. Legacy collector-side rows from older versions remain quarantined and are excluded from counts, selection, manifests, and provider uploads.
+The consolidated **Backup** tab follows the connected external source, or the most recently recovered external source when disconnected. Legacy host-side rows from older versions remain quarantined and are excluded from counts, selection, manifests, and provider uploads.
 
 The selected destination persists across app restarts. Phone Downloads and writable folder targets receive files directly. OneDrive, Google Drive, and other app targets prepare one package and open that provider from the primary push button; choose the provider folder and confirm Upload there.
 
 ## Permissions
 
-Phone Sync requests Android USB-host permission only. It does not request SMS, call-log, contacts, calendar, or notification-listener access on the collecting device. It cannot bypass a source device lock, brute-force credentials, defeat encryption, or collect private stores the source OS does not advertise over MTP/PTP.
+Phone Sync requests Android USB-host permission only. It does not request SMS, call-log, contacts, calendar, or notification-listener access on the acquisition host. It cannot bypass a source device lock, brute-force credentials, defeat encryption, or recover private stores the source OS does not advertise over MTP/PTP.
 
 ## Build and Push
 

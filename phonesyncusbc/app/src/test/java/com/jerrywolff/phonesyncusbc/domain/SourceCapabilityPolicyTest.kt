@@ -62,6 +62,16 @@ class SourceCapabilityPolicyTest {
     }
 
     @Test
+    fun `generic camera or IoT source uses logical MTP PTP recovery`() {
+        val capabilities = SourceCapabilityPolicy.forSource(
+            DetectedSource(SourcePlatform.UNKNOWN, SourceFamily.UNKNOWN, "Camera"),
+        )
+
+        assertEquals(AccessMode.MTP_PTP, capabilities.modeFor(ConsentCategory.PHOTOS_AND_VIDEOS))
+        assertEquals(AccessMode.MTP_PTP, capabilities.modeFor(ConsentCategory.CONFIGURATION))
+    }
+
+    @Test
     fun `FireWire is explicitly unsupported by Android USB host`() {
         val capabilities = SourceCapabilityPolicy.forSource(
             DetectedSource(

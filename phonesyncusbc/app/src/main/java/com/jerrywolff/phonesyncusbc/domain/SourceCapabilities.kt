@@ -3,6 +3,7 @@ package com.jerrywolff.phonesyncusbc.domain
 enum class AccessMode {
     MTP,
     PTP,
+    MTP_PTP,
     PORTABLE_EXPORT,
     SAF,
     LOCAL_ANDROID_PROVIDER,
@@ -44,12 +45,12 @@ object SourceCapabilityPolicy {
         val mediaMode = when (source.platform) {
             SourcePlatform.IOS -> AccessMode.PTP
             SourcePlatform.ANDROID, SourcePlatform.WINDOWS_PHONE -> AccessMode.MTP
-            SourcePlatform.UNKNOWN -> AccessMode.SAF
+            SourcePlatform.UNKNOWN -> AccessMode.MTP_PTP
         }
         val documentMode = when (source.platform) {
             SourcePlatform.ANDROID, SourcePlatform.WINDOWS_PHONE -> AccessMode.MTP
             SourcePlatform.IOS -> AccessMode.PORTABLE_EXPORT
-            SourcePlatform.UNKNOWN -> AccessMode.SAF
+            SourcePlatform.UNKNOWN -> AccessMode.MTP_PTP
         }
 
         return SourceCapabilities(
@@ -80,6 +81,26 @@ object SourceCapabilityPolicy {
                     } else {
                         "Documents exposed by the source phone"
                     },
+                ),
+                CategoryCapability(
+                    ConsentCategory.APPLICATION_DATA,
+                    documentMode,
+                    "Application data files exposed by the source through normal USB access",
+                ),
+                CategoryCapability(
+                    ConsentCategory.CONFIGURATION,
+                    documentMode,
+                    "Configuration and settings files exposed by the source",
+                ),
+                CategoryCapability(
+                    ConsentCategory.LOGS,
+                    documentMode,
+                    "Logs, diagnostics, and crash reports exposed by the source",
+                ),
+                CategoryCapability(
+                    ConsentCategory.SYSTEM_INFORMATION,
+                    documentMode,
+                    "System-information and device-report files exposed by the source",
                 ),
                 CategoryCapability(
                     ConsentCategory.CONTACTS,

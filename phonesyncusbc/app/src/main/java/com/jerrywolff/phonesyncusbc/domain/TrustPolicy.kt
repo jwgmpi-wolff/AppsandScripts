@@ -3,6 +3,10 @@ package com.jerrywolff.phonesyncusbc.domain
 enum class ConsentCategory {
     PHOTOS_AND_VIDEOS,
     DOCUMENTS,
+    APPLICATION_DATA,
+    CONFIGURATION,
+    LOGS,
+    SYSTEM_INFORMATION,
     CONTACTS,
     CALL_LOGS,
     CALENDAR,

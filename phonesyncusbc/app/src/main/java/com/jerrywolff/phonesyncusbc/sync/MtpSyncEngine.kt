@@ -6,9 +6,14 @@ import android.mtp.MtpDevice
 import android.mtp.MtpObjectInfo
 import com.jerrywolff.phonesyncusbc.data.AuditLog
 import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
+import com.jerrywolff.phonesyncusbc.data.RecoveryInventoryItem
+import com.jerrywolff.phonesyncusbc.data.RecoveryInventoryResult
+import com.jerrywolff.phonesyncusbc.data.RecoveryInventoryWriter
+import com.jerrywolff.phonesyncusbc.data.RecoveryItemStatus
 import com.jerrywolff.phonesyncusbc.data.SyncStatus
 import com.jerrywolff.phonesyncusbc.data.TransferStatus
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
+import com.jerrywolff.phonesyncusbc.domain.RecoveryDeviceType
 import com.jerrywolff.phonesyncusbc.domain.TransferClassifier
 import com.jerrywolff.phonesyncusbc.usb.AttachedSource
 import com.jerrywolff.phonesyncusbc.usb.PeerIdentity
@@ -32,6 +37,7 @@ data class SyncProgress(
 enum class SyncPhase {
     DISCOVERING,
     TRANSFERRING,
+    VERIFYING,
     COMPLETE,
 }
 
@@ -60,13 +66,17 @@ data class SyncResult(
     val bytesTransferred: Long,
     val error: String? = null,
     val mtpScan: MtpScanSummary? = null,
+    val recoveryInventory: RecoveryInventoryResult? = null,
 )
 
 private data class MtpCandidate(
     val handle: Int,
     val path: String,
     val size: Long,
+    val createdAtEpochMillis: Long,
     val modifiedAtEpochMillis: Long,
+    val formatCode: Int,
+    val protectionStatus: Int,
 )
 
 class MtpSyncEngine(
@@ -74,13 +84,16 @@ class MtpSyncEngine(
     private val auditLog: AuditLog,
     private val sourceResolver: UsbSourceResolver,
     private val targetMediaStore: TargetMediaStore = TargetMediaStore(context),
+    private val recoveryInventoryWriter: RecoveryInventoryWriter = RecoveryInventoryWriter(context),
 ) {
     fun sync(
         source: AttachedSource,
         identity: PeerIdentity,
+        recoveryDeviceType: RecoveryDeviceType,
         authorizedCategories: Set<ConsentCategory>,
         onProgress: (SyncProgress) -> Unit = {},
     ): SyncResult {
+        val sessionStartedAtEpochMillis = System.currentTimeMillis()
         val sessionId = auditLog.beginSession(identity.peerId)
         var transferred = 0
         var skipped = 0
@@ -100,12 +113,38 @@ class MtpSyncEngine(
         var mediaItemsFailed = 0
         var advertisedBytes = 0L
         var processedItems = 0
+        val candidates = mutableListOf<MtpCandidate>()
+        val recoveryItems = mutableListOf<RecoveryInventoryItem>()
+        val inventoriedHandles = mutableSetOf<Int>()
+
+        fun inventory(candidate: MtpCandidate, item: RecoveryInventoryItem) {
+            recoveryItems += item
+            inventoriedHandles += candidate.handle
+        }
 
         val mtpSession = sourceResolver.openMtp(source.device)
         if (mtpSession == null) {
             val error = "The source is not exposing an MTP/PTP data connection."
             auditLog.finishSession(sessionId, SyncStatus.FAILED, 0, 0, error)
-            return SyncResult(SyncStatus.FAILED, 0, 0, 0, 0, error)
+            val recoveryInventory = recoveryInventoryWriter.write(
+                peerId = identity.peerId,
+                sourceName = source.detected.displayName,
+                sourcePlatform = source.detected.platform,
+                recoveryDeviceType = recoveryDeviceType,
+                sessionStatus = SyncStatus.FAILED,
+                sessionStartedAtEpochMillis = sessionStartedAtEpochMillis,
+                sessionCompletedAtEpochMillis = System.currentTimeMillis(),
+                items = recoveryItems,
+            )
+            return SyncResult(
+                SyncStatus.FAILED,
+                0,
+                0,
+                0,
+                0,
+                error,
+                recoveryInventory = recoveryInventory,
+            )
         }
 
         return try {
@@ -121,7 +160,6 @@ class MtpSyncEngine(
                         MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
                     )
                 }
-                val candidates = mutableListOf<MtpCandidate>()
                 walkObjects(session.device) { candidate ->
                     candidates += candidate
                     scannedItems += 1
@@ -159,24 +197,6 @@ class MtpSyncEngine(
                         "/download/" in normalizedPath || "/downloads/" in normalizedPath
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible ||
                         "/phone sync/" in normalizedPath || "/phonesync/" in normalizedPath
-                    if (TransferClassifier.isProtectedPrivateDatabase(candidate.path)) {
-                        skipped += 1
-                        processedItems += 1
-                        publishProgress(
-                            currentItem = candidate.path,
-                            transferred = transferred,
-                            skipped = skipped,
-                            failed = failed,
-                            transferredBytes = transferredBytes,
-                            phase = SyncPhase.TRANSFERRING,
-                            discoveredItems = scannedItems,
-                            processedItems = processedItems,
-                            totalItems = candidates.size,
-                            advertisedBytes = advertisedBytes,
-                            onProgress = onProgress,
-                        )
-                        return@forEach
-                    }
                     val category = TransferClassifier.classify(candidate.path)
                     if (category == ConsentCategory.PHOTOS_AND_VIDEOS) mediaItemsVisible += 1
                     visibleCategories += category
@@ -184,6 +204,14 @@ class MtpSyncEngine(
                         if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
                             mediaItemsNotAuthorized += 1
                         }
+                        inventory(
+                            candidate,
+                            candidate.toInventoryItem(
+                                category = category,
+                                status = RecoveryItemStatus.NOT_AUTHORIZED,
+                                error = "This category was not authorized for recovery.",
+                            ),
+                        )
                         processedItems += 1
                         publishProgress(
                             currentItem = candidate.path,
@@ -204,12 +232,54 @@ class MtpSyncEngine(
                     val fingerprint = DeviceIdentity.sha256(
                         "${identity.peerId}|${candidate.path}|${candidate.size}|${candidate.modifiedAtEpochMillis}",
                     )
-                    if (auditLog.wasTransferred(identity.peerId, fingerprint)) {
+                    val priorRecovery = auditLog.completedTransfer(identity.peerId, fingerprint)
+                    val priorIntegrity = priorRecovery?.let { prior ->
+                        targetMediaStore.verifyStoredItem(
+                            destination = prior.destination,
+                            expectedBytes = prior.sourceSize.takeIf { it > 0 } ?: candidate.size,
+                            expectedSha256 = prior.contentSha256,
+                            onBytesRead = { currentBytes ->
+                                publishProgress(
+                                    currentItem = candidate.path,
+                                    transferred = transferred,
+                                    skipped = skipped,
+                                    failed = failed,
+                                    transferredBytes = transferredBytes,
+                                    currentItemBytes = currentBytes,
+                                    currentItemTotal = candidate.size,
+                                    phase = SyncPhase.VERIFYING,
+                                    discoveredItems = scannedItems,
+                                    processedItems = processedItems,
+                                    totalItems = candidates.size,
+                                    advertisedBytes = advertisedBytes,
+                                    onProgress = onProgress,
+                                )
+                            },
+                        )
+                    }
+                    if (priorRecovery != null && priorIntegrity != null) {
+                        auditLog.updateTransferIntegrity(
+                            transferId = priorRecovery.id,
+                            sourceSize = candidate.size,
+                            sourceModifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
+                            bytesTransferred = priorIntegrity.bytes,
+                            contentSha256 = priorIntegrity.sha256,
+                        )
                         skipped += 1
                         processedItems += 1
                         if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
                             mediaItemsAlreadyCollected += 1
                         }
+                        inventory(
+                            candidate,
+                            candidate.toInventoryItem(
+                                category = category,
+                                status = RecoveryItemStatus.ALREADY_RECOVERED,
+                                destination = priorRecovery.destination,
+                                recoveredBytes = priorIntegrity.bytes,
+                                contentSha256 = priorIntegrity.sha256,
+                            ),
+                        )
                         publishProgress(
                             currentItem = candidate.path,
                             transferred = transferred,
@@ -230,7 +300,7 @@ class MtpSyncEngine(
                         targetMediaStore.importMtpObject(
                             mtpDevice = session.device,
                             objectHandle = candidate.handle,
-                            displayName = candidate.path.substringAfterLast('/').ifBlank { "imported-item" },
+                            displayName = candidate.path.substringAfterLast('/').ifBlank { "recovered-artifact" },
                             category = category,
                             sourceName = source.detected.displayName,
                             modifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
@@ -245,6 +315,23 @@ class MtpSyncEngine(
                                     currentItemBytes = currentBytes,
                                     currentItemTotal = candidate.size,
                                     phase = SyncPhase.TRANSFERRING,
+                                    discoveredItems = scannedItems,
+                                    processedItems = processedItems,
+                                    totalItems = candidates.size,
+                                    advertisedBytes = advertisedBytes,
+                                    onProgress = onProgress,
+                                )
+                            },
+                            onIntegrityBytesRead = { currentBytes ->
+                                publishProgress(
+                                    currentItem = candidate.path,
+                                    transferred = transferred,
+                                    skipped = skipped,
+                                    failed = failed,
+                                    transferredBytes = transferredBytes,
+                                    currentItemBytes = currentBytes,
+                                    currentItemTotal = candidate.size,
+                                    phase = SyncPhase.VERIFYING,
                                     discoveredItems = scannedItems,
                                     processedItems = processedItems,
                                     totalItems = candidates.size,
@@ -269,6 +356,19 @@ class MtpSyncEngine(
                             destination = result.uri.toString(),
                             bytesTransferred = result.bytesWritten,
                             status = TransferStatus.COMPLETED,
+                            sourceSize = candidate.size,
+                            sourceModifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
+                            contentSha256 = result.sha256,
+                        )
+                        inventory(
+                            candidate,
+                            candidate.toInventoryItem(
+                                category = category,
+                                status = RecoveryItemStatus.RECOVERED,
+                                destination = result.uri.toString(),
+                                recoveredBytes = result.bytesWritten,
+                                contentSha256 = result.sha256,
+                            ),
                         )
                     }.onFailure { throwable ->
                         failed += 1
@@ -284,7 +384,17 @@ class MtpSyncEngine(
                             destination = null,
                             bytesTransferred = 0,
                             status = TransferStatus.FAILED,
+                            sourceSize = candidate.size,
+                            sourceModifiedAtEpochMillis = candidate.modifiedAtEpochMillis,
                             error = throwable.message ?: throwable.javaClass.simpleName,
+                        )
+                        inventory(
+                            candidate,
+                            candidate.toInventoryItem(
+                                category = category,
+                                status = RecoveryItemStatus.FAILED,
+                                error = throwable.message ?: throwable.javaClass.simpleName,
+                            ),
                         )
                     }
                     processedItems += 1
@@ -318,14 +428,27 @@ class MtpSyncEngine(
                     onProgress = onProgress,
                 )
             }
-            val status = if (failed == 0) SyncStatus.COMPLETED else SyncStatus.PARTIAL
-            auditLog.finishSession(sessionId, status, transferred, transferredBytes)
+            val transferStatus = if (failed == 0) SyncStatus.COMPLETED else SyncStatus.PARTIAL
+            val recoveryInventory = recoveryInventoryWriter.write(
+                peerId = identity.peerId,
+                sourceName = source.detected.displayName,
+                sourcePlatform = source.detected.platform,
+                recoveryDeviceType = recoveryDeviceType,
+                sessionStatus = transferStatus,
+                sessionStartedAtEpochMillis = sessionStartedAtEpochMillis,
+                sessionCompletedAtEpochMillis = System.currentTimeMillis(),
+                items = recoveryItems,
+            )
+            val inventoryError = recoveryInventory.error?.let { "Recovery inventory failed: $it" }
+            val status = if (inventoryError == null) transferStatus else SyncStatus.PARTIAL
+            auditLog.finishSession(sessionId, status, transferred, transferredBytes, inventoryError)
             SyncResult(
                 status = status,
                 transferredItems = transferred,
                 skippedItems = skipped,
                 failedItems = failed,
                 bytesTransferred = transferredBytes,
+                error = inventoryError,
                 mtpScan = MtpScanSummary(
                     scannedItems = scannedItems,
                     processedItems = processedItems,
@@ -342,23 +465,47 @@ class MtpSyncEngine(
                     mediaItemsNotAuthorized = mediaItemsNotAuthorized,
                     mediaItemsFailed = mediaItemsFailed,
                 ),
+                recoveryInventory = recoveryInventory,
             )
         } catch (throwable: Throwable) {
             val error = throwable.message ?: throwable.javaClass.simpleName
+            candidates
+                .filterNot { it.handle in inventoriedHandles }
+                .forEach { candidate ->
+                    recoveryItems += candidate.toInventoryItem(
+                        category = TransferClassifier.classify(candidate.path),
+                        status = RecoveryItemStatus.NOT_RECOVERED,
+                        error = error,
+                    )
+                }
+            val status = if (transferred > 0) SyncStatus.PARTIAL else SyncStatus.FAILED
+            val recoveryInventory = recoveryInventoryWriter.write(
+                peerId = identity.peerId,
+                sourceName = source.detected.displayName,
+                sourcePlatform = source.detected.platform,
+                recoveryDeviceType = recoveryDeviceType,
+                sessionStatus = status,
+                sessionStartedAtEpochMillis = sessionStartedAtEpochMillis,
+                sessionCompletedAtEpochMillis = System.currentTimeMillis(),
+                items = recoveryItems,
+            )
+            val combinedError = recoveryInventory.error
+                ?.let { "$error; recovery inventory also failed: $it" }
+                ?: error
             auditLog.finishSession(
                 sessionId,
-                if (transferred > 0) SyncStatus.PARTIAL else SyncStatus.FAILED,
+                status,
                 transferred,
                 transferredBytes,
-                error,
+                combinedError,
             )
             SyncResult(
-                status = if (transferred > 0) SyncStatus.PARTIAL else SyncStatus.FAILED,
+                status = status,
                 transferredItems = transferred,
                 skippedItems = skipped,
                 failedItems = failed + 1,
                 bytesTransferred = transferredBytes,
-                error = error,
+                error = combinedError,
                 mtpScan = MtpScanSummary(
                     scannedItems = scannedItems,
                     processedItems = processedItems,
@@ -375,6 +522,7 @@ class MtpSyncEngine(
                     mediaItemsNotAuthorized = mediaItemsNotAuthorized,
                     mediaItemsFailed = mediaItemsFailed,
                 ),
+                recoveryInventory = recoveryInventory,
             )
         }
     }
@@ -412,7 +560,35 @@ class MtpSyncEngine(
             handle = handle,
             path = path,
             size = compressedSizeLong.coerceAtLeast(0),
+            createdAtEpochMillis = dateCreated.coerceAtLeast(0),
             modifiedAtEpochMillis = dateModified.coerceAtLeast(0),
+            formatCode = format,
+            protectionStatus = protectionStatus,
+        )
+    }
+
+    private fun MtpCandidate.toInventoryItem(
+        category: ConsentCategory,
+        status: RecoveryItemStatus,
+        destination: String? = null,
+        recoveredBytes: Long = 0,
+        contentSha256: String? = null,
+        error: String? = null,
+    ): RecoveryInventoryItem {
+        return RecoveryInventoryItem(
+            sourcePath = path,
+            category = category,
+            sourceSize = size,
+            sourceCreatedAtEpochMillis = createdAtEpochMillis,
+            sourceModifiedAtEpochMillis = modifiedAtEpochMillis,
+            mtpFormatCode = formatCode,
+            mtpProtectionStatus = protectionStatus,
+            status = status,
+            destination = destination,
+            recoveredBytes = recoveredBytes,
+            contentSha256 = contentSha256,
+            error = error,
+            sensitive = category == ConsentCategory.PASSWORD_EXPORTS,
         )
     }
 

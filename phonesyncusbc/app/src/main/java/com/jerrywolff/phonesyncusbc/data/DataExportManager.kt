@@ -56,7 +56,7 @@ class DataExportManager(private val context: Context) {
         entries: List<AuditEntry>,
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
-        if (entries.isEmpty()) return ExportResult(0, 0, 0, "No collected items are available to back up.")
+        if (entries.isEmpty()) return ExportResult(0, 0, 0, "No recovered artifacts are available to preserve.")
         val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Backups/" +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var exported = 0
@@ -67,13 +67,13 @@ class DataExportManager(private val context: Context) {
 
         entries.forEach { entry ->
             val displayName = sanitizeName(entry.sourceItem.substringAfterLast('/'))
-                .ifBlank { "collected-item" }
+                .ifBlank { "recovered-artifact" }
             onProgress(ExportProgress(processed, entries.size, displayName, bytes))
             val source = entry.destination?.let(Uri::parse)
             if (source == null) {
                 failed += 1
                 processed += 1
-                firstError = firstError ?: "A collected item has no stored location."
+                firstError = firstError ?: "A recovered artifact has no stored location."
                 onProgress(ExportProgress(processed, entries.size, displayName, bytes))
                 return@forEach
             }
@@ -162,12 +162,12 @@ class DataExportManager(private val context: Context) {
         entries.forEach { entry ->
             val source = entry.destination?.let(Uri::parse)
             val sourceName = source?.let { sourceDisplayName(it, entry) }
-                ?: entry.sourceItem.substringAfterLast('/').ifBlank { "collected-item" }
+                ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
             onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
             if (source == null) {
                 failed += 1
                 processed += 1
-                firstError = firstError ?: "A collected item has no stored location."
+                firstError = firstError ?: "A recovered artifact has no stored location."
                 onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
                 return@forEach
             }
@@ -224,7 +224,7 @@ class DataExportManager(private val context: Context) {
         entries: List<AuditEntry>,
         onProgress: (ArchiveProgress) -> Unit = {},
     ): ArchiveResult {
-        if (entries.isEmpty()) return ArchiveResult(error = "No collected items are selected for upload.")
+        if (entries.isEmpty()) return ArchiveResult(error = "No recovered artifacts are selected for preservation.")
 
         val displayName = "PhoneSyncBackup-${timestamp()}.zip"
         val values = android.content.ContentValues().apply {
@@ -255,7 +255,7 @@ class DataExportManager(private val context: Context) {
                     val source = entry.destination?.let(Uri::parse)
                         ?: error("${entry.sourceItem} has no stored location.")
                     val sourceName = sanitizeName(sourceDisplayName(source, entry))
-                        .ifBlank { "collected-item" }
+                        .ifBlank { "recovered-artifact" }
                     val archivePath = uniqueArchivePath(
                         usedPaths,
                         "${entry.category.name.lowercase()}/$sourceName",
@@ -305,14 +305,26 @@ class DataExportManager(private val context: Context) {
                         total
                     }
                     archive.closeEntry()
+                    val archiveSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                    check(entry.bytesTransferred <= 0 || copied == entry.bytesTransferred) {
+                        "Recovered artifact size changed before preservation: $sourceName."
+                    }
+                    check(entry.contentSha256 == null || archiveSha256.equals(entry.contentSha256, ignoreCase = true)) {
+                        "Recovered artifact SHA-256 changed before preservation: $sourceName."
+                    }
                     sourceBytes += copied
                     manifestEntries.put(
                         JSONObject()
                             .put("category", entry.category.name)
                             .put("sourceItem", entry.sourceItem)
+                            .put("sourceSize", entry.sourceSize)
+                            .put("sourceModifiedAtEpochMillis", entry.sourceModifiedAtEpochMillis)
+                            .put("recoveredAtEpochMillis", entry.transferredAtEpochMillis)
                             .put("archivePath", archivePath)
                             .put("bytes", copied)
-                            .put("sha256", digest.digest().joinToString("") { "%02x".format(it) }),
+                            .put("sha256", archiveSha256)
+                            .put("recoveryContentSha256", entry.contentSha256 ?: JSONObject.NULL)
+                            .put("sensitive", entry.category == ConsentCategory.PASSWORD_EXPORTS),
                     )
                     onProgress(
                         ArchiveProgress(
@@ -370,7 +382,7 @@ class DataExportManager(private val context: Context) {
         }.getOrNull()
         return queriedName
             ?.takeIf { it.isNotBlank() }
-            ?: entry.sourceItem.substringAfterLast('/').ifBlank { "collected-item" }
+            ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
     }
 
     fun mimeType(entry: AuditEntry): String {
@@ -401,7 +413,7 @@ class DataExportManager(private val context: Context) {
         onProgress: (Long) -> Unit = {},
     ): Long {
         val input = context.contentResolver.openInputStream(source)
-            ?: error("Could not read the imported item.")
+            ?: error("Could not read the recovered artifact.")
         val output = context.contentResolver.openOutputStream(target, "w")
             ?: error("Could not open the export destination.")
         return input.use { sourceStream ->
@@ -426,7 +438,7 @@ class DataExportManager(private val context: Context) {
     }
 
     private fun uniqueName(folder: DocumentFile, baseName: String): String {
-        val safeBase = baseName.ifBlank { "imported-item" }
+        val safeBase = baseName.ifBlank { "recovered-artifact" }
         val extension = safeBase.substringAfterLast('.', missingDelimiterValue = "")
         val stem = if (extension.isBlank()) safeBase else safeBase.removeSuffix(".$extension")
         var candidate = safeBase
