@@ -83,8 +83,11 @@ import com.jerrywolff.phonesyncusbc.domain.TrustContext
 import com.jerrywolff.phonesyncusbc.domain.TrustDecision
 import com.jerrywolff.phonesyncusbc.domain.TrustPolicy
 import com.jerrywolff.phonesyncusbc.usb.AttachedSource
+import com.jerrywolff.phonesyncusbc.usb.IdentityReadProgress
+import com.jerrywolff.phonesyncusbc.usb.IdentityReadStage
 import com.jerrywolff.phonesyncusbc.usb.PeerIdentity
 import com.jerrywolff.phonesyncusbc.sync.SyncProgress
+import com.jerrywolff.phonesyncusbc.sync.SyncPhase
 import com.jerrywolff.phonesyncusbc.sync.SyncResult
 import com.jerrywolff.phonesyncusbc.sync.MtpScanSummary
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +170,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var backupActivity by remember { mutableStateOf(BackupActivityUi()) }
     var liveProgress by remember { mutableStateOf<SyncProgress?>(null) }
     var mtpScanSummary by remember { mutableStateOf<MtpScanSummary?>(null) }
+    var identityReadProgress by remember { mutableStateOf<IdentityReadProgress?>(null) }
+    var identityReadError by remember { mutableStateOf<String?>(null) }
     var showLibrary by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
     var previewEntry by remember { mutableStateOf<AuditEntry?>(null) }
@@ -225,6 +230,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         trust = null
         capabilities = null
         mtpScanSummary = null
+        identityReadProgress = null
+        identityReadError = null
     }
 
     val source = selectedSource
@@ -254,8 +261,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     LaunchedEffect(refreshToken, selectedSource) {
         val source = selectedSource ?: return@LaunchedEffect
         if (!source.permissionGranted) return@LaunchedEffect
-        val resolved = runCatching { application.usbSourceResolver.resolveIdentity(source) }.getOrNull()
-            ?: return@LaunchedEffect
+        identityReadError = null
+        identityReadProgress = IdentityReadProgress(IdentityReadStage.CHECKING_PERMISSION, 0)
+        val identityResult = withContext(Dispatchers.IO) {
+            runCatching {
+                application.usbSourceResolver.resolveIdentity(source) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        identityReadProgress = progress
+                    }
+                }
+            }
+        }
+        val resolved = identityResult.getOrElse { throwable ->
+            identityReadError = throwable.message ?: "The source did not return a readable USB identity."
+            return@LaunchedEffect
+        }
+        identityReadProgress = null
         identity = resolved
         backupPeerId = resolved.peerId
         backupEntries = application.auditLog.completedExternalTransfers(resolved.peerId)
@@ -914,8 +935,32 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text("Reading USB source", style = MaterialTheme.typography.titleMedium)
-                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text("Reading USB source identity", style = MaterialTheme.typography.titleMedium)
+                                identityReadProgress?.let { progress ->
+                                    val percentage = if (progress.totalSteps > 0) {
+                                        progress.completedSteps * 100 / progress.totalSteps
+                                    } else {
+                                        0
+                                    }
+                                    Text(identityReadStageLabel(progress.stage))
+                                    LinearProgressIndicator(
+                                        progress = {
+                                            (progress.completedSteps.toFloat() / progress.totalSteps)
+                                                .coerceIn(0f, 1f)
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Text(
+                                        "$percentage% · ${progress.completedSteps} of ${progress.totalSteps} checks complete",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                } ?: LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                identityReadError?.let { error ->
+                                    Text("Source identity read failed: $error")
+                                    OutlinedButton(onClick = ::refreshSource, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Retry source read")
+                                    }
+                                }
                             }
                         }
                     }
@@ -976,7 +1021,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     val currentSource = source ?: return@sync
                                     val currentIdentity = identity ?: return@sync
                                     syncing = true
-                                    liveProgress = SyncProgress(null, 0, 0, 0, 0)
+                                    liveProgress = SyncProgress(
+                                        currentItem = null,
+                                        transferredItems = 0,
+                                        skippedItems = 0,
+                                        failedItems = 0,
+                                        bytesTransferred = 0,
+                                        phase = SyncPhase.DISCOVERING,
+                                    )
                                     mtpScanSummary = null
                                     message = "LIVE: 0 transferred, 0 already audited, 0 failed."
                                     messageSection = AppSection.USB_SOURCE
@@ -997,12 +1049,18 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             )
                                         }
                                         syncing = false
+                                        val scan = result.mtpScan
                                         liveProgress = SyncProgress(
                                             currentItem = null,
                                             transferredItems = result.transferredItems,
                                             skippedItems = result.skippedItems,
                                             failedItems = result.failedItems,
                                             bytesTransferred = result.bytesTransferred,
+                                            phase = SyncPhase.COMPLETE,
+                                            discoveredItems = scan?.scannedItems ?: 0,
+                                            processedItems = scan?.processedItems ?: 0,
+                                            totalItems = scan?.scannedItems ?: 0,
+                                            advertisedBytes = scan?.advertisedBytes ?: 0,
                                         )
                                         mtpScanSummary = result.mtpScan
                                         message = buildSyncCompletionStatus(result)
@@ -1172,22 +1230,44 @@ private fun TrustedDashboard(
             Text("Last sync: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
             liveProgress?.let { progress ->
                 Text(
-                    if (syncing) {
-                        "Live transfer: ${progress.transferredItems} transferred, " +
-                            "${progress.skippedItems} skipped, ${progress.failedItems} failed"
-                    } else {
-                        "Last transfer: ${progress.transferredItems} transferred, " +
-                            "${progress.skippedItems} skipped, ${progress.failedItems} failed"
+                    when {
+                        syncing && progress.phase == SyncPhase.DISCOVERING -> "Discovering USB-visible files"
+                        syncing -> "Reading USB source"
+                        else -> "Last USB read"
                     },
                     style = MaterialTheme.typography.titleMedium,
                 )
                 progress.currentItem?.let { currentItem ->
-                    Text("Pulling: ${currentItem.substringAfterLast('/')}" )
+                    val action = if (progress.phase == SyncPhase.DISCOVERING) "Inspecting" else "Reading"
+                    Text("$action: ${currentItem.substringAfterLast('/')}")
                 }
-                if (syncing && progress.currentItemTotal <= 0) {
+                if (syncing && progress.phase == SyncPhase.DISCOVERING) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(
+                        "${progress.discoveredItems} files found · " +
+                            "${formatBytes(progress.advertisedBytes)} advertised",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
-                if (progress.currentItemTotal > 0) {
+                if (progress.phase != SyncPhase.DISCOVERING && progress.totalItems > 0) {
+                    val overallPercentage =
+                        (progress.processedItems * 100 / progress.totalItems).coerceIn(0, 100)
+                    LinearProgressIndicator(
+                        progress = {
+                            (progress.processedItems.toFloat() / progress.totalItems)
+                                .coerceIn(0f, 1f)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "$overallPercentage% overall · ${progress.processedItems} of " +
+                            "${progress.totalItems} files processed",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (progress.phase != SyncPhase.DISCOVERING && progress.currentItemTotal > 0) {
+                    val currentPercentage =
+                        (progress.currentItemBytes * 100 / progress.currentItemTotal).coerceIn(0, 100)
                     LinearProgressIndicator(
                         progress = {
                             (progress.currentItemBytes.toFloat() / progress.currentItemTotal)
@@ -1196,11 +1276,23 @@ private fun TrustedDashboard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "Current file: ${formatBytes(progress.currentItemBytes)} / " +
-                            formatBytes(progress.currentItemTotal),
+                        "$currentPercentage% of current file · " +
+                            "${formatBytes(progress.currentItemBytes)} / ${formatBytes(progress.currentItemTotal)}",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Text("Transferred: ${formatBytes(progress.bytesTransferred)}")
+                if (progress.phase != SyncPhase.DISCOVERING && progress.advertisedBytes > 0) {
+                    Text(
+                        "USB-visible source: ${progress.discoveredItems} files · " +
+                            formatBytes(progress.advertisedBytes),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(
+                    "Copied ${formatBytes(progress.bytesTransferred)} · " +
+                        "${progress.transferredItems} new · ${progress.skippedItems} skipped · " +
+                        "${progress.failedItems} failed",
+                )
             }
             mtpScanSummary?.let { scan ->
                 SourceExportReadiness(sourcePlatform, scan)
@@ -1390,14 +1482,32 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "%.1f GB".format(bytes / (1_024.0 * 1_024.0 * 1_024.0))
 }
 
+private fun identityReadStageLabel(stage: IdentityReadStage): String = when (stage) {
+    IdentityReadStage.CHECKING_PERMISSION -> "Checking Android USB authorization"
+    IdentityReadStage.READING_USB_SERIAL -> "Reading the USB device serial"
+    IdentityReadStage.OPENING_MEDIA_SESSION -> "Opening the MTP/PTP media session"
+    IdentityReadStage.READING_DEVICE_INFO -> "Reading source device information"
+    IdentityReadStage.CREATING_IDENTITY -> "Creating a stable source identity"
+    IdentityReadStage.COMPLETE -> "Source identity ready"
+}
+
 private fun buildLiveStatus(progress: SyncProgress): String {
-    val current = if (progress.currentItemTotal > 0) {
-        " Pulling ${progress.currentItemBytes}/${progress.currentItemTotal} bytes."
+    if (progress.phase == SyncPhase.DISCOVERING) {
+        return "LIVE: ${progress.discoveredItems} USB-visible files found, " +
+            "${formatBytes(progress.advertisedBytes)} advertised."
+    }
+    val processed = if (progress.totalItems > 0) {
+        " ${progress.processedItems}/${progress.totalItems} files processed."
     } else {
         ""
     }
-    return "LIVE: ${progress.transferredItems} transferred, " +
-        "${progress.skippedItems} already audited, ${progress.failedItems} failed.$current"
+    val current = if (progress.currentItemTotal > 0) {
+        " Current file ${formatBytes(progress.currentItemBytes)}/${formatBytes(progress.currentItemTotal)}."
+    } else {
+        ""
+    }
+    return "LIVE:${processed} ${progress.transferredItems} transferred, " +
+        "${progress.skippedItems} skipped, ${progress.failedItems} failed.$current"
 }
 
 private fun buildSyncCompletionStatus(result: SyncResult): String {

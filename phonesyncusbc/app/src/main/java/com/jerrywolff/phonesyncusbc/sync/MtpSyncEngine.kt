@@ -22,10 +22,23 @@ data class SyncProgress(
     val bytesTransferred: Long,
     val currentItemBytes: Long = 0,
     val currentItemTotal: Long = 0,
+    val phase: SyncPhase = SyncPhase.TRANSFERRING,
+    val discoveredItems: Int = 0,
+    val processedItems: Int = 0,
+    val totalItems: Int = 0,
+    val advertisedBytes: Long = 0,
 )
+
+enum class SyncPhase {
+    DISCOVERING,
+    TRANSFERRING,
+    COMPLETE,
+}
 
 data class MtpScanSummary(
     val scannedItems: Int = 0,
+    val processedItems: Int = 0,
+    val advertisedBytes: Long = 0,
     val visibleCategories: Set<ConsentCategory> = emptySet(),
     val downloadDirectoryVisible: Boolean = false,
     val phoneSyncDirectoryVisible: Boolean = false,
@@ -85,6 +98,8 @@ class MtpSyncEngine(
         var mediaItemsAlreadyCollected = 0
         var mediaItemsNotAuthorized = 0
         var mediaItemsFailed = 0
+        var advertisedBytes = 0L
+        var processedItems = 0
 
         val mtpSession = sourceResolver.openMtp(source.device)
         if (mtpSession == null) {
@@ -106,8 +121,39 @@ class MtpSyncEngine(
                         MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
                     )
                 }
+                val candidates = mutableListOf<MtpCandidate>()
                 walkObjects(session.device) { candidate ->
+                    candidates += candidate
                     scannedItems += 1
+                    advertisedBytes += candidate.size
+                    publishProgress(
+                        currentItem = candidate.path,
+                        transferred = transferred,
+                        skipped = skipped,
+                        failed = failed,
+                        transferredBytes = transferredBytes,
+                        phase = SyncPhase.DISCOVERING,
+                        discoveredItems = scannedItems,
+                        processedItems = processedItems,
+                        totalItems = 0,
+                        advertisedBytes = advertisedBytes,
+                        onProgress = onProgress,
+                    )
+                }
+                publishProgress(
+                    currentItem = null,
+                    transferred = transferred,
+                    skipped = skipped,
+                    failed = failed,
+                    transferredBytes = transferredBytes,
+                    phase = SyncPhase.TRANSFERRING,
+                    discoveredItems = scannedItems,
+                    processedItems = processedItems,
+                    totalItems = candidates.size,
+                    advertisedBytes = advertisedBytes,
+                    onProgress = onProgress,
+                )
+                candidates.forEach { candidate ->
                     val normalizedPath = candidate.path.replace('\\', '/').lowercase()
                     downloadDirectoryVisible = downloadDirectoryVisible ||
                         "/download/" in normalizedPath || "/downloads/" in normalizedPath
@@ -115,7 +161,21 @@ class MtpSyncEngine(
                         "/phone sync/" in normalizedPath || "/phonesync/" in normalizedPath
                     if (TransferClassifier.isProtectedPrivateDatabase(candidate.path)) {
                         skipped += 1
-                        return@walkObjects
+                        processedItems += 1
+                        publishProgress(
+                            currentItem = candidate.path,
+                            transferred = transferred,
+                            skipped = skipped,
+                            failed = failed,
+                            transferredBytes = transferredBytes,
+                            phase = SyncPhase.TRANSFERRING,
+                            discoveredItems = scannedItems,
+                            processedItems = processedItems,
+                            totalItems = candidates.size,
+                            advertisedBytes = advertisedBytes,
+                            onProgress = onProgress,
+                        )
+                        return@forEach
                     }
                     val category = TransferClassifier.classify(candidate.path)
                     if (category == ConsentCategory.PHOTOS_AND_VIDEOS) mediaItemsVisible += 1
@@ -124,7 +184,21 @@ class MtpSyncEngine(
                         if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
                             mediaItemsNotAuthorized += 1
                         }
-                        return@walkObjects
+                        processedItems += 1
+                        publishProgress(
+                            currentItem = candidate.path,
+                            transferred = transferred,
+                            skipped = skipped,
+                            failed = failed,
+                            transferredBytes = transferredBytes,
+                            phase = SyncPhase.TRANSFERRING,
+                            discoveredItems = scannedItems,
+                            processedItems = processedItems,
+                            totalItems = candidates.size,
+                            advertisedBytes = advertisedBytes,
+                            onProgress = onProgress,
+                        )
+                        return@forEach
                     }
 
                     val fingerprint = DeviceIdentity.sha256(
@@ -132,6 +206,7 @@ class MtpSyncEngine(
                     )
                     if (auditLog.wasTransferred(identity.peerId, fingerprint)) {
                         skipped += 1
+                        processedItems += 1
                         if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
                             mediaItemsAlreadyCollected += 1
                         }
@@ -141,9 +216,14 @@ class MtpSyncEngine(
                             skipped = skipped,
                             failed = failed,
                             transferredBytes = transferredBytes,
+                            phase = SyncPhase.TRANSFERRING,
+                            discoveredItems = scannedItems,
+                            processedItems = processedItems,
+                            totalItems = candidates.size,
+                            advertisedBytes = advertisedBytes,
                             onProgress = onProgress,
                         )
-                        return@walkObjects
+                        return@forEach
                     }
 
                     val transfer = runCatching {
@@ -164,6 +244,11 @@ class MtpSyncEngine(
                                     transferredBytes = transferredBytes + currentBytes,
                                     currentItemBytes = currentBytes,
                                     currentItemTotal = candidate.size,
+                                    phase = SyncPhase.TRANSFERRING,
+                                    discoveredItems = scannedItems,
+                                    processedItems = processedItems,
+                                    totalItems = candidates.size,
+                                    advertisedBytes = advertisedBytes,
                                     onProgress = onProgress,
                                 )
                             },
@@ -202,6 +287,7 @@ class MtpSyncEngine(
                             error = throwable.message ?: throwable.javaClass.simpleName,
                         )
                     }
+                    processedItems += 1
                     publishProgress(
                         currentItem = candidate.path,
                         transferred = transferred,
@@ -210,9 +296,27 @@ class MtpSyncEngine(
                         transferredBytes = transferredBytes,
                         currentItemBytes = candidate.size,
                         currentItemTotal = candidate.size,
+                        phase = SyncPhase.TRANSFERRING,
+                        discoveredItems = scannedItems,
+                        processedItems = processedItems,
+                        totalItems = candidates.size,
+                        advertisedBytes = advertisedBytes,
                         onProgress = onProgress,
                     )
                 }
+                publishProgress(
+                    currentItem = null,
+                    transferred = transferred,
+                    skipped = skipped,
+                    failed = failed,
+                    transferredBytes = transferredBytes,
+                    phase = SyncPhase.COMPLETE,
+                    discoveredItems = scannedItems,
+                    processedItems = processedItems,
+                    totalItems = candidates.size,
+                    advertisedBytes = advertisedBytes,
+                    onProgress = onProgress,
+                )
             }
             val status = if (failed == 0) SyncStatus.COMPLETED else SyncStatus.PARTIAL
             auditLog.finishSession(sessionId, status, transferred, transferredBytes)
@@ -224,6 +328,8 @@ class MtpSyncEngine(
                 bytesTransferred = transferredBytes,
                 mtpScan = MtpScanSummary(
                     scannedItems = scannedItems,
+                    processedItems = processedItems,
+                    advertisedBytes = advertisedBytes,
                     visibleCategories = visibleCategories,
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
@@ -255,6 +361,8 @@ class MtpSyncEngine(
                 error = error,
                 mtpScan = MtpScanSummary(
                     scannedItems = scannedItems,
+                    processedItems = processedItems,
+                    advertisedBytes = advertisedBytes,
                     visibleCategories = visibleCategories,
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
@@ -309,13 +417,18 @@ class MtpSyncEngine(
     }
 
     private fun publishProgress(
-        currentItem: String,
+        currentItem: String?,
         transferred: Int,
         skipped: Int,
         failed: Int,
         transferredBytes: Long,
         currentItemBytes: Long = 0,
         currentItemTotal: Long = 0,
+        phase: SyncPhase = SyncPhase.TRANSFERRING,
+        discoveredItems: Int = 0,
+        processedItems: Int = 0,
+        totalItems: Int = 0,
+        advertisedBytes: Long = 0,
         onProgress: (SyncProgress) -> Unit,
     ) {
         onProgress(
@@ -327,6 +440,11 @@ class MtpSyncEngine(
                 bytesTransferred = transferredBytes,
                 currentItemBytes = currentItemBytes,
                 currentItemTotal = currentItemTotal,
+                phase = phase,
+                discoveredItems = discoveredItems,
+                processedItems = processedItems,
+                totalItems = totalItems,
+                advertisedBytes = advertisedBytes,
             ),
         )
     }

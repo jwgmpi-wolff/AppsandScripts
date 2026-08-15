@@ -19,6 +19,21 @@ data class PeerIdentity(
     val serialAvailable: Boolean,
 )
 
+data class IdentityReadProgress(
+    val stage: IdentityReadStage,
+    val completedSteps: Int,
+    val totalSteps: Int = TOTAL_IDENTITY_READ_STEPS,
+)
+
+enum class IdentityReadStage {
+    CHECKING_PERMISSION,
+    READING_USB_SERIAL,
+    OPENING_MEDIA_SESSION,
+    READING_DEVICE_INFO,
+    CREATING_IDENTITY,
+    COMPLETE,
+}
+
 data class AttachedSource(
     val device: UsbDevice,
     val detected: DetectedSource,
@@ -62,22 +77,32 @@ class UsbSourceResolver(context: Context) {
         )
     }
 
-    fun resolveIdentity(source: AttachedSource): PeerIdentity {
+    fun resolveIdentity(
+        source: AttachedSource,
+        onProgress: (IdentityReadProgress) -> Unit = {},
+    ): PeerIdentity {
+        onProgress(IdentityReadProgress(IdentityReadStage.CHECKING_PERMISSION, 0))
         check(usbManager.hasPermission(source.device)) { "USB permission is required" }
+        onProgress(IdentityReadProgress(IdentityReadStage.READING_USB_SERIAL, 1))
         val usbSerial = runCatching { source.device.serialNumber }.getOrNull()
         val mtpSerial = if (usbSerial.isNullOrBlank()) {
             runCatching {
-                openMtp(source.device)?.use { it.device.deviceInfo?.serialNumber }
+                onProgress(IdentityReadProgress(IdentityReadStage.OPENING_MEDIA_SESSION, 2))
+                openMtp(source.device)?.use {
+                    onProgress(IdentityReadProgress(IdentityReadStage.READING_DEVICE_INFO, 3))
+                    it.device.deviceInfo?.serialNumber
+                }
             }.getOrNull()
         } else {
             null
         }
+        onProgress(IdentityReadProgress(IdentityReadStage.CREATING_IDENTITY, 4))
         val stableSerial = usbSerial?.takeIf(String::isNotBlank)
             ?: mtpSerial?.takeIf(String::isNotBlank)
         val serialMaterial = stableSerial
             ?: "session:${source.device.deviceId}:${source.device.deviceName}"
         val platform = source.detected.platform.name
-        return PeerIdentity(
+        val identity = PeerIdentity(
             peerId = DeviceIdentity.peerId(
                 platform = platform,
                 vendorId = source.device.vendorId,
@@ -91,6 +116,8 @@ class UsbSourceResolver(context: Context) {
             ),
             serialAvailable = stableSerial != null,
         )
+        onProgress(IdentityReadProgress(IdentityReadStage.COMPLETE, TOTAL_IDENTITY_READ_STEPS))
+        return identity
     }
 
     fun openMtp(device: UsbDevice): MtpSession? {
@@ -139,3 +166,5 @@ class UsbSourceResolver(context: Context) {
         )
     }
 }
+
+private const val TOTAL_IDENTITY_READ_STEPS = 5
