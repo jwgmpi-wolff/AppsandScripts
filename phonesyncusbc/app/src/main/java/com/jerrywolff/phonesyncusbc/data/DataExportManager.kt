@@ -52,6 +52,46 @@ data class ArchiveResult(
 )
 
 class DataExportManager(private val context: Context) {
+    fun cleanupInterruptedUploadArchives(): Int {
+        return cleanupUploadArchives(pendingOnly = true)
+    }
+
+    fun cleanupObsoleteUploadArchives(): Int {
+        return cleanupUploadArchives(pendingOnly = false)
+    }
+
+    private fun cleanupUploadArchives(pendingOnly: Boolean): Int {
+        val collection = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val selection = buildString {
+            append("${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ")
+            append("${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?")
+            if (pendingOnly) {
+                append(" AND ${android.provider.MediaStore.MediaColumns.IS_PENDING} = 1")
+            }
+        }
+        val ids = buildList {
+            context.contentResolver.query(
+                collection,
+                arrayOf(android.provider.MediaStore.MediaColumns._ID),
+                selection,
+                arrayOf(
+                    "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads%",
+                    "PhoneSyncBackup-%",
+                ),
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) add(cursor.getLong(0))
+            }
+        }
+        return ids.count { id ->
+            context.contentResolver.delete(
+                android.content.ContentUris.withAppendedId(collection, id),
+                null,
+                null,
+            ) > 0
+        }
+    }
+
     fun backupToDownloads(
         entries: List<AuditEntry>,
         onProgress: (ExportProgress) -> Unit = {},

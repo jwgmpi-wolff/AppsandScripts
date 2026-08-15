@@ -84,13 +84,13 @@ Windows Phone exposes shared media through MTP but does not publish its private 
 - Any writable folder exposed by Android's system picker, including local, SD/USB, and supporting document providers
 - OneDrive, Google Drive, or another installed app through Android's upload chooser
 
-The **Backup** tab keeps overall item progress, current-file byte progress, processed bytes, and the latest result together. For multi-item provider uploads, Phone Sync creates one ZIP64 package with a SHA-256 manifest before opening the provider. Provider upload completion is controlled by the selected provider app.
+The **Backup** tab keeps overall item progress, current-file byte progress, processed bytes, and the latest result together. OneDrive, Google Drive, and other compatible apps receive the original verified files through a direct multi-file handoff, avoiding a second local copy. If an app rejects multi-file sharing, Phone Sync falls back to one ZIP64 package with a SHA-256 manifest under **Downloads / Phone Sync Uploads**. Provider upload completion is controlled by the selected provider app.
 
 When a USB source is connected, its destination panel is scoped to that source's verified recovery results. It does not mix in files from the Android acquisition host or another USB peer.
 
 The consolidated **Backup** tab follows the connected external source, or the most recently recovered external source when disconnected. Legacy host-side rows from older versions remain quarantined and are excluded from counts, selection, manifests, and provider uploads.
 
-The selected destination persists across app restarts. Phone Downloads and writable folder targets receive files directly. OneDrive, Google Drive, and other app targets prepare one package and open that provider from the primary push button; choose the provider folder and confirm Upload there.
+The selected destination persists across app restarts. Phone Downloads and writable folder targets receive files directly. OneDrive, Google Drive, and other app targets open from the primary push button with the verified files; choose the provider folder and confirm Upload there. Version 2.1.1 removes obsolete Phone Sync-generated staging ZIPs once during upgrade; later startups remove only interrupted hidden staging archives.
 
 ## Permissions
 

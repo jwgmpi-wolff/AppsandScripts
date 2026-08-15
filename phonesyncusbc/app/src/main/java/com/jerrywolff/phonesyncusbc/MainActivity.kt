@@ -454,22 +454,37 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         messageSection = backupWorkflowSection
     }
 
+    fun providerUploadIntent(
+        uris: List<Uri>,
+        packageName: String?,
+    ): Intent {
+        val mimeTypes = uris.mapNotNull(context.contentResolver::getType).distinct()
+        return Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
+            type = mimeTypes.singleOrNull() ?: "*/*"
+            packageName?.let(::setPackage)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = ClipData.newRawUri("Phone Sync recovery", uris.first()).apply {
+                uris.drop(1).forEach { addItem(ClipData.Item(it)) }
+            }
+            if (uris.size == 1) {
+                putExtra(Intent.EXTRA_STREAM, uris.first())
+            } else {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            }
+            if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync recovery")
+        }
+    }
+
     fun launchProviderUpload(
-        uri: Uri,
+        uris: List<Uri>,
         packageName: String?,
         label: String,
         itemCount: Int,
         ownerSection: AppSection,
-    ) {
-        val uploadIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/octet-stream"
-            packageName?.let(::setPackage)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            clipData = ClipData.newRawUri("Phone Sync backup", uri)
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync backup")
-        }
-        runCatching {
+    ): Boolean {
+        val uploadIntent = providerUploadIntent(uris, packageName)
+        val launchResult = runCatching {
             context.startActivity(
                 if (packageName == null) {
                     Intent.createChooser(uploadIntent, "Upload backup to")
@@ -479,18 +494,16 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
         }.onSuccess {
             val nextStep = if (packageName == null) {
-                "Choose an app, select its destination, and confirm the upload."
+                "Choose an app and destination, then confirm Upload. The selected app controls cloud progress."
             } else {
-                "In $label, choose the destination folder and tap Upload."
+                "In $label, choose the destination folder and tap Upload. $label controls cloud progress."
             }
-            message = "Package prepared with $itemCount items. $nextStep"
+            message = "$itemCount recovered item(s) handed directly to $label. $nextStep"
             messageSection = ownerSection
             updateBackupWorkflowStatus(ownerSection, message.orEmpty())
-            backupActivity = backupActivity.copy(
-                title = "Package ready for $label",
+            backupActivity = BackupActivityUi(
+                title = "$label upload handoff",
                 status = message.orEmpty(),
-                completedItems = itemCount,
-                totalItems = itemCount,
                 running = false,
                 failed = false,
             )
@@ -504,6 +517,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 failed = true,
             )
         }
+        return launchResult.isSuccess
     }
 
     fun uploadBackupEntries(
@@ -518,28 +532,34 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             updateBackupWorkflowStatus(ownerSection, "Select at least one available item before uploading.")
             return
         }
+        val directUris = entries.mapNotNull { it.destination?.let(Uri::parse) }
+        if (directUris.size != entries.size) {
+            updateBackupWorkflowStatus(ownerSection, "One or more selected recovery items are no longer available.")
+            return
+        }
+        val directIntent = providerUploadIntent(directUris, packageName)
+        if (directIntent.resolveActivity(context.packageManager) != null) {
+            backupActivity = BackupActivityUi(
+                title = "$label upload handoff",
+                status = "Opening $label with ${entries.size} verified recovery item(s)...",
+                running = true,
+            )
+            if (launchProviderUpload(directUris, packageName, label, entries.size, ownerSection)) return
+        }
         if (entries.size == 1) {
-            val uri = entries.first().destination?.let(Uri::parse)
-            if (uri == null) {
-                updateBackupWorkflowStatus(ownerSection, "The selected item is no longer available.")
-            } else {
-                backupActivity = BackupActivityUi(
-                    title = "$label upload",
-                    status = "Opening $label with one item...",
-                    completedItems = 1,
-                    totalItems = 1,
-                    running = true,
-                )
-                launchProviderUpload(uri, packageName, label, 1, ownerSection)
-            }
+            updateBackupWorkflowStatus(ownerSection, "$label cannot accept the selected recovery item.")
             return
         }
 
         backingUp = true
-        updateBackupWorkflowStatus(ownerSection, "Preparing one upload package for ${entries.size} items...")
+        val stagingStatus =
+            "$label cannot accept multiple files directly. Building a compatibility ZIP in " +
+                "Downloads / Phone Sync Uploads. " +
+                "$label upload has not started yet."
+        updateBackupWorkflowStatus(ownerSection, stagingStatus)
         backupActivity = BackupActivityUi(
-            title = "Prepare $label upload package",
-            status = "Preparing one upload package for ${entries.size} items...",
+            title = "Local staging before $label",
+            status = stagingStatus,
             totalItems = entries.size,
             running = true,
         )
@@ -548,10 +568,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 DataExportManager(context).createUploadArchive(entries) { progress ->
                     scope.launch(Dispatchers.Main.immediate) {
                         val progressStatus =
-                            "Preparing upload: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
+                            "Local ZIP: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}. " +
+                                "$label upload starts after all items finish and you confirm Upload."
                         updateBackupWorkflowStatus(ownerSection, progressStatus)
                         backupActivity = BackupActivityUi(
-                            title = "Prepare $label upload package",
+                            title = "Local staging before $label",
                             status = progressStatus,
                             completedItems = progress.completedItems,
                             totalItems = progress.totalItems,
@@ -577,16 +598,22 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 )
             } else {
                 val readyStatus =
-                    "Upload package ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}."
+                    "Local ZIP ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}. Opening $label."
                 updateBackupWorkflowStatus(ownerSection, readyStatus)
                 backupActivity = BackupActivityUi(
-                    title = "Prepare $label upload package",
+                    title = "Local staging complete",
                     status = readyStatus,
                     completedItems = result.archivedItems,
                     totalItems = result.archivedItems,
                     bytesProcessed = result.archiveBytes,
                 )
-                launchProviderUpload(result.uri, packageName, label, result.archivedItems, ownerSection)
+                launchProviderUpload(
+                    listOf(result.uri),
+                    packageName,
+                    label,
+                    result.archivedItems,
+                    ownerSection,
+                )
             }
         }
     }
@@ -780,6 +807,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                     backingUp = backingUp,
                     selectedItemCount = selectedBackupIds.size,
+                    selectedBytes = backupEntries
+                        .filter { it.id in selectedBackupIds }
+                        .sumOf { it.bytesTransferred },
                     passwordVaultItemCount = backupEntries.count {
                         it.id in selectedBackupIds && it.category == ConsentCategory.PASSWORD_EXPORTS
                     },
@@ -1119,6 +1149,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 },
                                 backingUp = backingUp,
                                 selectedItemCount = selectedUsbBackupIds.size,
+                                selectedBytes = usbCollectedEntries
+                                    .filter { it.id in selectedUsbBackupIds }
+                                    .sumOf { it.bytesTransferred },
                                 passwordVaultItemCount = usbCollectedEntries.count {
                                     it.id in selectedUsbBackupIds &&
                                         it.category == ConsentCategory.PASSWORD_EXPORTS
@@ -1793,6 +1826,7 @@ private fun BackupPanel(
     onChooseTarget: () -> Unit,
     backingUp: Boolean,
     selectedItemCount: Int,
+    selectedBytes: Long,
     passwordVaultItemCount: Int,
     targetType: BackupTargetType,
     targetName: String?,
@@ -1808,7 +1842,7 @@ private fun BackupPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
             Text("1. Data", style = MaterialTheme.typography.titleSmall)
-            Text("$selectedItemCount items selected")
+            Text("$selectedItemCount items selected (${formatBytes(selectedBytes)})")
             if (passwordVaultItemCount > 0) {
                 Text(
                     "$passwordVaultItemCount sensitive password artifact(s) selected. Protect the destination account. " +
@@ -1832,11 +1866,14 @@ private fun BackupPanel(
                     BackupTargetType.DOCUMENT_TREE ->
                         "The backup will be written directly to the selected folder."
                     BackupTargetType.ONEDRIVE ->
-                        "Next, Phone Sync opens OneDrive. Choose the folder there and tap Upload."
+                        "Phone Sync hands verified files directly to OneDrive. Choose the OneDrive folder and tap Upload; " +
+                            "OneDrive then controls transfer progress. A local ZIP is used only if OneDrive rejects multi-file sharing."
                     BackupTargetType.GOOGLE_DRIVE ->
-                        "Next, Phone Sync opens Google Drive. Choose the folder there and confirm the upload."
+                        "Phone Sync hands verified files directly to Google Drive. Choose the folder and confirm Upload; " +
+                            "a local ZIP is used only if Drive rejects multi-file sharing."
                     BackupTargetType.OTHER_APP ->
-                        "Next, choose an installed app, its destination, and confirm the upload."
+                        "Phone Sync first tries a direct multi-file handoff. It builds a local compatibility ZIP only when " +
+                            "the selected app cannot accept multiple files."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
