@@ -7,7 +7,7 @@ import org.junit.Test
 class SourceOwnershipTest {
     @Test
     fun `collector exports are not external source data`() {
-        assertFalse(isExternalSourcePeer(LOCAL_ANDROID_PEER_ID))
+        assertFalse(isExternalSourcePeer("local-android"))
     }
 
     @Test

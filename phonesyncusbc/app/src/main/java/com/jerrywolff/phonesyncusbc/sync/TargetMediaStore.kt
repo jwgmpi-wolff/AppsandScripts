@@ -16,6 +16,21 @@ data class TargetWriteResult(
     val bytesWritten: Long,
 )
 
+enum class MtpReadMode {
+    PARTIAL_64,
+    PARTIAL_STANDARD,
+    FULL_OBJECT,
+}
+
+fun mtpReadPlan(
+    supportsPartial64: Boolean,
+    supportsPartialStandard: Boolean,
+): List<MtpReadMode> = buildList {
+    if (supportsPartial64) add(MtpReadMode.PARTIAL_64)
+    if (supportsPartialStandard) add(MtpReadMode.PARTIAL_STANDARD)
+    add(MtpReadMode.FULL_OBJECT)
+}
+
 class TargetMediaStore(private val context: Context) {
     fun importMtpObject(
         mtpDevice: MtpDevice,
@@ -34,25 +49,35 @@ class TargetMediaStore(private val context: Context) {
             modifiedAtEpochMillis = modifiedAtEpochMillis,
             mimeType = mimeType(displayName, category),
         ) { destination ->
-            val supportsPartial64 = runCatching {
-                mtpDevice.deviceInfo?.isOperationSupported(
-                    MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
-                ) == true
-            }.getOrDefault(false)
-            val partialFailure = if (supportsPartial64 && expectedBytes > 0) {
+            val deviceInfo = runCatching { mtpDevice.deviceInfo }.getOrNull()
+            val readPlan = mtpReadPlan(
+                supportsPartial64 =
+                    deviceInfo?.isOperationSupported(MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64) == true,
+                supportsPartialStandard =
+                    deviceInfo?.isOperationSupported(MtpConstants.OPERATION_GET_PARTIAL_OBJECT) == true,
+            )
+            val partialFailures = mutableListOf<Throwable>()
+            val partialSucceeded = expectedBytes > 0 && readPlan
+                .takeWhile { it != MtpReadMode.FULL_OBJECT }
+                .any { mode ->
                 runCatching {
                     importPartialObject(
                         mtpDevice = mtpDevice,
                         objectHandle = objectHandle,
                         destination = destination,
                         expectedBytes = expectedBytes,
+                        mode = mode,
                         onBytesTransferred = onBytesTransferred,
                     )
-                }.exceptionOrNull()
-            } else {
-                null
+                }.fold(
+                    onSuccess = { true },
+                    onFailure = { throwable ->
+                        partialFailures += throwable
+                        false
+                    },
+                )
             }
-            if (supportsPartial64 && expectedBytes > 0 && partialFailure == null) {
+            if (partialSucceeded) {
                 expectedBytes
             } else {
                 importWholeObject(
@@ -60,7 +85,7 @@ class TargetMediaStore(private val context: Context) {
                     objectHandle = objectHandle,
                     destination = destination,
                     expectedBytes = expectedBytes,
-                    partialFailure = partialFailure,
+                    partialFailure = partialFailures.lastOrNull(),
                     onBytesTransferred = onBytesTransferred,
                 )
             }
@@ -72,6 +97,7 @@ class TargetMediaStore(private val context: Context) {
         objectHandle: Int,
         destination: Uri,
         expectedBytes: Long,
+        mode: MtpReadMode,
         onBytesTransferred: (Long) -> Unit,
     ) {
         context.contentResolver.openOutputStream(destination, "w").use { output ->
@@ -80,7 +106,13 @@ class TargetMediaStore(private val context: Context) {
             var offset = 0L
             while (offset < expectedBytes) {
                 val requested = minOf(buffer.size.toLong(), expectedBytes - offset)
-                val read = mtpDevice.getPartialObject64(objectHandle, offset, requested, buffer)
+                val read = when (mode) {
+                    MtpReadMode.PARTIAL_64 ->
+                        mtpDevice.getPartialObject64(objectHandle, offset, requested, buffer)
+                    MtpReadMode.PARTIAL_STANDARD ->
+                        mtpDevice.getPartialObject(objectHandle, offset, requested, buffer)
+                    MtpReadMode.FULL_OBJECT -> error("Full-object mode cannot be used for partial reads.")
+                }
                 check(read > 0) { "The source phone stopped transferring this item." }
                 val bytesRead = read.coerceAtMost(buffer.size.toLong()).toInt()
                 output.write(buffer, 0, bytesRead)
@@ -205,6 +237,7 @@ class TargetMediaStore(private val context: Context) {
 
     private fun mimeType(displayName: String, category: ConsentCategory): String {
         if (category == ConsentCategory.CONTACTS) return "text/vcard"
+        if (category == ConsentCategory.PASSWORD_EXPORTS) return "application/octet-stream"
         val extension = displayName.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: "application/octet-stream"
@@ -217,4 +250,5 @@ class TargetMediaStore(private val context: Context) {
     private companion object {
         const val MTP_CHUNK_BYTES = 1024 * 1024
     }
+
 }

@@ -375,6 +375,7 @@ class DataExportManager(private val context: Context) {
 
     fun mimeType(entry: AuditEntry): String {
         if (entry.category == ConsentCategory.CONTACTS) return "text/vcard"
+        if (entry.category == ConsentCategory.PASSWORD_EXPORTS) return "application/octet-stream"
         val extension = entry.sourceItem.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: "application/octet-stream"

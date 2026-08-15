@@ -30,7 +30,13 @@ data class MtpScanSummary(
     val downloadDirectoryVisible: Boolean = false,
     val phoneSyncDirectoryVisible: Boolean = false,
     val fullObjectSupported: Boolean? = null,
+    val partialObjectSupported: Boolean? = null,
     val partialObject64Supported: Boolean? = null,
+    val mediaItemsVisible: Int = 0,
+    val mediaItemsTransferred: Int = 0,
+    val mediaItemsAlreadyCollected: Int = 0,
+    val mediaItemsNotAuthorized: Int = 0,
+    val mediaItemsFailed: Int = 0,
 )
 
 data class SyncResult(
@@ -72,7 +78,13 @@ class MtpSyncEngine(
         var downloadDirectoryVisible = false
         var phoneSyncDirectoryVisible = false
         var fullObjectSupported: Boolean? = null
+        var partialObjectSupported: Boolean? = null
         var partialObject64Supported: Boolean? = null
+        var mediaItemsVisible = 0
+        var mediaItemsTransferred = 0
+        var mediaItemsAlreadyCollected = 0
+        var mediaItemsNotAuthorized = 0
+        var mediaItemsFailed = 0
 
         val mtpSession = sourceResolver.openMtp(source.device)
         if (mtpSession == null) {
@@ -86,6 +98,9 @@ class MtpSyncEngine(
                 runCatching { session.device.deviceInfo }.getOrNull()?.let { deviceInfo ->
                     fullObjectSupported = deviceInfo.isOperationSupported(
                         MtpConstants.OPERATION_GET_OBJECT,
+                    )
+                    partialObjectSupported = deviceInfo.isOperationSupported(
+                        MtpConstants.OPERATION_GET_PARTIAL_OBJECT,
                     )
                     partialObject64Supported = deviceInfo.isOperationSupported(
                         MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
@@ -103,14 +118,23 @@ class MtpSyncEngine(
                         return@walkObjects
                     }
                     val category = TransferClassifier.classify(candidate.path)
+                    if (category == ConsentCategory.PHOTOS_AND_VIDEOS) mediaItemsVisible += 1
                     visibleCategories += category
-                    if (category !in authorizedCategories) return@walkObjects
+                    if (category !in authorizedCategories) {
+                        if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                            mediaItemsNotAuthorized += 1
+                        }
+                        return@walkObjects
+                    }
 
                     val fingerprint = DeviceIdentity.sha256(
                         "${identity.peerId}|${candidate.path}|${candidate.size}|${candidate.modifiedAtEpochMillis}",
                     )
                     if (auditLog.wasTransferred(identity.peerId, fingerprint)) {
                         skipped += 1
+                        if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                            mediaItemsAlreadyCollected += 1
+                        }
                         publishProgress(
                             currentItem = candidate.path,
                             transferred = transferred,
@@ -147,6 +171,9 @@ class MtpSyncEngine(
                     }
                     transfer.onSuccess { result ->
                         transferred += 1
+                        if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                            mediaItemsTransferred += 1
+                        }
                         transferredBytes += result.bytesWritten
                         auditLog.recordTransfer(
                             sessionId = sessionId,
@@ -160,6 +187,9 @@ class MtpSyncEngine(
                         )
                     }.onFailure { throwable ->
                         failed += 1
+                        if (category == ConsentCategory.PHOTOS_AND_VIDEOS) {
+                            mediaItemsFailed += 1
+                        }
                         auditLog.recordTransfer(
                             sessionId = sessionId,
                             peerId = identity.peerId,
@@ -198,7 +228,13 @@ class MtpSyncEngine(
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
                     fullObjectSupported = fullObjectSupported,
+                    partialObjectSupported = partialObjectSupported,
                     partialObject64Supported = partialObject64Supported,
+                    mediaItemsVisible = mediaItemsVisible,
+                    mediaItemsTransferred = mediaItemsTransferred,
+                    mediaItemsAlreadyCollected = mediaItemsAlreadyCollected,
+                    mediaItemsNotAuthorized = mediaItemsNotAuthorized,
+                    mediaItemsFailed = mediaItemsFailed,
                 ),
             )
         } catch (throwable: Throwable) {
@@ -223,7 +259,13 @@ class MtpSyncEngine(
                     downloadDirectoryVisible = downloadDirectoryVisible,
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible,
                     fullObjectSupported = fullObjectSupported,
+                    partialObjectSupported = partialObjectSupported,
                     partialObject64Supported = partialObject64Supported,
+                    mediaItemsVisible = mediaItemsVisible,
+                    mediaItemsTransferred = mediaItemsTransferred,
+                    mediaItemsAlreadyCollected = mediaItemsAlreadyCollected,
+                    mediaItemsNotAuthorized = mediaItemsNotAuthorized,
+                    mediaItemsFailed = mediaItemsFailed,
                 ),
             )
         }

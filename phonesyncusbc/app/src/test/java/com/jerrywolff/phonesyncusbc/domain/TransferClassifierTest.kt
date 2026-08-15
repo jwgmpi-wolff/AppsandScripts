@@ -61,6 +61,26 @@ class TransferClassifierTest {
             TransferClassifier.classify("/Download/Phone Sync/This Android/email_exports/account-mail.mbox"),
         )
         assertEquals(
+            ConsentCategory.PASSWORD_EXPORTS,
+            TransferClassifier.classify("/Download/Phone Sync/This Android/password_exports/passwords.kdbx"),
+        )
+        assertEquals(
+            ConsentCategory.PASSWORD_EXPORTS,
+            TransferClassifier.classify("/Downloads/bitwarden_encrypted_export.json"),
+        )
+        assertEquals(
+            ConsentCategory.PASSWORD_EXPORTS,
+            TransferClassifier.classify("/PhoneSync/Exports/Passwords/vault.sqlite"),
+        )
+        assertEquals(
+            ConsentCategory.VOICEMAIL_EXPORTS,
+            TransferClassifier.classify("/Download/Phone Sync/Voicemails/voicemail-20260814.m4a"),
+        )
+        assertEquals(
+            ConsentCategory.VOICEMAIL_EXPORTS,
+            TransferClassifier.classify("/Downloads/visual-voicemail-export.zip"),
+        )
+        assertEquals(
             ConsentCategory.CALENDAR,
             TransferClassifier.classify("/Download/Phone Sync/This Android/calendar/calendar-20260814.json"),
         )
@@ -80,6 +100,29 @@ class TransferClassifierTest {
         assertFalse(
             TransferClassifier.isProtectedPrivateDatabase(
                 "/PhoneSync/Exports/Chat/conversation.zip",
+            ),
+        )
+        assertEquals(
+            ConsentCategory.DOCUMENTS,
+            TransferClassifier.classify("/Downloads/accounts.csv"),
+        )
+        assertEquals(
+            ConsentCategory.DOCUMENTS,
+            TransferClassifier.classify("/Music/meeting.m4a"),
+        )
+        assertTrue(
+            TransferClassifier.isProtectedPrivateDatabase(
+                "/Android/data/com.keepass/database.kdbx",
+            ),
+        )
+        assertTrue(
+            TransferClassifier.isProtectedPrivateDatabase(
+                "/Android/data/com.bitwarden/files/vault.json",
+            ),
+        )
+        assertTrue(
+            TransferClassifier.isProtectedPrivateDatabase(
+                "/Android/data/com.android.dialer/files/voicemail-message.m4a",
             ),
         )
     }

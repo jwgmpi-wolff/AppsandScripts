@@ -3,6 +3,21 @@ package com.jerrywolff.phonesyncusbc.domain
 object TransferClassifier {
     private val imageExtensions = setOf("bmp", "dng", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp")
     private val videoExtensions = setOf("3g2", "3gp", "avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "webm", "wmv")
+    private val passwordExportMarkers = listOf(
+        "/password/",
+        "/passwords/",
+        "/password_exports/",
+        "/password-exports/",
+        "keepass",
+        "bitwarden",
+        "1password",
+        "lastpass",
+        "dashlane",
+        "protonpass",
+        "enpass",
+        "passwordsafe",
+        "password-vault",
+    )
 
     fun classify(path: String): ConsentCategory {
         val normalizedPath = path.replace('\\', '/').lowercase()
@@ -14,6 +29,8 @@ object TransferClassifier {
             isSmsExport(normalizedPath, fileName) -> ConsentCategory.SMS_EXPORTS
             isCallLogExport(normalizedPath, fileName) -> ConsentCategory.CALL_LOGS
             isCalendarExport(normalizedPath, fileName) -> ConsentCategory.CALENDAR
+            isPasswordExport(normalizedPath, fileName) -> ConsentCategory.PASSWORD_EXPORTS
+            isVoicemailExport(normalizedPath, fileName) -> ConsentCategory.VOICEMAIL_EXPORTS
             isChatExport(normalizedPath, fileName) -> ConsentCategory.CHAT_EXPORTS
             isEmailExport(normalizedPath, fileName) -> ConsentCategory.EMAIL_EXPORTS
             isNotificationExport(normalizedPath, fileName) -> ConsentCategory.NOTIFICATION_EXPORTS
@@ -42,6 +59,48 @@ object TransferClassifier {
         return (
             "/calendar/" in path || "/calendars/" in path || fileName.startsWith("calendar-")
             ) && fileName.substringAfterLast('.', "") in setOf("json", "xml", "csv", "txt", "html", "ics", "ical", "zip")
+    }
+
+    private fun isPasswordExport(path: String, fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "")
+        if (extension in setOf("kdb", "kdbx", "psafe3", "enpassbackup", "1pux")) return true
+        val passwordExportName = passwordExportMarkers.any { it in path || it in fileName }
+        return passwordExportName && extension in setOf(
+            "json",
+            "csv",
+            "xml",
+            "zip",
+            "db",
+            "sqlite",
+            "sqlite3",
+        )
+    }
+
+    private fun isVoicemailExport(path: String, fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "")
+        val voicemailName = listOf(
+            "/voicemail/",
+            "/voicemails/",
+            "/voicemail_exports/",
+            "/voicemail-exports/",
+            "visual-voicemail",
+            "visual_voicemail",
+            "voicemail-",
+            "voicemail_",
+        ).any { it in path || it in fileName }
+        return voicemailName && extension in setOf(
+            "3gp",
+            "aac",
+            "amr",
+            "m4a",
+            "mp3",
+            "ogg",
+            "opus",
+            "wav",
+            "json",
+            "xml",
+            "zip",
+        )
     }
 
     private fun isChatExport(path: String, fileName: String): Boolean {
@@ -75,6 +134,19 @@ object TransferClassifier {
             "/data/data/",
             "/private/var/mobile/containers/",
         ).any(normalizedPath::contains)
-        return privateLocation && extension in setOf("db", "sqlite", "sqlite3")
+        val privatePasswordStore = passwordExportMarkers.any(normalizedPath::contains)
+        val privateVoicemailStore = listOf("voicemail", "dialer", "telecom").any(normalizedPath::contains)
+        return privateLocation && (
+            privatePasswordStore || privateVoicemailStore || extension in setOf(
+                "db",
+                "sqlite",
+                "sqlite3",
+                "kdb",
+                "kdbx",
+                "psafe3",
+                "enpassbackup",
+                "1pux",
+            )
+        )
     }
 }

@@ -97,11 +97,6 @@ object SourceCapabilityPolicy {
                     "Calendar events exposed by the USB source as an export file",
                 ),
                 CategoryCapability(
-                    ConsentCategory.SELECTED_FOLDERS,
-                    AccessMode.SAF,
-                    "Folders selected with Android's system file picker",
-                ),
-                CategoryCapability(
                     ConsentCategory.SMS_EXPORTS,
                     AccessMode.PORTABLE_EXPORT,
                     "SMS/MMS exposed by the USB source as a Phone Sync or app export",
@@ -115,6 +110,16 @@ object SourceCapabilityPolicy {
                     ConsentCategory.EMAIL_EXPORTS,
                     AccessMode.PORTABLE_EXPORT,
                     "User-created mail exports such as .eml or .mbox files",
+                ),
+                CategoryCapability(
+                    ConsentCategory.PASSWORD_EXPORTS,
+                    AccessMode.PORTABLE_EXPORT,
+                    "Owner-created password-manager vault exports such as encrypted .kdbx files",
+                ),
+                CategoryCapability(
+                    ConsentCategory.VOICEMAIL_EXPORTS,
+                    AccessMode.PORTABLE_EXPORT,
+                    "Voicemail audio or visual-voicemail exports exposed by the source",
                 ),
                 CategoryCapability(
                     ConsentCategory.NOTIFICATION_EXPORTS,
@@ -133,7 +138,7 @@ object SourceCapabilityPolicy {
         ProtectedSurfacePolicy(
             ProtectedSurface.SMS_DATABASE,
             supported = false,
-            alternative = "Use Android's official SMS provider locally or import a source export file.",
+            alternative = "Create an export on the external source and place it in USB-visible storage.",
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.CHAT_APPLICATION_DATABASE,
@@ -152,8 +157,8 @@ object SourceCapabilityPolicy {
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.LIVE_NOTIFICATION_CONTENT,
-            supported = true,
-            alternative = "Approve Android notification-listener access for active and future local notifications.",
+            supported = false,
+            alternative = "Export notifications on the external source into USB-visible storage.",
         ),
         ProtectedSurfacePolicy(
             ProtectedSurface.ACCESSIBILITY_SCRAPING,

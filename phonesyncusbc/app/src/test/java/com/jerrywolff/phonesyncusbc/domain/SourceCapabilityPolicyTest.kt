@@ -38,6 +38,14 @@ class SourceCapabilityPolicyTest {
         assertEquals(AccessMode.PORTABLE_EXPORT, capabilities.modeFor(ConsentCategory.CALENDAR))
         assertEquals(
             AccessMode.PORTABLE_EXPORT,
+            capabilities.modeFor(ConsentCategory.PASSWORD_EXPORTS),
+        )
+        assertEquals(
+            AccessMode.PORTABLE_EXPORT,
+            capabilities.modeFor(ConsentCategory.VOICEMAIL_EXPORTS),
+        )
+        assertEquals(
+            AccessMode.PORTABLE_EXPORT,
             capabilities.modeFor(ConsentCategory.NOTIFICATION_EXPORTS),
         )
         assertFalse(ConsentCategory.CLOUD_ACCOUNTS in capabilities.supportedCategories)
@@ -69,13 +77,13 @@ class SourceCapabilityPolicyTest {
     }
 
     @Test
-    fun `private app data and accessibility scraping stay disabled while notification listener is supported`() {
+    fun `private app data notification capture and accessibility scraping stay disabled`() {
         val policies = SourceCapabilityPolicy.forSource(
             DetectedSource(SourcePlatform.ANDROID, SourceFamily.ANDROID_PHONE, "Android phone"),
         ).protectedSurfaces
 
         assertTrue(policies.isNotEmpty())
-        assertTrue(policies.first { it.surface == ProtectedSurface.LIVE_NOTIFICATION_CONTENT }.supported)
+        assertFalse(policies.first { it.surface == ProtectedSurface.LIVE_NOTIFICATION_CONTENT }.supported)
         assertFalse(policies.first { it.surface == ProtectedSurface.SMS_DATABASE }.supported)
         assertFalse(policies.first { it.surface == ProtectedSurface.CHAT_APPLICATION_DATABASE }.supported)
         assertFalse(policies.first { it.surface == ProtectedSurface.EMAIL_APPLICATION_DATABASE }.supported)

@@ -12,6 +12,8 @@ enum class ConsentCategory {
     CHAT_EXPORTS,
     EMAIL_EXPORTS,
     NOTIFICATION_EXPORTS,
+    PASSWORD_EXPORTS,
+    VOICEMAIL_EXPORTS,
 }
 
 data class TrustRecord(

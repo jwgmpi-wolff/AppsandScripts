@@ -6,9 +6,9 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 
-const val LOCAL_ANDROID_PEER_ID = "local-android"
+private const val LEGACY_COLLECTOR_PEER_ID = "local-android"
 
-fun isExternalSourcePeer(peerId: String): Boolean = peerId != LOCAL_ANDROID_PEER_ID
+fun isExternalSourcePeer(peerId: String): Boolean = peerId != LEGACY_COLLECTOR_PEER_ID
 
 enum class SyncStatus {
     RUNNING,
@@ -271,7 +271,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
             "transfers",
             arrayOf("peer_id"),
             "peer_id != ? AND status = ? AND destination IS NOT NULL",
-            arrayOf(LOCAL_ANDROID_PEER_ID, TransferStatus.COMPLETED.name),
+            arrayOf(LEGACY_COLLECTOR_PEER_ID, TransferStatus.COMPLETED.name),
             null,
             null,
             "transferred_at DESC",
