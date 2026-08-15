@@ -10,6 +10,9 @@ captures/
 .cxx/
 *.jks
 *.keystore
+*.p12
+*.pfx
+*.key
 keystore.properties
 secrets.properties
 *.log

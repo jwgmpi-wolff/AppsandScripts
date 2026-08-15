@@ -6,6 +6,21 @@ Android USB host for consent-based, external-device-only phone collection and ba
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
+## Trusted Repository APK
+
+The repository pins the published APK's SHA-256, signing-certificate SHA-256, application ID, and version in [the APK trust manifest](releases/PhoneSyncUSB-C-debug.apk.trust.json). Verify a downloaded APK from PowerShell before installing it:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\scripts\verify_trusted_apk.ps1 `
+	-ApkPath .\releases\PhoneSyncUSB-C-debug.apk `
+	-TrustManifestPath .\releases\PhoneSyncUSB-C-debug.apk.trust.json
+```
+
+`pushDebugToDevice` performs the same verification before installation, pulls the installed APK back from every device, and verifies it again. Any checksum, signer, package ID, or version mismatch stops the install workflow. Signing keystores and passwords remain outside Git through `.gitignore`.
+
+Android does not treat GitHub as an app store, so manual downloads still require the user to approve **Install unknown apps** for the browser or file manager. The repository cannot bypass that Android security prompt.
+
 ## Workflow
 
 1. Open **USB Source**, connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable, and approve Android's USB prompt.
@@ -72,6 +87,8 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat pushDebugToDevice
 ```
 
-The task assembles the debug APK every time and installs it on every authorized ADB device. Installation uses `adb install -r`, so application data, trusted-device state, and audit history are preserved. The task fails when no authorized device is connected.
+The task assembles the debug APK, verifies it against the repository trust manifest, and installs it on every authorized ADB device. Installation uses `adb install -r`, so application data, trusted-device state, and audit history are preserved. The installed package is pulled back and verified before the task succeeds. The task fails when no authorized device is connected or any trust check differs.
+
+For an intentional new release, update the APK and trust manifest together only after validating the build and confirming the expected signer certificate. Never commit a signing keystore or password.
 
 The APK is also produced at `app/build/outputs/apk/debug/app-debug.apk`.

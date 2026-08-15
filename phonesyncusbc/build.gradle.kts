@@ -16,5 +16,7 @@ tasks.register<Exec>("pushDebugToDevice") {
         file("scripts/push_debug_to_device.ps1").absolutePath,
         "-ApkPath",
         file("app/build/outputs/apk/debug/app-debug.apk").absolutePath,
+        "-TrustManifestPath",
+        file("releases/PhoneSyncUSB-C-debug.apk.trust.json").absolutePath,
     )
 }
