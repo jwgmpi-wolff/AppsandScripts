@@ -24,6 +24,12 @@ class ArchiveImporterInstrumentedTest {
     fun importsVerifiedExternalEntryAndQuarantinesCollectorEntry() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val archive = File(context.cacheDir, "reader-import-test.zip")
+        val importer = ArchiveImporter(
+            context = context,
+            stateFileName = TEST_STATE_FILE,
+            activeDirectoryName = TEST_ACTIVE_DIRECTORY,
+            preferencesName = TEST_PREFERENCES,
+        )
         val validBytes = """[{"sender":"Alex","message":"Teams export recovered"}]"""
             .toByteArray(Charsets.UTF_8)
         val collectorBytes = "[{\"message\":\"collector\"}]".toByteArray(Charsets.UTF_8)
@@ -55,9 +61,13 @@ class ArchiveImporterInstrumentedTest {
             output.closeEntry()
         }
 
-        val result = ArchiveImporter(context).import(Uri.fromFile(archive))
+        val archiveUri = Uri.fromFile(archive)
+        val result = importer.import(archiveUri)
 
         assertEquals(1, result.entries.size)
+        assertEquals(archiveUri, result.archiveUri)
+        assertEquals(archiveUri, importer.selectedArchiveUri())
+        assertEquals(archiveUri, importer.load()?.archiveUri)
         assertEquals(validBytes.size.toLong(), result.entries.single().bytesTransferred)
         assertTrue(result.issues.any { it.reason == RecoveryIssueReason.COLLECTOR_ORIGIN })
         val imported = File(Uri.parse(result.entries.single().destination).path!!)
@@ -77,10 +87,88 @@ class ArchiveImporterInstrumentedTest {
             database.close()
             context.deleteDatabase(databaseName)
             archive.delete()
-            File(context.filesDir, "reader-import.json").delete()
-            File(context.filesDir, "reader-import").deleteRecursively()
-            File(context.filesDir, "reader-import-previous").deleteRecursively()
-            File(context.filesDir, "reader-import-staging").deleteRecursively()
+            File(context.filesDir, TEST_STATE_FILE).delete()
+            File(context.filesDir, TEST_ACTIVE_DIRECTORY).deleteRecursively()
+            File(context.filesDir, "$TEST_ACTIVE_DIRECTORY-previous").deleteRecursively()
+            File(context.filesDir, "$TEST_ACTIVE_DIRECTORY-staging").deleteRecursively()
+            context.getSharedPreferences(TEST_PREFERENCES, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
+    @Test
+    fun refreshesPersistedArchiveAndRetainsNewNestedFolderPath() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val archive = File(context.cacheDir, "reader-archive-refresh-test.zip")
+        val invalidArchive = File(context.cacheDir, "reader-archive-refresh-invalid.zip")
+        val importer = ArchiveImporter(
+            context = context,
+            stateFileName = REFRESH_STATE_FILE,
+            activeDirectoryName = REFRESH_ACTIVE_DIRECTORY,
+            preferencesName = REFRESH_PREFERENCES,
+        )
+        val firstItem = ArchiveTestItem(
+            sourceItem = "/Messages/Existing/first.json",
+            archivePath = "Messages/Existing/first.json",
+            fingerprint = "first-refresh-fingerprint",
+            bytes = """[{"message":"first archive version"}]""".toByteArray(),
+        )
+        val addedItem = ArchiveTestItem(
+            sourceItem = "/Messages/New Folder/second.json",
+            archivePath = "Messages/New Folder/second.json",
+            fingerprint = "second-refresh-fingerprint",
+            bytes = """[{"message":"added after refresh"}]""".toByteArray(),
+        )
+
+        try {
+            writeArchive(archive, listOf(firstItem))
+            val first = importer.import(Uri.fromFile(archive))
+            assertEquals(1, first.entries.size)
+
+            writeArchive(archive, listOf(firstItem, addedItem))
+            val refreshed = importer.import(importer.selectedArchiveUri()!!)
+
+            assertEquals(2, refreshed.entries.size)
+            assertTrue(refreshed.entries.any { it.sourceItem == addedItem.sourceItem })
+            assertEquals(2, importer.load()?.entries?.size)
+            assertEquals(Uri.fromFile(archive), importer.load()?.archiveUri)
+
+            invalidArchive.writeText("not a recovery archive")
+            assertTrue(runCatching { importer.import(Uri.fromFile(invalidArchive)) }.isFailure)
+            assertEquals(Uri.fromFile(archive), importer.selectedArchiveUri())
+        } finally {
+            archive.delete()
+            invalidArchive.delete()
+            File(context.filesDir, REFRESH_STATE_FILE).delete()
+            File(context.filesDir, REFRESH_ACTIVE_DIRECTORY).deleteRecursively()
+            File(context.filesDir, "$REFRESH_ACTIVE_DIRECTORY-previous").deleteRecursively()
+            File(context.filesDir, "$REFRESH_ACTIVE_DIRECTORY-staging").deleteRecursively()
+            context.getSharedPreferences(REFRESH_PREFERENCES, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
+    private fun writeArchive(archive: File, items: List<ArchiveTestItem>) {
+        val manifest = JSONObject()
+            .put("externalPeerId", SOURCE_ID)
+            .put("entries", JSONArray().apply {
+                items.forEach { item ->
+                    put(manifestEntry(item.sourceItem, item.archivePath, item.fingerprint, item.bytes))
+                }
+            })
+        ZipOutputStream(archive.outputStream()).use { output ->
+            items.forEach { item ->
+                output.putNextEntry(ZipEntry(item.archivePath))
+                output.write(item.bytes)
+                output.closeEntry()
+            }
+            output.putNextEntry(ZipEntry("backup-manifest.json"))
+            output.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            output.closeEntry()
         }
     }
 
@@ -105,7 +193,20 @@ class ArchiveImporterInstrumentedTest {
         .digest(bytes)
         .joinToString("") { byte -> "%02x".format(byte) }
 
+    private data class ArchiveTestItem(
+        val sourceItem: String,
+        val archivePath: String,
+        val fingerprint: String,
+        val bytes: ByteArray,
+    )
+
     private companion object {
         const val SOURCE_ID = "external-test-peer"
+        const val TEST_STATE_FILE = "reader-import-test.json"
+        const val TEST_ACTIVE_DIRECTORY = "reader-import-test"
+        const val TEST_PREFERENCES = "reader_archive_source_test"
+        const val REFRESH_STATE_FILE = "reader-archive-refresh-test.json"
+        const val REFRESH_ACTIVE_DIRECTORY = "reader-archive-refresh-test"
+        const val REFRESH_PREFERENCES = "reader_archive_refresh_source_test"
     }
 }

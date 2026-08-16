@@ -47,6 +47,8 @@ class ReaderFolderControlsInstrumentedTest {
         val windowDetail = "package=${root.packageName}, text=$visibleTexts"
         assertTrue("Connect folder is not visible; $windowDetail", "Connect folder" in visibleTexts)
         assertTrue("Resync folder is not visible; $windowDetail", "Resync folder" in visibleTexts)
+        assertTrue("Open archive is not visible; $windowDetail", "Open archive" in visibleTexts)
+        assertTrue("Refresh archive is not visible; $windowDetail", "Refresh archive" in visibleTexts)
     }
 
     private fun AccessibilityNodeInfo?.visibleTexts(): Set<String> {

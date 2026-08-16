@@ -28,9 +28,45 @@ data class ArchiveImportResult(
     val entries: List<AuditEntry>,
     val issues: List<RecoveryIssue>,
     val error: String? = null,
+    val archiveUri: Uri? = null,
 )
 
-class ArchiveImporter(private val context: Context) {
+class ArchiveImporter(
+    private val context: Context,
+    private val stateFileName: String = STATE_FILE,
+    private val activeDirectoryName: String = ACTIVE_DIRECTORY,
+    private val preferencesName: String = PREFERENCES_NAME,
+) {
+    fun selectedArchiveUri(): Uri? {
+        val saved = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .getString(SELECTED_ARCHIVE_URI_KEY, null)
+        if (!saved.isNullOrBlank()) return Uri.parse(saved)
+        val state = stateFile()
+        return if (state.isFile) {
+            runCatching {
+                JSONObject(state.readText()).optString("archiveUri")
+                    .takeIf(String::isNotBlank)
+                    ?.let(Uri::parse)
+            }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    fun rememberArchiveUri(archiveUri: Uri) {
+        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .edit()
+            .putString(SELECTED_ARCHIVE_URI_KEY, archiveUri.toString())
+            .apply()
+    }
+
+    fun hasPersistedReadAccess(archiveUri: Uri): Boolean {
+        if (archiveUri.scheme == "file") return true
+        return context.contentResolver.persistedUriPermissions.any { permission ->
+            permission.uri == archiveUri && permission.isReadPermission
+        }
+    }
+
     fun import(
         archiveUri: Uri,
         onProgress: (ArchiveImportProgress) -> Unit = {},
@@ -47,7 +83,7 @@ class ArchiveImporter(private val context: Context) {
             "The archive contains no eligible external-source items. Review its provenance manifest."
         }
 
-        val staging = File(context.filesDir, "reader-import-staging").apply {
+        val staging = File(context.filesDir, "$activeDirectoryName-staging").apply {
             deleteRecursively()
             mkdirs()
         }
@@ -130,7 +166,14 @@ class ArchiveImporter(private val context: Context) {
             val entries = extracted.values.map { artifact ->
                 artifact.toAuditEntry(sourceId, activeDirectory)
             }
-            val result = ArchiveImportResult(sourceId, sourceName, entries, issues)
+            val result = ArchiveImportResult(
+                sourceId = sourceId,
+                sourceName = sourceName,
+                entries = entries,
+                issues = issues,
+                archiveUri = archiveUri,
+            )
+            rememberArchiveUri(archiveUri)
             save(result)
             return result
         } catch (throwable: Throwable) {
@@ -141,17 +184,22 @@ class ArchiveImporter(private val context: Context) {
                 entries = emptyList(),
                 issues = issues,
                 error = throwable.message ?: throwable.javaClass.simpleName,
+                archiveUri = archiveUri,
             )
         }
     }
 
     fun load(): ArchiveImportResult? {
-        val stateFile = File(context.filesDir, STATE_FILE)
+        val stateFile = stateFile()
         if (!stateFile.isFile) return null
         return runCatching {
             val root = JSONObject(stateFile.readText())
             val sourceId = root.getString("sourceId")
             val sourceName = root.getString("sourceName")
+            val archiveUri = root.optString("archiveUri")
+                .takeIf(String::isNotBlank)
+                ?.let(Uri::parse)
+                ?: selectedArchiveUri()
             val entries = root.getJSONArray("entries").toObjects { item ->
                 AuditEntry(
                     id = item.getLong("id"),
@@ -180,7 +228,13 @@ class ArchiveImporter(private val context: Context) {
                     retryable = item.getBoolean("retryable"),
                 )
             }.orEmpty()
-            ArchiveImportResult(sourceId, sourceName, entries, issues)
+            ArchiveImportResult(
+                sourceId = sourceId,
+                sourceName = sourceName,
+                entries = entries,
+                issues = issues,
+                archiveUri = archiveUri,
+            )
         }.getOrNull()
     }
 
@@ -268,8 +322,8 @@ class ArchiveImporter(private val context: Context) {
     }
 
     private fun activate(staging: File): File {
-        val active = File(context.filesDir, ACTIVE_DIRECTORY)
-        val previous = File(context.filesDir, "$ACTIVE_DIRECTORY-previous")
+        val active = File(context.filesDir, activeDirectoryName)
+        val previous = File(context.filesDir, "$activeDirectoryName-previous")
         previous.deleteRecursively()
         if (active.exists()) check(active.renameTo(previous)) { "Could not rotate the previous reader import." }
         if (!staging.renameTo(active)) {
@@ -282,6 +336,7 @@ class ArchiveImporter(private val context: Context) {
 
     private fun save(result: ArchiveImportResult) {
         val root = JSONObject()
+            .put("archiveUri", result.archiveUri?.toString().orEmpty())
             .put("sourceId", result.sourceId)
             .put("sourceName", result.sourceName)
             .put("entries", JSONArray().apply {
@@ -312,8 +367,10 @@ class ArchiveImporter(private val context: Context) {
                     )
                 }
             })
-        File(context.filesDir, STATE_FILE).writeText(root.toString())
+        stateFile().writeText(root.toString())
     }
+
+    private fun stateFile() = File(context.filesDir, stateFileName)
 
     private data class ManifestArtifact(
         val archivePath: String,
@@ -407,6 +464,8 @@ class ArchiveImporter(private val context: Context) {
         const val MAX_MANIFEST_BYTES = 4 * 1024 * 1024
         const val ACTIVE_DIRECTORY = "reader-import"
         const val STATE_FILE = "reader-import.json"
+        const val PREFERENCES_NAME = "reader_archive_source"
+        const val SELECTED_ARCHIVE_URI_KEY = "selected_archive_uri"
     }
 }
 

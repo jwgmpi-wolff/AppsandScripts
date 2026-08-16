@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,12 +54,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             if (showFolderActionsOnly) {
                 MaterialTheme {
-                    ReaderFolderActions(
-                        busy = false,
-                        resyncing = false,
-                        onConnect = {},
-                        onResync = {},
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReaderFolderActions(
+                            busy = false,
+                            resyncing = false,
+                            onConnect = {},
+                            onResync = {},
+                        )
+                        ReaderArchiveActions(
+                            busy = false,
+                            refreshing = false,
+                            onOpen = {},
+                            onRefresh = {},
+                        )
+                    }
                 }
             } else {
                 TabletReaderApp()
@@ -171,29 +180,70 @@ private fun TabletReaderApp() {
         }
     }
 
-    val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
+    fun importArchive(uri: Uri, refreshing: Boolean, accessPersisted: Boolean) {
+        if (importing || folderScanning) return
         selectMode(ReaderContentMode.ARCHIVE)
+        val previousArchive = archiveImport
         importing = true
         progress = null
-        status = "Validating archive provenance and integrity..."
+        status = if (refreshing) {
+            "Refreshing the selected recovery archive from its source..."
+        } else {
+            "Validating archive provenance and integrity..."
+        }
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                importer.import(uri) { update ->
-                    scope.launch(Dispatchers.Main.immediate) { progress = update }
+                runCatching {
+                    importer.import(uri) { update ->
+                        scope.launch(Dispatchers.Main.immediate) { progress = update }
+                    }
+                }.getOrElse { throwable ->
+                    ArchiveImportResult(
+                        sourceId = previousArchive?.sourceId.orEmpty(),
+                        sourceName = previousArchive?.sourceName ?: "Recovery archive",
+                        entries = emptyList(),
+                        issues = emptyList(),
+                        error = throwable.message ?: throwable.javaClass.simpleName,
+                        archiveUri = uri,
+                    )
                 }
             }
             importing = false
-            archiveImport = result
             if (result.entries.isNotEmpty()) {
-                status = "Verified ${result.entries.size} external-source item(s)."
+                archiveImport = result
+                status = if (refreshing) {
+                    "Refreshed and verified ${result.entries.size} archive item(s)."
+                } else {
+                    "Verified ${result.entries.size} external-source item(s)."
+                }
+                if (!accessPersisted) {
+                    status += " Android granted temporary access; select this archive again for the next refresh."
+                }
                 showReader = true
             } else {
-                status = "Import failed: ${result.error ?: "no item passed verification"}"
+                status = "Archive refresh failed; the last verified content was kept. " +
+                    (result.error ?: "No item passed verification.")
+                showReader = archiveImport?.entries?.isNotEmpty() == true
             }
+        }
+    }
+
+    val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        val permissionError = runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }.exceptionOrNull()
+        val accessPersisted = permissionError == null && importer.hasPersistedReadAccess(uri)
+        importArchive(uri, refreshing = archiveImport != null, accessPersisted = accessPersisted)
+    }
+
+    fun refreshArchive() {
+        val archiveUri = importer.selectedArchiveUri()
+        if (archiveUri != null && importer.hasPersistedReadAccess(archiveUri)) {
+            importArchive(archiveUri, refreshing = true, accessPersisted = true)
+        } else {
+            status = "Select the recovery archive again to restore access and refresh it."
+            archivePicker.launch(ARCHIVE_MIME_TYPES)
         }
     }
 
@@ -228,6 +278,16 @@ private fun TabletReaderApp() {
                             modifier = Modifier.padding(start = 12.dp).size(40.dp),
                         )
                     },
+                    actions = {
+                        if (sourceMode == ReaderContentMode.ARCHIVE) {
+                            TextButton(
+                                onClick = ::refreshArchive,
+                                enabled = !importing && !folderScanning,
+                            ) {
+                                Text(if (importing) "Refreshing..." else "Refresh archive")
+                            }
+                        }
+                    },
                 )
             },
         ) { padding ->
@@ -251,9 +311,13 @@ private fun TabletReaderApp() {
                         indexer = indexer,
                         onBack = { showReader = false },
                         contentSourceLabel = currentContent.sourceLabel,
-                        contentRefreshing = folderScanning,
-                        onChooseContentSource = { folderPicker.launch(folderSourceManager.selectedTreeUri()) },
-                        onRefreshContent = ::resyncFolder,
+                        contentRefreshing = folderScanning || importing,
+                        onChooseContentSource = if (sourceMode == ReaderContentMode.FOLDER) {
+                            { folderPicker.launch(folderSourceManager.selectedTreeUri()) }
+                        } else {
+                            null
+                        },
+                        onRefreshContent = if (sourceMode == ReaderContentMode.FOLDER) ::resyncFolder else null,
                     )
                 }
                 return@Scaffold
@@ -270,13 +334,12 @@ private fun TabletReaderApp() {
                     onConnect = { folderPicker.launch(folderSourceManager.selectedTreeUri()) },
                     onResync = ::resyncFolder,
                 )
-                Button(
-                    onClick = { archivePicker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                    enabled = !importing,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (importing) "Importing archive..." else "Open recovery archive")
-                }
+                ReaderArchiveActions(
+                    busy = folderScanning || importing,
+                    refreshing = importing,
+                    onOpen = { archivePicker.launch(ARCHIVE_MIME_TYPES) },
+                    onRefresh = ::refreshArchive,
+                )
                 if (folderScanning) {
                     val current = folderProgress
                     val fraction = current?.takeIf { it.totalFiles > 0 }
@@ -365,6 +428,34 @@ internal fun ReaderFolderActions(
     }
 }
 
+@Composable
+internal fun ReaderArchiveActions(
+    busy: Boolean,
+    refreshing: Boolean,
+    onOpen: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onOpen,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Open archive")
+        }
+        OutlinedButton(
+            onClick = onRefresh,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(if (refreshing) "Refreshing..." else "Refresh archive")
+        }
+    }
+}
+
 private fun formatBytes(bytes: Long): String = when {
     bytes < 1_024 -> "$bytes B"
     bytes < 1_048_576 -> "%.1f KB".format(bytes / 1_024.0)
@@ -403,3 +494,9 @@ private fun FolderScanResult.toContentSnapshot() = ReaderContentSnapshot(
 
 private const val READER_SOURCE_PREFERENCES = "reader_content_source"
 private const val READER_SOURCE_MODE_KEY = "source_mode"
+private val ARCHIVE_MIME_TYPES = arrayOf(
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-zip",
+    "application/octet-stream",
+)
