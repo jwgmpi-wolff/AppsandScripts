@@ -6,10 +6,10 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-Standalone Android tablet reader 1.0.0:
+Standalone Android tablet reader 1.0.1:
 
-- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk)
-- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk.trust.json)
+- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.1-android-tablet.apk)
+- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.0.1-android-tablet.apk.trust.json)
 
 Windows archive reader 2.4.0:
 
@@ -86,7 +86,7 @@ The Android **Data Reader** tab builds a local SQLite index from the verified re
 
 On Android tablets and unfolded foldables at least 600dp wide, **Auto** uses a Windows-style three-pane layout: Query filters, selectable Records, and record Detail remain visible together with independent scrolling. The Data Reader also provides explicit **Mobile** and **Tablet** layout choices; narrow phone screens stay in the mobile layout.
 
-The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk) imports a Phone Sync backup ZIP through Android's document picker. It validates the external peer, quarantines mixed or collector-origin entries, streams and verifies each accepted item against manifest size and SHA-256, persists the verified source in its own app storage, and opens the same three-pane reader without requiring the collector app.
+The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.1-android-tablet.apk) imports a Phone Sync backup ZIP through Android's document picker. It validates the external peer, quarantines mixed or collector-origin entries, streams and verifies each accepted item against manifest size and SHA-256, persists the verified source in its own app storage, and opens the same three-pane reader without requiring the collector app. Its green landscape-tablet and document-search icon is intentionally distinct from the collector's blue portrait-phone icon.
 
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 

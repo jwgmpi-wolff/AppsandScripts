@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -27,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.jerrywolff.phonesyncusbc.ArtifactDataReaderView
 import com.jerrywolff.phonesyncusbc.data.ArtifactIndexDatabase
@@ -79,7 +82,18 @@ private fun TabletReaderApp() {
 
     MaterialTheme {
         Scaffold(
-            topBar = { TopAppBar(title = { Text("Phone Sync Data Reader") }) },
+            topBar = {
+                TopAppBar(
+                    title = { Text("Phone Sync Data Reader") },
+                    navigationIcon = {
+                        Image(
+                            painter = painterResource(R.drawable.ic_reader_logo),
+                            contentDescription = "Data reader",
+                            modifier = Modifier.padding(start = 12.dp).size(40.dp),
+                        )
+                    },
+                )
+            },
         ) { padding ->
             val currentImport = imported
             if (showReader && currentImport != null && currentImport.entries.isNotEmpty()) {
