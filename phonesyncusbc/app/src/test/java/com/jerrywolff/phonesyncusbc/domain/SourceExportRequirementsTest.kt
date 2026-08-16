@@ -7,7 +7,11 @@ class SourceExportRequirementsTest {
     @Test
     fun `reports portable exports not exposed by source`() {
         assertEquals(
-            listOf(ConsentCategory.CALL_LOGS, ConsentCategory.EMAIL_EXPORTS),
+            listOf(
+                ConsentCategory.CHAT_EXPORTS,
+                ConsentCategory.CALL_LOGS,
+                ConsentCategory.EMAIL_EXPORTS,
+            ),
             SourceExportRequirements.missingFrom(setOf(ConsentCategory.SMS_EXPORTS)),
         )
     }

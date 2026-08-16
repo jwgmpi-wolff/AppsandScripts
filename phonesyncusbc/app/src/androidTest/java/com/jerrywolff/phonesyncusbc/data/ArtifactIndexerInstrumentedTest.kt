@@ -172,7 +172,7 @@ class ArtifactIndexerInstrumentedTest {
     }
 
     @Test
-    fun uploadZipRefusesCollectorAndMixedPeerEntries() {
+    fun uploadZipQuarantinesCollectorAndMixedPeerEntries() {
         val externalFile = File(testDirectory, "external.txt").apply { writeText("external") }
         val valid = auditEntry(externalFile).copy(
             id = 30,
@@ -194,10 +194,18 @@ class ArtifactIndexerInstrumentedTest {
 
         val collectorResult = manager.createUploadArchive(listOf(valid, collector), SOURCE_ID)
         val mixedPeerResult = manager.createUploadArchive(listOf(valid, otherPeer), SOURCE_ID)
-        assertNull(collectorResult.uri)
-        assertNull(mixedPeerResult.uri)
-        assertTrue(collectorResult.error.orEmpty().contains("exact selected-USB-source provenance"))
-        assertTrue(mixedPeerResult.error.orEmpty().contains("exact selected-USB-source provenance"))
+        assertNotNull(collectorResult.uri)
+        assertNotNull(mixedPeerResult.uri)
+        assertEquals(1, collectorResult.archivedItems)
+        assertEquals(1, collectorResult.excludedItems)
+        assertEquals(1, mixedPeerResult.archivedItems)
+        assertEquals(1, mixedPeerResult.excludedItems)
+        val collectorManifest = readZipText(collectorResult.uri!!, "backup-manifest.json")
+        val mixedPeerManifest = readZipText(mixedPeerResult.uri!!, "backup-manifest.json")
+        assertFalse(collectorManifest.contains("Selected folder"))
+        assertFalse(mixedPeerManifest.contains("other-peer"))
+        context.contentResolver.delete(collectorResult.uri!!, null, null)
+        context.contentResolver.delete(mixedPeerResult.uri!!, null, null)
 
         val validResult = manager.createUploadArchive(listOf(valid), SOURCE_ID)
         assertNotNull(validResult.uri)

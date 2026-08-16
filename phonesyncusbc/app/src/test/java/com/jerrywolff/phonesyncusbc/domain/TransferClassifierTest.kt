@@ -214,4 +214,19 @@ class TransferClassifierTest {
             TransferClassifier.classify("/Backups/Signal/signal-2026-08-14.backup"),
         )
     }
+
+    @Test
+    fun `classifies portable collaboration chat exports and transcripts`() {
+        listOf(
+            "/Downloads/WhatsApp Chat with Family.zip",
+            "/Downloads/Microsoft Teams/teams-export/messages.json",
+            "/Downloads/Zoom/meeting-chat.txt",
+            "/Downloads/Zoom/transcript.vtt",
+            "/Downloads/Webex/webex-meeting-transcript.srt",
+            "/Exports/Slack/slack-export.zip",
+            "/Exports/Google Chat/conversations.json",
+        ).forEach { path ->
+            assertEquals(path, ConsentCategory.CHAT_EXPORTS, TransferClassifier.classify(path))
+        }
+    }
 }

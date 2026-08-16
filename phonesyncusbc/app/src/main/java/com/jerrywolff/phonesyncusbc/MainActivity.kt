@@ -76,6 +76,8 @@ import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
 import com.jerrywolff.phonesyncusbc.data.StoredTrust
 import com.jerrywolff.phonesyncusbc.data.TargetSelectionStore
+import com.jerrywolff.phonesyncusbc.data.RecoveryIssue
+import com.jerrywolff.phonesyncusbc.data.planExternalRecoveryEntries
 import com.jerrywolff.phonesyncusbc.data.primaryActionLabel
 import com.jerrywolff.phonesyncusbc.data.providerTarget
 import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
@@ -84,6 +86,7 @@ import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
 import com.jerrywolff.phonesyncusbc.domain.SourceExportRequirements
 import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
+import com.jerrywolff.phonesyncusbc.domain.OwnerExportCoordinator
 import com.jerrywolff.phonesyncusbc.domain.RecoveryDeviceType
 import com.jerrywolff.phonesyncusbc.domain.RecoveryProfiles
 import com.jerrywolff.phonesyncusbc.domain.LOGICAL_ACQUISITION_LIMIT
@@ -99,8 +102,10 @@ import com.jerrywolff.phonesyncusbc.sync.SyncPhase
 import com.jerrywolff.phonesyncusbc.sync.SyncResult
 import com.jerrywolff.phonesyncusbc.sync.MtpScanSummary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.text.DateFormat
 import java.util.Date
 
@@ -138,6 +143,11 @@ class MainActivity : ComponentActivity() {
 
     private fun requestUsbPermission(source: AttachedSource) {
         val manager = getSystemService(UsbManager::class.java)
+        if (manager.hasPermission(source.device)) {
+            Toast.makeText(this, "USB access is already granted. Rechecking the source.", Toast.LENGTH_SHORT).show()
+            recreate()
+            return
+        }
         val intent = PendingIntent.getBroadcast(
             this,
             0,
@@ -148,6 +158,12 @@ class MainActivity : ComponentActivity() {
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
                     unregisterReceiver(this)
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    Toast.makeText(
+                        context,
+                        if (granted) "USB access granted." else "USB access was not granted.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                     recreate()
                 }
             },
@@ -184,6 +200,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var mtpScanSummary by remember { mutableStateOf<MtpScanSummary?>(null) }
     var identityReadProgress by remember { mutableStateOf<IdentityReadProgress?>(null) }
     var identityReadError by remember { mutableStateOf<String?>(null) }
+    var identityReadRequest by remember { mutableStateOf(0) }
+    var recoveryIssues by remember { mutableStateOf(emptyList<RecoveryIssue>()) }
     var showLibrary by remember { mutableStateOf(false) }
     var showParsedData by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
@@ -272,21 +290,28 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
-    LaunchedEffect(refreshToken, selectedSource) {
+    LaunchedEffect(refreshToken, selectedSource, identityReadRequest) {
         val source = selectedSource ?: return@LaunchedEffect
         if (!source.permissionGranted) return@LaunchedEffect
         identityReadError = null
         identityReadProgress = IdentityReadProgress(IdentityReadStage.CHECKING_PERMISSION, 0)
-        val identityResult = withContext(Dispatchers.IO) {
-            runCatching {
+        val resolved = try {
+            withTimeout(IDENTITY_READ_TIMEOUT_MILLIS) {
+                withContext(Dispatchers.IO) {
                 application.usbSourceResolver.resolveIdentity(source) { progress ->
                     scope.launch(Dispatchers.Main.immediate) {
                         identityReadProgress = progress
                     }
                 }
             }
-        }
-        val resolved = identityResult.getOrElse { throwable ->
+            }
+        } catch (_: TimeoutCancellationException) {
+            identityReadProgress = null
+            identityReadError =
+                "Identity handshake timed out. Unlock the external device, approve its Trust/Allow prompt, then retry."
+            return@LaunchedEffect
+        } catch (throwable: Throwable) {
+            identityReadProgress = null
             identityReadError = throwable.message ?: "The source did not return a readable USB identity."
             return@LaunchedEffect
         }
@@ -541,15 +566,15 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             updateBackupWorkflowStatus(ownerSection, "Select at least one available item before uploading.")
             return
         }
-        if (externalDeviceRecoveryEntries(entries, expectedPeerId).size != entries.size) {
-            updateBackupWorkflowStatus(
-                ownerSection,
-                "Upload refused: selection contains collector, legacy, blank-peer, or mixed-peer data.",
-            )
+        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
+        recoveryIssues = selection.issues
+        val eligibleEntries = selection.eligibleEntries
+        if (eligibleEntries.isEmpty()) {
+            updateBackupWorkflowStatus(ownerSection, "No eligible external-source items. Review recovery actions below.")
             return
         }
-        val directUris = entries.mapNotNull { it.destination?.let(Uri::parse) }
-        if (directUris.size != entries.size) {
+        val directUris = eligibleEntries.mapNotNull { it.destination?.let(Uri::parse) }
+        if (directUris.size != eligibleEntries.size) {
             updateBackupWorkflowStatus(ownerSection, "One or more selected recovery items are no longer available.")
             return
         }
@@ -557,12 +582,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         if (directIntent.resolveActivity(context.packageManager) != null) {
             backupActivity = BackupActivityUi(
                 title = "$label upload handoff",
-                status = "Opening $label with ${entries.size} verified recovery item(s)...",
+                status = "Opening $label with ${eligibleEntries.size} verified recovery item(s)...",
                 running = true,
             )
-            if (launchProviderUpload(directUris, packageName, label, entries.size, ownerSection)) return
+            if (launchProviderUpload(directUris, packageName, label, eligibleEntries.size, ownerSection)) return
         }
-        if (entries.size == 1) {
+        if (eligibleEntries.size == 1) {
             updateBackupWorkflowStatus(ownerSection, "$label cannot accept the selected recovery item.")
             return
         }
@@ -576,7 +601,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         backupActivity = BackupActivityUi(
             title = "Local staging before $label",
             status = stagingStatus,
-            totalItems = entries.size,
+            totalItems = eligibleEntries.size,
             running = true,
         )
         scope.launch {
@@ -602,6 +627,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 }
             }
             backingUp = false
+            recoveryIssues = result.recoveryIssues
             if (result.uri == null) {
                 val failureStatus = "Could not prepare upload: ${result.error ?: "unknown error"}"
                 updateBackupWorkflowStatus(ownerSection, failureStatus)
@@ -614,7 +640,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 )
             } else {
                 val readyStatus =
-                    "Local ZIP ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}. Opening $label."
+                    "Local ZIP ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}." +
+                        if (result.excludedItems > 0) {
+                            " ${result.excludedItems} item(s) need remediation. Opening $label."
+                        } else {
+                            " Opening $label."
+                        }
                 updateBackupWorkflowStatus(ownerSection, readyStatus)
                 backupActivity = BackupActivityUi(
                     title = "Local staging complete",
@@ -648,11 +679,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
             return
         }
-        if (externalDeviceRecoveryEntries(entries, expectedPeerId).size != entries.size) {
-            updateBackupWorkflowStatus(
-                ownerSection,
-                "Backup refused: selection contains collector, legacy, blank-peer, or mixed-peer data.",
-            )
+        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
+        recoveryIssues = selection.issues
+        if (selection.eligibleEntries.isEmpty()) {
+            updateBackupWorkflowStatus(ownerSection, "No eligible external-source items. Review recovery actions below.")
             return
         }
         if (backingUp) return
@@ -698,11 +728,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     }
                 }
             }.onSuccess { result ->
-                val completedStatus = if (result.failedItems == 0) {
-                    "Backup complete: ${result.exportedItems} items (${formatBytes(result.bytesExported)})."
-                } else {
-                    "Backup finished: ${result.exportedItems} copied and ${result.failedItems} failed." +
-                        result.error?.let { " First error: $it" }.orEmpty()
+                recoveryIssues = result.recoveryIssues
+                val completedStatus = buildString {
+                    append("Backup finished: ${result.exportedItems} copied")
+                    if (result.failedItems > 0) append(", ${result.failedItems} failed")
+                    if (result.excludedItems > 0) append(", ${result.excludedItems} need remediation")
+                    append(" (${formatBytes(result.bytesExported)}).")
+                    result.error?.let { append(" First error: $it") }
                 }
                 updateBackupWorkflowStatus(ownerSection, completedStatus)
                 message = completedStatus
@@ -710,10 +742,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 backupActivity = BackupActivityUi(
                     title = "Backup to $destinationName",
                     status = completedStatus,
-                    completedItems = result.exportedItems + result.failedItems,
+                    completedItems = result.exportedItems + result.failedItems + result.excludedItems,
                     totalItems = entries.size,
                     bytesProcessed = result.bytesExported,
-                    failed = result.failedItems > 0,
+                    failed = result.failedItems > 0 || result.excludedItems > 0,
                 )
             }.onFailure { throwable ->
                 val failureStatus =
@@ -743,22 +775,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             messageSection = ownerSection
             return
         }
-        val externalEntries = externalDeviceRecoveryEntries(entries, expectedPeerId)
-        val excludedItems = entries.size - externalEntries.size
-        if (excludedItems > 0) {
-            val exclusionStatus =
-                "Excluded $excludedItems collector-origin item(s); only external-device recovery data is eligible."
-            updateBackupWorkflowStatus(ownerSection, exclusionStatus)
-            message = exclusionStatus
-            messageSection = ownerSection
-        }
-        if (externalEntries.isEmpty()) return
         val providerTarget = targetType.providerTarget()
         if (providerTarget == null) {
-            backupEntriesToSelectedTarget(externalEntries, expectedPeerId, ownerSection)
+            backupEntriesToSelectedTarget(entries, expectedPeerId, ownerSection)
         } else {
             uploadBackupEntries(
-                externalEntries,
+                entries,
                 expectedPeerId,
                 providerTarget.packageName,
                 providerTarget.label,
@@ -816,6 +838,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     onRefresh = ::refreshSource,
                     onRequestUsbPermission = onRequestUsbPermission,
                     onContinue = {
+                        identityReadError = null
+                        identityReadRequest += 1
                         scope.launch {
                             val lastItem = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
                             listState.animateScrollToItem(minOf(SOURCE_SYNC_SECTION_INDEX, lastItem))
@@ -1124,6 +1148,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 syncing = syncing,
                                 liveProgress = liveProgress,
                                 mtpScanSummary = mtpScanSummary,
+                                recoveryIssues = recoveryIssues,
                                 sourcePlatform = source.detected.platform,
                                 auditLog = application.auditLog,
                                 onViewLibrary = {
@@ -1335,6 +1360,7 @@ private fun TrustedDashboard(
     syncing: Boolean,
     liveProgress: SyncProgress?,
     mtpScanSummary: MtpScanSummary?,
+    recoveryIssues: List<RecoveryIssue>,
     sourcePlatform: SourcePlatform,
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onViewLibrary: () -> Unit,
@@ -1342,7 +1368,17 @@ private fun TrustedDashboard(
     onRevoke: () -> Unit,
 ) {
     val latest = remember(trust.updatedAtEpochMillis) { auditLog.latestSession(trust.record.peerDeviceId) }
-    val audit = remember(trust.updatedAtEpochMillis) { auditLog.recentTransfers(trust.record.peerDeviceId, 10) }
+    val audit = remember(trust.updatedAtEpochMillis, mtpScanSummary) {
+        auditLog.recentTransfers(trust.record.peerDeviceId, 25)
+    }
+    val failedRecoveryIssues = remember(audit) {
+        planExternalRecoveryEntries(
+            audit.filter { it.status != com.jerrywolff.phonesyncusbc.data.TransferStatus.COMPLETED },
+            trust.record.peerDeviceId,
+        ).issues
+    }
+    val currentRecoveryIssues = (recoveryIssues + failedRecoveryIssues)
+        .distinctBy { "${it.reason}:${it.sourceItem}" }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Read-only logical recovery", style = MaterialTheme.typography.titleMedium)
@@ -1420,7 +1456,7 @@ private fun TrustedDashboard(
                 )
             }
             mtpScanSummary?.let { scan ->
-                SourceExportReadiness(sourcePlatform, scan)
+                SourceExportReadiness(sourcePlatform, scan, syncing, onSync)
             }
             Button(
                 onClick = onSync,
@@ -1428,6 +1464,9 @@ private fun TrustedDashboard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (syncing) "Recovering and verifying..." else "Recover all USB-visible data")
+            }
+            if (currentRecoveryIssues.isNotEmpty()) {
+                RecoveryRemediationPanel(currentRecoveryIssues, syncing, onSync)
             }
             HorizontalDivider()
             OutlinedButton(onClick = onViewLibrary, modifier = Modifier.fillMaxWidth()) {
@@ -1467,9 +1506,13 @@ private fun TrustedDashboard(
 private fun SourceExportReadiness(
     sourcePlatform: SourcePlatform,
     scan: MtpScanSummary,
+    syncing: Boolean,
+    onRescan: () -> Unit,
 ) {
     val found = SourceExportRequirements.categories.filter { it in scan.visibleCategories }
     val missing = SourceExportRequirements.missingFrom(scan.visibleCategories)
+    val ownerExportWorkflow = OwnerExportCoordinator.trigger(sourcePlatform, scan.visibleCategories)
+    var showOwnerActions by remember(scan.visibleCategories) { mutableStateOf(false) }
 
     HorizontalDivider()
     Text("USB export readiness", style = MaterialTheme.typography.titleMedium)
@@ -1542,8 +1585,61 @@ private fun SourceExportReadiness(
             },
             style = MaterialTheme.typography.bodySmall,
         )
+        Button(
+            onClick = { showOwnerActions = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Start owner export actions")
+        }
+        if (showOwnerActions) {
+            ownerExportWorkflow.actions.forEach { action ->
+                Text(action.service, style = MaterialTheme.typography.titleSmall)
+                Text(action.ownerSteps, style = MaterialTheme.typography.bodySmall)
+                Text("Expected: ${action.expectedArtifacts}", style = MaterialTheme.typography.labelSmall)
+            }
+            Button(
+                onClick = onRescan,
+                enabled = !syncing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (syncing) "Scanning external device..." else "Owner exports complete - rescan")
+            }
+        }
     } else {
-        Text("SMS, call, and email exports are exposed and eligible for recovery.")
+        Text("SMS, chat, call, and email exports are exposed and eligible for recovery.")
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun RecoveryRemediationPanel(
+    issues: List<RecoveryIssue>,
+    syncing: Boolean,
+    onRetry: () -> Unit,
+) {
+    HorizontalDivider()
+    Text("Recovery actions", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "${issues.size} item(s) were not lost or silently discarded. Resolve the issue below, then retry.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    issues.take(MAX_VISIBLE_RECOVERY_ISSUES).forEach { issue ->
+        Text(issue.sourceItem.substringAfterLast('/').ifBlank { issue.sourceItem })
+        Text(
+            "${issue.reason.name.lowercase().replace('_', ' ')}: ${issue.remediation}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    if (issues.size > MAX_VISIBLE_RECOVERY_ISSUES) {
+        Text(
+            "${issues.size - MAX_VISIBLE_RECOVERY_ISSUES} more issue(s) remain in the recovery audit.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    if (issues.any(RecoveryIssue::retryable)) {
+        Button(onClick = onRetry, enabled = !syncing, modifier = Modifier.fillMaxWidth()) {
+            Text(if (syncing) "Retrying recovery..." else "Retry recoverable items")
+        }
     }
 }
 
@@ -1610,8 +1706,7 @@ private fun formatBytes(bytes: Long): String = when {
 private fun identityReadStageLabel(stage: IdentityReadStage): String = when (stage) {
     IdentityReadStage.CHECKING_PERMISSION -> "Checking Android USB authorization"
     IdentityReadStage.READING_USB_SERIAL -> "Reading the USB device serial"
-    IdentityReadStage.OPENING_MEDIA_SESSION -> "Opening the MTP/PTP media session"
-    IdentityReadStage.READING_DEVICE_INFO -> "Reading source device information"
+    IdentityReadStage.READING_USB_DESCRIPTOR -> "Reading the source USB descriptor"
     IdentityReadStage.CREATING_IDENTITY -> "Creating a stable source identity"
     IdentityReadStage.COMPLETE -> "Source identity ready"
 }
@@ -1672,6 +1767,7 @@ private fun buildSyncCompletionStatus(result: SyncResult): String {
 
 private fun sourceExportLabel(category: ConsentCategory): String = when (category) {
     ConsentCategory.SMS_EXPORTS -> "SMS/MMS"
+    ConsentCategory.CHAT_EXPORTS -> "app chats and meeting transcripts"
     ConsentCategory.CALL_LOGS -> "call logs"
     ConsentCategory.EMAIL_EXPORTS -> "email exports"
     else -> category.label()
@@ -1834,7 +1930,13 @@ private fun SourceConnectionPanel(
                 if (source.permissionGranted) {
                     Text("USB data access authorized")
                     Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                        Text("Continue to recovery acquisition")
+                        Text("Continue / retry source handshake")
+                    }
+                    OutlinedButton(
+                        onClick = { onRequestUsbPermission(source) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Recheck USB access")
                     }
                     OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
                         Text("Refresh source")
@@ -2207,3 +2309,5 @@ private fun isVideoLike(entry: AuditEntry): Boolean {
 }
 
 private const val PREVIEW_MAX_BYTES = 128 * 1024
+private const val IDENTITY_READ_TIMEOUT_MILLIS = 8_000L
+private const val MAX_VISIBLE_RECOVERY_ISSUES = 12

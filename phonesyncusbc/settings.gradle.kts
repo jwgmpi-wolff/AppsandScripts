@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Phone Sync USB-C"
 include(":app")
+include(":tabletreader")

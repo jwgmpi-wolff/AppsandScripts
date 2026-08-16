@@ -22,6 +22,8 @@ data class ExportResult(
     val failedItems: Int,
     val bytesExported: Long,
     val error: String? = null,
+    val excludedItems: Int = 0,
+    val recoveryIssues: List<RecoveryIssue> = emptyList(),
 )
 
 data class ExportProgress(
@@ -49,6 +51,8 @@ data class ArchiveResult(
     val sourceBytes: Long = 0,
     val archiveBytes: Long = 0,
     val error: String? = null,
+    val excludedItems: Int = 0,
+    val recoveryIssues: List<RecoveryIssue> = emptyList(),
 )
 
 class DataExportManager(private val context: Context) {
@@ -98,9 +102,17 @@ class DataExportManager(private val context: Context) {
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
         if (entries.isEmpty()) return ExportResult(0, 0, 0, "No recovered artifacts are available to preserve.")
-        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
-        if (invalidItems > 0) {
-            return ExportResult(0, invalidItems, 0, provenanceError(invalidItems))
+        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
+        val eligibleEntries = selection.eligibleEntries
+        if (eligibleEntries.isEmpty()) {
+            return ExportResult(
+                0,
+                0,
+                0,
+                "No selected-source items are eligible. Review the recovery actions and retry.",
+                selection.excludedItems,
+                selection.issues,
+            )
         }
         val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Backups/" +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
@@ -109,17 +121,19 @@ class DataExportManager(private val context: Context) {
         var bytes = 0L
         var processed = 0
         var firstError: String? = null
+        val recoveryIssues = selection.issues.toMutableList()
 
-        entries.forEach { entry ->
+        eligibleEntries.forEach { entry ->
             val displayName = sanitizeName(entry.sourceItem.substringAfterLast('/'))
                 .ifBlank { "recovered-artifact" }
-            onProgress(ExportProgress(processed, entries.size, displayName, bytes))
+            onProgress(ExportProgress(processed, eligibleEntries.size, displayName, bytes))
             val source = entry.destination?.let(Uri::parse)
             if (source == null) {
                 failed += 1
+                recoveryIssues += copyFailureIssue(entry.sourceItem, "Recovered copy is unavailable.")
                 processed += 1
                 firstError = firstError ?: "A recovered artifact has no stored location."
-                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
+                onProgress(ExportProgress(processed, eligibleEntries.size, displayName, bytes))
                 return@forEach
             }
             val values = android.content.ContentValues().apply {
@@ -136,9 +150,10 @@ class DataExportManager(private val context: Context) {
             }.getOrNull()
             if (target == null) {
                 failed += 1
+                recoveryIssues += copyFailureIssue(entry.sourceItem, "Backup destination could not be created.")
                 processed += 1
                 firstError = firstError ?: "Could not create the backup destination for $displayName."
-                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
+                onProgress(ExportProgress(processed, eligibleEntries.size, displayName, bytes))
                 return@forEach
             }
             val itemTotal = sourceSize(source)
@@ -149,7 +164,7 @@ class DataExportManager(private val context: Context) {
                     onProgress(
                         ExportProgress(
                             processed,
-                            entries.size,
+                            eligibleEntries.size,
                             displayName,
                             bytes + copied,
                             copied,
@@ -173,14 +188,22 @@ class DataExportManager(private val context: Context) {
                 .onFailure { throwable ->
                     context.contentResolver.delete(target, null, null)
                     failed += 1
+                    recoveryIssues += copyFailureIssue(entry.sourceItem, throwable.message)
                     firstError = firstError ?: (throwable.message ?: "Could not back up $displayName.")
                 }
             processed += 1
             onProgress(
-                ExportProgress(processed, entries.size, displayName, bytes, itemBytes, itemTotal),
+                ExportProgress(processed, eligibleEntries.size, displayName, bytes, itemBytes, itemTotal),
             )
         }
-        return ExportResult(exported, failed, bytes, firstError)
+        return ExportResult(
+            exported,
+            failed,
+            bytes,
+            firstError,
+            selection.excludedItems,
+            recoveryIssues,
+        )
     }
 
     fun export(
@@ -189,36 +212,46 @@ class DataExportManager(private val context: Context) {
         expectedPeerId: String?,
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
-        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
-        if (invalidItems > 0) {
-            return ExportResult(0, invalidItems, 0, provenanceError(invalidItems))
+        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
+        val eligibleEntries = selection.eligibleEntries
+        if (eligibleEntries.isEmpty()) {
+            return ExportResult(
+                0,
+                0,
+                0,
+                "No selected-source items are eligible. Review the recovery actions and retry.",
+                selection.excludedItems,
+                selection.issues,
+            )
         }
         val root = DocumentFile.fromTreeUri(context, destinationTree)
-            ?: return ExportResult(0, entries.size, 0, "The selected destination is unavailable.")
+            ?: return ExportResult(0, 0, 0, "The selected destination is unavailable.", selection.excludedItems, selection.issues)
         if (!root.canWrite()) {
-            return ExportResult(0, entries.size, 0, "The selected destination is not writable.")
+            return ExportResult(0, 0, 0, "The selected destination is not writable.", selection.excludedItems, selection.issues)
         }
 
         val folderName = "Phone Sync Export " +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val exportFolder = root.createDirectory(folderName)
-            ?: return ExportResult(0, entries.size, 0, "Could not create the export folder.")
+            ?: return ExportResult(0, 0, 0, "Could not create the export folder.", selection.excludedItems, selection.issues)
 
         var exported = 0
         var failed = 0
         var bytes = 0L
         var processed = 0
         var firstError: String? = null
-        entries.forEach { entry ->
+        val recoveryIssues = selection.issues.toMutableList()
+        eligibleEntries.forEach { entry ->
             val source = entry.destination?.let(Uri::parse)
             val sourceName = source?.let { sourceDisplayName(it, entry) }
                 ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
-            onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
+            onProgress(ExportProgress(processed, eligibleEntries.size, sourceName, bytes))
             if (source == null) {
                 failed += 1
+                recoveryIssues += copyFailureIssue(entry.sourceItem, "Recovered copy is unavailable.")
                 processed += 1
                 firstError = firstError ?: "A recovered artifact has no stored location."
-                onProgress(ExportProgress(processed, entries.size, sourceName, bytes))
+                onProgress(ExportProgress(processed, eligibleEntries.size, sourceName, bytes))
                 return@forEach
             }
 
@@ -232,9 +265,10 @@ class DataExportManager(private val context: Context) {
             )
             if (target == null) {
                 failed += 1
+                recoveryIssues += copyFailureIssue(entry.sourceItem, "Export destination could not be created.")
                 processed += 1
                 firstError = firstError ?: "Could not create $displayName."
-                onProgress(ExportProgress(processed, entries.size, displayName, bytes))
+                onProgress(ExportProgress(processed, eligibleEntries.size, displayName, bytes))
                 return@forEach
             }
 
@@ -246,7 +280,7 @@ class DataExportManager(private val context: Context) {
                     onProgress(
                         ExportProgress(
                             processed,
-                            entries.size,
+                            eligibleEntries.size,
                             displayName,
                             bytes + copied,
                             copied,
@@ -260,14 +294,15 @@ class DataExportManager(private val context: Context) {
             }.onFailure { throwable ->
                 context.contentResolver.delete(target.uri, null, null)
                 failed += 1
+                recoveryIssues += copyFailureIssue(entry.sourceItem, throwable.message)
                 firstError = firstError ?: (throwable.message ?: "Could not export $displayName.")
             }
             processed += 1
             onProgress(
-                ExportProgress(processed, entries.size, displayName, bytes, itemBytes, itemTotal),
+                ExportProgress(processed, eligibleEntries.size, displayName, bytes, itemBytes, itemTotal),
             )
         }
-        return ExportResult(exported, failed, bytes, firstError)
+        return ExportResult(exported, failed, bytes, firstError, selection.excludedItems, recoveryIssues)
     }
 
     fun createUploadArchive(
@@ -276,9 +311,14 @@ class DataExportManager(private val context: Context) {
         onProgress: (ArchiveProgress) -> Unit = {},
     ): ArchiveResult {
         if (entries.isEmpty()) return ArchiveResult(error = "No recovered artifacts are selected for preservation.")
-        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
-        if (invalidItems > 0) {
-            return ArchiveResult(error = provenanceError(invalidItems))
+        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
+        val eligibleEntries = selection.eligibleEntries
+        if (eligibleEntries.isEmpty()) {
+            return ArchiveResult(
+                error = "No selected-source items are eligible. Review the recovery actions and retry.",
+                excludedItems = selection.excludedItems,
+                recoveryIssues = selection.issues,
+            )
         }
 
         val displayName = "PhoneSyncBackup-${timestamp()}.zip"
@@ -306,7 +346,7 @@ class DataExportManager(private val context: Context) {
 
             ZipOutputStream(countingOutput).use { archive ->
                 archive.setLevel(Deflater.NO_COMPRESSION)
-                entries.forEachIndexed { index, entry ->
+                eligibleEntries.forEachIndexed { index, entry ->
                     val source = entry.destination?.let(Uri::parse)
                         ?: error("${entry.sourceItem} has no stored location.")
                     val sourceName = sanitizeName(sourceDisplayName(source, entry))
@@ -319,7 +359,7 @@ class DataExportManager(private val context: Context) {
                     onProgress(
                         ArchiveProgress(
                             index,
-                            entries.size,
+                            eligibleEntries.size,
                             sourceName,
                             currentItemTotal = itemTotal,
                             sourceBytesArchived = sourceBytes,
@@ -347,7 +387,7 @@ class DataExportManager(private val context: Context) {
                                 onProgress(
                                     ArchiveProgress(
                                         index,
-                                        entries.size,
+                                        eligibleEntries.size,
                                         sourceName,
                                         total,
                                         itemTotal,
@@ -386,7 +426,7 @@ class DataExportManager(private val context: Context) {
                     onProgress(
                         ArchiveProgress(
                             index + 1,
-                            entries.size,
+                            eligibleEntries.size,
                             sourceName,
                             copied,
                             itemTotal,
@@ -398,7 +438,8 @@ class DataExportManager(private val context: Context) {
                 val manifest = JSONObject()
                     .put("createdAtEpochMillis", System.currentTimeMillis())
                     .put("externalPeerId", expectedPeerId)
-                    .put("itemCount", entries.size)
+                    .put("itemCount", eligibleEntries.size)
+                    .put("excludedItemCount", selection.excludedItems)
                     .put("sourceBytes", sourceBytes)
                     .put("entries", manifestEntries)
                 archive.putNextEntry(ZipEntry("backup-manifest.json"))
@@ -416,13 +457,19 @@ class DataExportManager(private val context: Context) {
             ArchiveResult(
                 uri = destination,
                 displayName = displayName,
-                archivedItems = entries.size,
+                archivedItems = eligibleEntries.size,
                 sourceBytes = sourceBytes,
                 archiveBytes = countingOutput.bytesWritten,
+                excludedItems = selection.excludedItems,
+                recoveryIssues = selection.issues,
             )
         } catch (throwable: Throwable) {
             context.contentResolver.delete(destination, null, null)
-            ArchiveResult(error = throwable.message ?: throwable.javaClass.simpleName)
+            ArchiveResult(
+                error = throwable.message ?: throwable.javaClass.simpleName,
+                excludedItems = selection.excludedItems,
+                recoveryIssues = selection.issues + copyFailureIssue("Upload archive", throwable.message),
+            )
         }
     }
 
@@ -441,16 +488,6 @@ class DataExportManager(private val context: Context) {
         return queriedName
             ?.takeIf { it.isNotBlank() }
             ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
-    }
-
-    private fun invalidExternalEntries(entries: List<AuditEntry>, expectedPeerId: String?): Int {
-        val expected = expectedPeerId.orEmpty()
-        return entries.count { !it.isExternalSourceFor(expected) }
-    }
-
-    private fun provenanceError(invalidItems: Int): String {
-        return "Refused $invalidItems item(s) without exact selected-USB-source provenance. " +
-            "Collector, legacy, blank-peer, and mixed-peer data cannot be exported."
     }
 
     fun mimeType(entry: AuditEntry): String {

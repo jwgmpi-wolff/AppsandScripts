@@ -6,6 +6,11 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
+Standalone Android tablet reader 1.0.0:
+
+- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk)
+- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk.trust.json)
+
 Windows archive reader 2.4.0:
 
 - [Windows ARM64](releases/PhoneSyncDataReader-2.4.0-win-arm64.zip)
@@ -25,6 +30,8 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 ```
 
 `pushDebugToDevice` performs the same verification before installation, pulls the installed APK back from every device, and verifies it again. Any checksum, signer, package ID, or version mismatch stops the install workflow. Signing keystores and passwords remain outside Git through `.gitignore`.
+
+The tablet reader installs separately as `com.jerrywolff.phonesynctabletreader`. Verify it with the same script by passing the tablet APK and its adjacent trust manifest.
 
 Android does not treat GitHub as an app store, so manual downloads still require the user to approve **Install unknown apps** for the browser or file manager. The repository cannot bypass that Android security prompt.
 
@@ -65,6 +72,7 @@ Passkey private keys held by Google Password Manager, Microsoft Authenticator, S
 - **PTP iPhone sources:** locally available photos and videos exposed by iOS. Phone Sync tries 64-bit chunked, standard chunked, and full-file PTP reads in order.
 - **Android protected data:** use each app's supported export on the external phone and save the export in shared storage before connecting with **File transfer / Android Auto** mode.
 - **Email and chat:** exports must already exist in USB-visible shared storage on the external device.
+- **Owner export actions:** after a scan, **Start owner export actions** provides source-device steps for WhatsApp, Teams, Zoom, Webex, Signal, Telegram, Slack, Google Chat, Discord, Messenger, SMS, calls, mail, and other apps. Complete the owner-controlled export, then choose **Owner exports complete - rescan**.
 - **Voicemail:** export voicemail audio or visual-voicemail data on the external device into USB-visible storage before recovery.
 - **Password vaults:** export on the external device, preferably to an encrypted format such as KeePass `.kdbx`. Phone Sync copies the USB-visible file unchanged and never previews or parses credentials.
 - **Passkeys:** keep the source device unlocked and signed in to its credential provider. Use Microsoft Authenticator or Samsung Pass restore/sync on this device, or the equivalent provider on another device. A copied metadata/export file is not a usable private passkey by itself.
@@ -78,9 +86,11 @@ The Android **Data Reader** tab builds a local SQLite index from the verified re
 
 On Android tablets and unfolded foldables at least 600dp wide, **Auto** uses a Windows-style three-pane layout: Query filters, selectable Records, and record Detail remain visible together with independent scrolling. The Data Reader also provides explicit **Mobile** and **Tablet** layout choices; narrow phone screens stay in the mobile layout.
 
+The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.0.0-android-tablet.apk) imports a Phone Sync backup ZIP through Android's document picker. It validates the external peer, quarantines mixed or collector-origin entries, streams and verifies each accepted item against manifest size and SHA-256, persists the verified source in its own app storage, and opens the same three-pane reader without requiring the collector app.
+
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 
-Every backup target, direct provider handoff, and compatibility ZIP is bound to one selected external USB peer. Blank-peer, mixed-peer, legacy collector, `This Android`, and `Selected folder` rows are refused. ZIP manifests retain the peer ID and source fingerprint so the Windows reader can quarantine contaminated or ambiguous archives.
+Every backup target, direct provider handoff, and compatibility ZIP is bound to one selected external USB peer. In mixed selections, valid selected-peer items continue while blank-peer, other-peer, legacy collector, `This Android`, and `Selected folder` rows are quarantined with reason-coded remediation. ZIP manifests retain the peer ID and source fingerprint so readers can verify accepted items independently.
 
 The native Windows reader under [windows/PhoneSyncDataReader](windows/PhoneSyncDataReader) selects a synchronized or local archive folder directly. It builds an atomic SQLite index under `%LOCALAPPDATA%\PhoneSync\DataReader\Indexes`, offers the same focus and selected-only workflow, searches flattened records and fields, previews loose or ZIP-contained images, and opens voicemail audio without modifying the archive. Exact files deduplicate by source-scoped SHA-256, and logical records deduplicate by canonical field hash within their labeled collection.
 

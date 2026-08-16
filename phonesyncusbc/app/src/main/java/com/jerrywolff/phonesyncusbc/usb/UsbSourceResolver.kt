@@ -28,8 +28,7 @@ data class IdentityReadProgress(
 enum class IdentityReadStage {
     CHECKING_PERMISSION,
     READING_USB_SERIAL,
-    OPENING_MEDIA_SESSION,
-    READING_DEVICE_INFO,
+    READING_USB_DESCRIPTOR,
     CREATING_IDENTITY,
     COMPLETE,
 }
@@ -85,23 +84,22 @@ class UsbSourceResolver(context: Context) {
         check(usbManager.hasPermission(source.device)) { "USB permission is required" }
         onProgress(IdentityReadProgress(IdentityReadStage.READING_USB_SERIAL, 1))
         val usbSerial = runCatching { source.device.serialNumber }.getOrNull()
-        val mtpSerial = if (usbSerial.isNullOrBlank()) {
-            runCatching {
-                onProgress(IdentityReadProgress(IdentityReadStage.OPENING_MEDIA_SESSION, 2))
-                openMtp(source.device)?.use {
-                    onProgress(IdentityReadProgress(IdentityReadStage.READING_DEVICE_INFO, 3))
-                    it.device.deviceInfo?.serialNumber
-                }
-            }.getOrNull()
-        } else {
-            null
-        }
-        onProgress(IdentityReadProgress(IdentityReadStage.CREATING_IDENTITY, 4))
+        onProgress(IdentityReadProgress(IdentityReadStage.READING_USB_DESCRIPTOR, 2))
         val stableSerial = usbSerial?.takeIf(String::isNotBlank)
-            ?: mtpSerial?.takeIf(String::isNotBlank)
-        val serialMaterial = stableSerial
-            ?: "session:${source.device.deviceId}:${source.device.deviceName}"
         val platform = source.detected.platform.name
+        val serialMaterial = stableSerial ?: stableUsbIdentityMaterial(
+            platform = platform,
+            vendorId = source.device.vendorId,
+            productId = source.device.productId,
+            manufacturerName = runCatching { source.device.manufacturerName }.getOrNull(),
+            productName = runCatching { source.device.productName }.getOrNull(),
+            transportSignatures = (0 until source.device.interfaceCount).map { index ->
+                source.device.getInterface(index).let { usbInterface ->
+                    "${usbInterface.interfaceClass}:${usbInterface.interfaceSubclass}:${usbInterface.interfaceProtocol}"
+                }
+            },
+        )
+        onProgress(IdentityReadProgress(IdentityReadStage.CREATING_IDENTITY, 3))
         val identity = PeerIdentity(
             peerId = DeviceIdentity.peerId(
                 platform = platform,
@@ -167,4 +165,23 @@ class UsbSourceResolver(context: Context) {
     }
 }
 
-private const val TOTAL_IDENTITY_READ_STEPS = 5
+internal fun stableUsbIdentityMaterial(
+    platform: String,
+    vendorId: Int,
+    productId: Int,
+    manufacturerName: String?,
+    productName: String?,
+    transportSignatures: List<String>,
+): String {
+    return listOf(
+        "descriptor",
+        platform,
+        vendorId.toString(),
+        productId.toString(),
+        manufacturerName.orEmpty().trim().lowercase(),
+        productName.orEmpty().trim().lowercase(),
+        transportSignatures.sorted().joinToString(","),
+    ).joinToString(":")
+}
+
+private const val TOTAL_IDENTITY_READ_STEPS = 4

@@ -264,13 +264,46 @@ object TransferClassifier {
 
     private fun isChatExport(path: String, fileName: String): Boolean {
         val extension = fileName.substringAfterLast('.', "")
-        val chatName = listOf("whatsapp", "signal", "telegram", "messenger", "chat", "conversation")
+        val chatName = listOf(
+            "whatsapp",
+            "signal",
+            "telegram",
+            "messenger",
+            "microsoft teams",
+            "microsoft_teams",
+            "teams-export",
+            "teams_export",
+            "zoom",
+            "webex",
+            "slack",
+            "discord",
+            "google chat",
+            "google_chat",
+            "meeting-chat",
+            "meeting_chat",
+            "chat",
+            "conversation",
+            "transcript",
+        )
             .any { it in path || it in fileName }
         val explicitExportLocation = listOf("/export", "/backup", "/download", "/phone sync/")
             .any(path::contains)
         if ("whatsapp" in path && extension.startsWith("crypt")) return true
         if ("signal" in path && extension == "backup") return true
-        return chatName && extension in setOf("txt", "json", "html", "xml", "zip", "csv", "db") &&
+        return chatName && extension in setOf(
+            "txt",
+            "json",
+            "html",
+            "htm",
+            "xml",
+            "zip",
+            "csv",
+            "db",
+            "vtt",
+            "srt",
+            "pdf",
+            "docx",
+        ) &&
             (extension != "db" || explicitExportLocation)
     }
 

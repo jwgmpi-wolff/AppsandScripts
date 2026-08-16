@@ -125,7 +125,7 @@ object SourceCapabilityPolicy {
                 CategoryCapability(
                     ConsentCategory.CHAT_EXPORTS,
                     AccessMode.PORTABLE_EXPORT,
-                    "User-created chat exports from the source application",
+                    "Owner-created WhatsApp, Teams, Zoom, Webex, Slack, Signal, Telegram, or other chat exports and transcripts",
                 ),
                 CategoryCapability(
                     ConsentCategory.EMAIL_EXPORTS,
