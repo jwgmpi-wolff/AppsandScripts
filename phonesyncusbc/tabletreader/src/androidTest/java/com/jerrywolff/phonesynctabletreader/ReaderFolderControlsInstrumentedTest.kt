@@ -1,59 +1,65 @@
 package com.jerrywolff.phonesynctabletreader
 
+import android.app.KeyguardManager
+import android.content.Intent
 import android.content.Context
-import android.net.Uri
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.documentfile.provider.DocumentFile
-import androidx.test.core.app.ActivityScenario
-import androidx.test.core.app.ApplicationProvider
+import android.app.UiAutomation
+import android.os.ParcelFileDescriptor
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.After
-import org.junit.Before
-import org.junit.Rule
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class ReaderFolderControlsInstrumentedTest {
-    @get:Rule
-    val composeTestRule = createEmptyComposeRule()
-
-    private lateinit var context: Context
-    private lateinit var testDirectory: File
-
-    @Before
-    fun setUp() {
-        context = ApplicationProvider.getApplicationContext()
-        testDirectory = File(context.cacheDir, "reader-folder-controls-test").apply {
-            deleteRecursively()
-            mkdirs()
-        }
-        File(testDirectory, "messages.json").writeText("""[{"message":"visible control test"}]""")
-        val manager = ExternalFolderSourceManager(context)
-        val treeUri = Uri.fromFile(testDirectory)
-        manager.rememberTreeUri(treeUri)
-        manager.scanRoot(treeUri, DocumentFile.fromFile(testDirectory))
-        context.getSharedPreferences("reader_content_source", Context.MODE_PRIVATE)
-            .edit()
-            .putString("source_mode", "FOLDER")
-            .commit()
-    }
-
-    @After
-    fun tearDown() {
-        File(context.filesDir, "reader-folder-source.json").delete()
-        context.getSharedPreferences("reader_content_source", Context.MODE_PRIVATE).edit().clear().commit()
-        testDirectory.deleteRecursively()
-    }
-
     @Test
-    fun folderReaderShowsChooseAndRefreshContentControls() {
-        ActivityScenario.launch(MainActivity::class.java).use {
-            composeTestRule.waitForIdle()
-            composeTestRule.onNodeWithText("Choose folder", substring = true).fetchSemanticsNode()
-            composeTestRule.onNodeWithText("Refresh folder", substring = true).fetchSemanticsNode()
+    fun folderReaderAlwaysShowsConnectAndResyncControls() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetContext = instrumentation.targetContext
+        val keyguard = targetContext.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        assumeFalse(
+            "The device is behind a secure lock screen; unlock it to run the first-viewport assertion.",
+            keyguard.isDeviceLocked && keyguard.isDeviceSecure,
+        )
+        instrumentation.uiAutomation.runShellCommand("input keyevent KEYCODE_WAKEUP")
+        instrumentation.uiAutomation.runShellCommand("wm dismiss-keyguard")
+        val intent = Intent(targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra(MainActivity.EXTRA_SHOW_FOLDER_ACTIONS_ONLY, true)
+        instrumentation.uiAutomation.executeAndWaitForEvent(
+            { targetContext.startActivity(intent) },
+            { event ->
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                    event.packageName?.toString() == targetContext.packageName
+            },
+            5_000,
+        )
+        instrumentation.waitForIdleSync()
+
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        assertNotNull("The Reader window did not become accessible.", root)
+        val visibleTexts = root.visibleTexts()
+        val windowDetail = "package=${root.packageName}, text=$visibleTexts"
+        assertTrue("Connect folder is not visible; $windowDetail", "Connect folder" in visibleTexts)
+        assertTrue("Resync folder is not visible; $windowDetail", "Resync folder" in visibleTexts)
+    }
+
+    private fun AccessibilityNodeInfo?.visibleTexts(): Set<String> {
+        if (this == null) return emptySet()
+        val values = linkedSetOf<String>()
+        if (isVisibleToUser) text?.toString()?.takeIf(String::isNotBlank)?.let(values::add)
+        for (index in 0 until childCount) {
+            values += getChild(index).visibleTexts()
         }
+        return values
+    }
+
+    private fun UiAutomation.runShellCommand(command: String) {
+        ParcelFileDescriptor.AutoCloseInputStream(executeShellCommand(command)).use { it.readBytes() }
     }
 }

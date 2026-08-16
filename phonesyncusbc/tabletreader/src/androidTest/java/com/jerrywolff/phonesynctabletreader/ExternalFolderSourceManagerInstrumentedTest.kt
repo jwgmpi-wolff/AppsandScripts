@@ -2,6 +2,7 @@ package com.jerrywolff.phonesynctabletreader
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,23 +23,27 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class ExternalFolderSourceManagerInstrumentedTest {
     private lateinit var context: Context
+    private lateinit var manager: ExternalFolderSourceManager
     private lateinit var testDirectory: File
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        manager = ExternalFolderSourceManager(context, TEST_STATE_FILE, TEST_PREFERENCES)
         testDirectory = File(context.cacheDir, "reader-folder-refresh-test").apply {
             deleteRecursively()
             mkdirs()
         }
         context.deleteDatabase(INDEX_DATABASE)
-        File(context.filesDir, "reader-folder-source.json").delete()
+        File(context.filesDir, TEST_STATE_FILE).delete()
+        context.getSharedPreferences(TEST_PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @After
     fun tearDown() {
         context.deleteDatabase(INDEX_DATABASE)
-        File(context.filesDir, "reader-folder-source.json").delete()
+        File(context.filesDir, TEST_STATE_FILE).delete()
+        context.getSharedPreferences(TEST_PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
         testDirectory.deleteRecursively()
     }
 
@@ -58,8 +63,6 @@ class ExternalFolderSourceManagerInstrumentedTest {
         }
         val treeUri = Uri.fromFile(testDirectory)
         val root = DocumentFile.fromFile(testDirectory)
-        val manager = ExternalFolderSourceManager(context)
-
         val first = manager.scanRoot(treeUri, root)
 
         assertEquals(3, first.entries.size)
@@ -140,7 +143,26 @@ class ExternalFolderSourceManagerInstrumentedTest {
         }
     }
 
+    @Test
+    fun waitsForCloudProviderLoadingBeforeAcceptingFolderListing() {
+        val progressItems = mutableListOf<String>()
+        val treeUri = DocumentsContract.buildTreeDocumentUri(
+            LoadingDocumentsProvider.AUTHORITY,
+            LoadingDocumentsProvider.ROOT_ID,
+        )
+
+        val result = manager.scan(treeUri) { update -> progressItems += update.currentItem }
+
+        assertEquals(2, result.entries.size)
+        assertTrue(result.error.isNullOrBlank())
+        assertTrue(result.entries.any { it.sourceItem.endsWith("first.txt") })
+        assertTrue(result.entries.any { it.sourceItem.endsWith("uploaded%2Dlater.txt") })
+        assertTrue(progressItems.any { it.startsWith("Waiting for OneDrive / cloud sync:") })
+    }
+
     private companion object {
         const val INDEX_DATABASE = "external-folder-source-test.sqlite"
+        const val TEST_STATE_FILE = "reader-folder-source-test.json"
+        const val TEST_PREFERENCES = "reader_content_source_test"
     }
 }

@@ -6,10 +6,10 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-Standalone Android tablet reader 1.1.0:
+Standalone Android tablet reader 1.1.1:
 
-- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.0-android-tablet.apk)
-- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.1.0-android-tablet.apk.trust.json)
+- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.1-android-tablet.apk)
+- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.1.1-android-tablet.apk.trust.json)
 
 Windows archive reader 2.4.0:
 
@@ -97,7 +97,7 @@ The Android **Data Reader** tab builds a local SQLite index from the verified re
 
 On Android tablets and unfolded foldables at least 600dp wide, **Auto** uses a Windows-style three-pane layout: Query filters, selectable Records, and record Detail remain visible together with independent scrolling. The Data Reader also provides explicit **Mobile** and **Tablet** layout choices; narrow phone screens stay in the mobile layout.
 
-The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.0-android-tablet.apk) can either import a Phone Sync backup ZIP or browse a selected external-storage folder recursively. Folder access is persisted through Android's system picker; **Refresh folder** detects uploaded, changed, and deleted files, rehashes content, and atomically replaces stale index records. The folder is also rescanned when the Reader launches. Manifest-based archives retain their existing peer, size, and SHA-256 verification. Its green landscape-tablet and document-search icon is intentionally distinct from the collector's blue portrait-phone icon.
+The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.1-android-tablet.apk) can either import a Phone Sync backup ZIP or browse a selected OneDrive or storage folder recursively. **Connect folder** and **Resync folder** remain side by side in the first tablet viewport even when no prior grant survives. Resync requeries cloud folders while Android reports them loading, detects uploaded, changed, and deleted files, rehashes content, and atomically replaces stale index records. If OneDrive returns a partial or failed listing, the Reader retains the last complete snapshot and reports how to retry. The selected folder is also resynced when the Reader launches. Manifest-based archives retain their existing peer, size, and SHA-256 verification. Its green landscape-tablet and document-search icon is intentionally distinct from the collector's blue portrait-phone icon.
 
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 

@@ -1,7 +1,9 @@
 package com.jerrywolff.phonesynctabletreader
 
 import android.content.Context
+import android.database.ContentObserver
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.AtomicFile
 import androidx.documentfile.provider.DocumentFile
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
@@ -14,6 +16,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 data class FolderScanProgress(
     val discoveredFiles: Int,
@@ -33,9 +37,13 @@ data class FolderScanResult(
     val error: String? = null,
 )
 
-class ExternalFolderSourceManager(private val context: Context) {
+class ExternalFolderSourceManager(
+    private val context: Context,
+    private val stateFileName: String = STATE_FILE,
+    private val preferencesName: String = PREFERENCES_NAME,
+) {
     fun selectedTreeUri(): Uri? {
-        val saved = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        val saved = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
             .getString(SELECTED_TREE_URI_KEY, null)
         if (!saved.isNullOrBlank()) return Uri.parse(saved)
         val state = stateFile()
@@ -47,7 +55,7 @@ class ExternalFolderSourceManager(private val context: Context) {
     }
 
     fun rememberTreeUri(treeUri: Uri) {
-        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
             .edit()
             .putString(SELECTED_TREE_URI_KEY, treeUri.toString())
             .apply()
@@ -70,7 +78,7 @@ class ExternalFolderSourceManager(private val context: Context) {
         } else {
             DocumentFile.fromTreeUri(context, treeUri)
         }
-            ?: return failure(treeUri, "Android could not open the selected external-storage folder.")
+            ?: return failure(treeUri, "Android could not open the selected OneDrive or storage folder.")
         return scanRoot(treeUri, root, onProgress)
     }
 
@@ -85,31 +93,31 @@ class ExternalFolderSourceManager(private val context: Context) {
         val files = mutableListOf<FolderDocument>()
         val pendingDirectories = ArrayDeque<FolderDocument>()
         val visitedDirectories = linkedSetOf<String>()
+        val incompleteDirectories = linkedSetOf<String>()
         pendingDirectories.add(FolderDocument(root, ""))
 
         while (pendingDirectories.isNotEmpty()) {
             val current = pendingDirectories.removeFirst()
             if (!visitedDirectories.add(current.document.uri.toString())) continue
-            val children = runCatching { current.document.listFiles().toList() }
-                .getOrElse { throwable ->
-                    issues += issue(
-                        current.relativePath.ifBlank { sourceName },
-                        "Restore read permission for this directory and tap Refresh folder. ${throwable.message.orEmpty()}",
-                    )
-                    emptyList()
-                }
+            val currentPath = current.relativePath.ifBlank { sourceName }
+            val listing = listChildren(treeUri, current.document, currentPath, files.size, onProgress)
+            listing.incompleteReason?.let { detail ->
+                incompleteDirectories += currentPath
+                issues += issue(currentPath, detail)
+            }
+            val children = listing.documents
                 .sortedWith(compareBy({ it.name.orEmpty().lowercase() }, { it.uri.toString() }))
             children.forEachIndexed { index, child ->
-                val childName = child.name?.takeIf(String::isNotBlank) ?: "unnamed-${index + 1}"
+                val childName = child.name.takeIf(String::isNotBlank) ?: "unnamed-${index + 1}"
                 val childPath = listOf(current.relativePath, childName)
                     .filter(String::isNotBlank)
                     .joinToString("/")
                 when {
-                    child.isDirectory -> pendingDirectories.add(FolderDocument(child, childPath))
-                    child.isFile -> files += FolderDocument(child, childPath)
+                    child.isDirectory -> pendingDirectories.add(FolderDocument(child.document, childPath))
+                    child.isFile -> files += FolderDocument(child.document, childPath)
                     else -> issues += issue(
                         childPath,
-                        "This document is neither a readable file nor directory. Restore provider access and tap Refresh folder.",
+                        "This document is neither a readable file nor directory. Restore provider access and tap Resync folder.",
                     )
                 }
             }
@@ -157,7 +165,7 @@ class ExternalFolderSourceManager(private val context: Context) {
             if (readError != null) {
                 issues += issue(
                     file.relativePath,
-                    "Restore access to this file and tap Refresh folder. ${readError.message.orEmpty()}",
+                    "Restore access to this file and tap Resync folder. ${readError.message.orEmpty()}",
                 )
                 return@forEachIndexed
             }
@@ -186,7 +194,7 @@ class ExternalFolderSourceManager(private val context: Context) {
                 issues += issue(
                     file.relativePath,
                     "The file changed while it was read (advertised $advertisedBytes bytes, read $bytesRead). " +
-                        "The verified read is available; tap Refresh folder after uploads finish to capture the final version.",
+                        "The verified read is available; tap Resync folder after uploads finish to capture the final version.",
                 )
             }
             totalBytesRead += bytesRead
@@ -209,13 +217,145 @@ class ExternalFolderSourceManager(private val context: Context) {
             issues = issues,
             scannedAtEpochMillis = scanTime,
             error = if (entries.isEmpty()) {
-                "No readable files were found. Upload files into the selected folder, then tap Refresh folder."
+                "No readable files were found. Upload files into the selected folder, then tap Resync folder."
             } else {
                 null
             },
         )
+        if (incompleteDirectories.isNotEmpty()) {
+            val incompleteDetail = "OneDrive or the cloud provider is still syncing " +
+                "${incompleteDirectories.size} folder(s). The last complete snapshot was kept. " +
+                "Keep the provider online, then tap Resync folder again."
+            val previous = loadSnapshot()?.takeIf { saved ->
+                saved.treeUri == treeUri && saved.entries.isNotEmpty()
+            }
+            return previous?.copy(
+                issues = (previous.issues + issues).distinctBy { recoveryIssue ->
+                    recoveryIssue.sourceItem to recoveryIssue.remediation
+                },
+                scannedAtEpochMillis = scanTime,
+                error = incompleteDetail,
+            ) ?: result.copy(error = incompleteDetail)
+        }
         save(result)
         return result
+    }
+
+    private fun listChildren(
+        treeUri: Uri,
+        directory: DocumentFile,
+        displayPath: String,
+        discoveredFiles: Int,
+        onProgress: (FolderScanProgress) -> Unit,
+    ): ChildListing {
+        if (treeUri.scheme != "content" || !DocumentsContract.isTreeUri(treeUri)) {
+            return runCatching {
+                ChildListing(
+                    documents = directory.listFiles().map { child ->
+                        ListedDocument(
+                            document = child,
+                            name = child.name.orEmpty(),
+                            isDirectory = child.isDirectory,
+                            isFile = child.isFile,
+                        )
+                    },
+                )
+            }.getOrElse { throwable ->
+                ChildListing(
+                    documents = emptyList(),
+                    incompleteReason = "Restore read permission for this directory and tap Resync folder. " +
+                        throwable.message.orEmpty(),
+                )
+            }
+        }
+
+        val parentDocumentId = runCatching { DocumentsContract.getDocumentId(directory.uri) }
+            .getOrElse { throwable ->
+                return ChildListing(
+                    documents = emptyList(),
+                    incompleteReason = "The cloud provider returned an invalid folder identifier. " +
+                        "Reconnect the folder and resync. ${throwable.message.orEmpty()}",
+                )
+            }
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
+        var lastDocuments = emptyList<ListedDocument>()
+
+        repeat(PROVIDER_QUERY_ATTEMPTS) { attempt ->
+            val query = runCatching { queryProviderChildren(treeUri, childrenUri) }
+                .getOrElse { throwable ->
+                    return ChildListing(
+                        documents = lastDocuments,
+                        incompleteReason = "OneDrive or the cloud provider could not list this folder. " +
+                            "Reconnect it and tap Resync folder. ${throwable.message.orEmpty()}",
+                    )
+                }
+            lastDocuments = query.documents
+            if (!query.loading) return ChildListing(lastDocuments)
+
+            onProgress(
+                FolderScanProgress(
+                    discoveredFiles = discoveredFiles + lastDocuments.count(ListedDocument::isFile),
+                    processedFiles = 0,
+                    totalFiles = 0,
+                    currentItem = "Waiting for OneDrive / cloud sync: $displayPath",
+                    bytesRead = 0,
+                ),
+            )
+            if (attempt < PROVIDER_QUERY_ATTEMPTS - 1) awaitProviderChange(childrenUri)
+        }
+
+        return ChildListing(
+            documents = lastDocuments,
+            incompleteReason = "OneDrive or the cloud provider is still loading this folder. " +
+                "Keep it online and tap Resync folder again.",
+        )
+    }
+
+    private fun queryProviderChildren(treeUri: Uri, childrenUri: Uri): ProviderQuery {
+        val documents = mutableListOf<ListedDocument>()
+        val cursor = context.contentResolver.query(
+            childrenUri,
+            PROVIDER_PROJECTION,
+            null,
+            null,
+            null,
+        ) ?: return ProviderQuery(emptyList(), loading = true)
+        cursor.use {
+            val loading = it.extras?.getBoolean(DocumentsContract.EXTRA_LOADING, false) == true
+            val idColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            while (it.moveToNext()) {
+                val documentId = it.getString(idColumn)
+                val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+                val document = DocumentFile.fromSingleUri(context, documentUri) ?: continue
+                val mimeType = it.getString(mimeColumn).orEmpty()
+                documents += ListedDocument(
+                    document = document,
+                    name = it.getString(nameColumn).orEmpty(),
+                    isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR,
+                    isFile = mimeType.isNotBlank() && mimeType != DocumentsContract.Document.MIME_TYPE_DIR,
+                )
+            }
+            return ProviderQuery(documents, loading)
+        }
+    }
+
+    private fun awaitProviderChange(uri: Uri) {
+        val changed = CountDownLatch(1)
+        val observer = object : ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) {
+                changed.countDown()
+            }
+        }
+        runCatching {
+            context.contentResolver.registerContentObserver(uri, true, observer)
+            try {
+                changed.await(PROVIDER_QUERY_WAIT_MILLIS, TimeUnit.MILLISECONDS)
+            } finally {
+                context.contentResolver.unregisterContentObserver(observer)
+            }
+        }
     }
 
     fun loadSnapshot(): FolderScanResult? {
@@ -363,14 +503,40 @@ class ExternalFolderSourceManager(private val context: Context) {
         for (index in 0 until length()) optJSONObject(index)?.let { add(transform(it)) }
     }
 
-    private fun stateFile() = File(context.filesDir, STATE_FILE)
+    private fun stateFile() = File(context.filesDir, stateFileName)
 
     private data class FolderDocument(
         val document: DocumentFile,
         val relativePath: String,
     )
 
+    private data class ListedDocument(
+        val document: DocumentFile,
+        val name: String,
+        val isDirectory: Boolean,
+        val isFile: Boolean,
+    ) {
+        val uri: Uri get() = document.uri
+    }
+
+    private data class ChildListing(
+        val documents: List<ListedDocument>,
+        val incompleteReason: String? = null,
+    )
+
+    private data class ProviderQuery(
+        val documents: List<ListedDocument>,
+        val loading: Boolean,
+    )
+
     private companion object {
+        val PROVIDER_PROJECTION = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        const val PROVIDER_QUERY_ATTEMPTS = 8
+        const val PROVIDER_QUERY_WAIT_MILLIS = 750L
         const val STATE_FILE = "reader-folder-source.json"
         const val PREFERENCES_NAME = "reader_content_source"
         const val SELECTED_TREE_URI_KEY = "selected_tree_uri"

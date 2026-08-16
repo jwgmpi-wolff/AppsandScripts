@@ -2,6 +2,7 @@ package com.jerrywolff.phonesynctabletreader
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -46,7 +48,27 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { TabletReaderApp() }
+        val showFolderActionsOnly = intent.getBooleanExtra(EXTRA_SHOW_FOLDER_ACTIONS_ONLY, false) &&
+            packageManager.checkSignatures(packageName, "$packageName.test") == PackageManager.SIGNATURE_MATCH
+        setContent {
+            if (showFolderActionsOnly) {
+                MaterialTheme {
+                    ReaderFolderActions(
+                        busy = false,
+                        resyncing = false,
+                        onConnect = {},
+                        onResync = {},
+                    )
+                }
+            } else {
+                TabletReaderApp()
+            }
+        }
+    }
+
+    companion object {
+        internal const val EXTRA_SHOW_FOLDER_ACTIONS_ONLY =
+            "com.jerrywolff.phonesynctabletreader.extra.SHOW_FOLDER_ACTIONS_ONLY"
     }
 }
 
@@ -92,7 +114,7 @@ private fun TabletReaderApp() {
             when (initialMode) {
                 ReaderContentMode.ARCHIVE -> initialArchive?.let { "Verified ${it.entries.size} archive item(s)." }
                 ReaderContentMode.FOLDER -> initialFolder?.let { "Loaded ${it.entries.size} folder file(s)." }
-            } ?: "Choose an external-storage folder or open a Phone Sync backup archive.",
+            } ?: "Connect a OneDrive or storage folder, or open a Phone Sync backup archive.",
         )
     }
 
@@ -102,11 +124,12 @@ private fun TabletReaderApp() {
     }
 
     fun scanFolder(treeUri: Uri) {
+        if (folderScanning || importing) return
         selectMode(ReaderContentMode.FOLDER)
         folderSourceManager.rememberTreeUri(treeUri)
         folderScanning = true
         folderProgress = null
-        status = "Scanning the selected external-storage folder recursively..."
+        status = "Resyncing the selected OneDrive or storage folder recursively..."
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 folderSourceManager.scan(treeUri) { update ->
@@ -115,10 +138,10 @@ private fun TabletReaderApp() {
             }
             folderScanning = false
             folderSource = result
-            status = if (result.entries.isNotEmpty()) {
-                "Refreshed ${result.entries.size} file(s) from ${result.sourceName}."
+            status = result.error ?: if (result.entries.isNotEmpty()) {
+                "Resynced ${result.entries.size} file(s) from ${result.sourceName}."
             } else {
-                result.error ?: "No readable files were found in the selected folder."
+                "No readable files were found in the selected folder."
             }
             showReader = result.entries.isNotEmpty()
         }
@@ -136,6 +159,16 @@ private fun TabletReaderApp() {
             return@rememberLauncherForActivityResult
         }
         scanFolder(uri)
+    }
+
+    fun resyncFolder() {
+        val treeUri = folderSourceManager.selectedTreeUri()
+        if (treeUri != null && folderSourceManager.hasPersistedReadAccess(treeUri)) {
+            scanFolder(treeUri)
+        } else {
+            status = "Select the OneDrive or storage folder again to restore access and resync."
+            folderPicker.launch(treeUri)
+        }
     }
 
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -171,7 +204,7 @@ private fun TabletReaderApp() {
                     scanFolder(treeUri)
                 } else {
                     showReader = false
-                    status = "Folder access expired. Choose the external-storage folder again to refresh its content."
+                    status = "Folder access expired. Reconnect the OneDrive or storage folder to resync its content."
                 }
             }
         }
@@ -219,15 +252,8 @@ private fun TabletReaderApp() {
                         onBack = { showReader = false },
                         contentSourceLabel = currentContent.sourceLabel,
                         contentRefreshing = folderScanning,
-                        onChooseContentSource = { folderPicker.launch(null) },
-                        onRefreshContent = if (sourceMode == ReaderContentMode.FOLDER) {
-                            {
-                                folderSourceManager.selectedTreeUri()?.let(::scanFolder)
-                                    ?: run { status = "Choose an external-storage folder first." }
-                            }
-                        } else {
-                            null
-                        },
+                        onChooseContentSource = { folderPicker.launch(folderSourceManager.selectedTreeUri()) },
+                        onRefreshContent = ::resyncFolder,
                     )
                 }
                 return@Scaffold
@@ -237,25 +263,13 @@ private fun TabletReaderApp() {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text("Tablet recovery data reader", style = MaterialTheme.typography.headlineMedium)
-                Text("Choose an external-storage folder for recursive browsing and refresh, or open a verified Phone Sync backup archive.")
-                Button(
-                    onClick = { folderPicker.launch(null) },
-                    enabled = !folderScanning && !importing,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Choose external-storage folder")
-                }
-                if (folderSourceManager.selectedTreeUri() != null) {
-                    OutlinedButton(
-                        onClick = {
-                            folderSourceManager.selectedTreeUri()?.let(::scanFolder)
-                        },
-                        enabled = !folderScanning && !importing,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (folderScanning) "Refreshing folder..." else "Refresh selected folder")
-                    }
-                }
+                Text("Connect a OneDrive or storage folder for recursive browsing and resync, or open a verified Phone Sync backup archive.")
+                ReaderFolderActions(
+                    busy = folderScanning || importing,
+                    resyncing = folderScanning,
+                    onConnect = { folderPicker.launch(folderSourceManager.selectedTreeUri()) },
+                    onResync = ::resyncFolder,
+                )
                 Button(
                     onClick = { archivePicker.launch(arrayOf("application/zip", "application/octet-stream")) },
                     enabled = !importing,
@@ -319,6 +333,34 @@ private fun TabletReaderApp() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun ReaderFolderActions(
+    busy: Boolean,
+    resyncing: Boolean,
+    onConnect: () -> Unit,
+    onResync: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onConnect,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Connect folder")
+        }
+        OutlinedButton(
+            onClick = onResync,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(if (resyncing) "Resyncing..." else "Resync folder")
         }
     }
 }
