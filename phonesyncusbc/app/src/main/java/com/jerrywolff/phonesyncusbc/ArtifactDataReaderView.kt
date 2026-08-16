@@ -86,6 +86,10 @@ fun ArtifactDataReaderView(
     database: ArtifactIndexDatabase,
     indexer: ArtifactIndexer,
     onBack: () -> Unit,
+    contentSourceLabel: String? = null,
+    contentRefreshing: Boolean = false,
+    onChooseContentSource: (() -> Unit)? = null,
+    onRefreshContent: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var indexing by remember { mutableStateOf(false) }
@@ -279,6 +283,10 @@ fun ArtifactDataReaderView(
             onBack = onBack,
             onRebuild = ::rebuildIndex,
             onExport = ::exportIndex,
+            contentSourceLabel = contentSourceLabel,
+            contentRefreshing = contentRefreshing,
+            onChooseContentSource = onChooseContentSource,
+            onRefreshContent = onRefreshContent,
         )
         return
     }
@@ -298,6 +306,21 @@ fun ArtifactDataReaderView(
                 "JSON records and every allowed SMS ZIP item are indexed locally. Password artifacts are excluded.",
                 style = MaterialTheme.typography.bodySmall,
             )
+            contentSourceLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (onChooseContentSource != null || onRefreshContent != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    onChooseContentSource?.let { chooseSource ->
+                        OutlinedButton(onClick = chooseSource, enabled = !indexing && !contentRefreshing) {
+                            Text("Choose folder")
+                        }
+                    }
+                    onRefreshContent?.let { refreshContent ->
+                        Button(onClick = refreshContent, enabled = !indexing && !contentRefreshing) {
+                            Text(if (contentRefreshing) "Refreshing folder..." else "Refresh folder")
+                        }
+                    }
+                }
+            }
             ReaderLayoutSelector(
                 preference = layoutPreference,
                 tabletAvailable = tabletAvailable,
@@ -494,6 +517,10 @@ private fun TabletReaderLayout(
     onBack: () -> Unit,
     onRebuild: () -> Unit,
     onExport: () -> Unit,
+    contentSourceLabel: String?,
+    contentRefreshing: Boolean,
+    onChooseContentSource: (() -> Unit)?,
+    onRefreshContent: (() -> Unit)?,
 ) {
     Card(Modifier.fillMaxWidth().height(height)) {
         Column(Modifier.fillMaxSize()) {
@@ -524,6 +551,27 @@ private fun TabletReaderLayout(
                     onSelected = onLayoutPreferenceChanged,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (contentSourceLabel != null || onChooseContentSource != null || onRefreshContent != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        contentSourceLabel?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        }
+                        onChooseContentSource?.let { chooseSource ->
+                            OutlinedButton(onClick = chooseSource, enabled = !indexing && !contentRefreshing) {
+                                Text("Choose folder")
+                            }
+                        }
+                        onRefreshContent?.let { refreshContent ->
+                            Button(onClick = refreshContent, enabled = !indexing && !contentRefreshing) {
+                                Text(if (contentRefreshing) "Refreshing folder..." else "Refresh folder")
+                            }
+                        }
+                    }
+                }
                 if (indexing) {
                     val fraction = progress?.takeIf { it.totalArtifacts > 0 }
                         ?.let { it.processedArtifacts.toFloat() / it.totalArtifacts }

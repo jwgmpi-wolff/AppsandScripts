@@ -52,7 +52,8 @@ class ArtifactIndexer(
             var firstError: String? = null
 
             sourceEntries.forEachIndexed { index, entry ->
-                val currentName = entry.sourceItem.substringAfterLast('/').ifBlank { "artifact-${entry.id}" }
+                val displaySourceItem = entry.displaySourceItem()
+                val currentName = displaySourceItem.substringAfterLast('/').ifBlank { "artifact-${entry.id}" }
                 onProgress(
                     ArtifactIndexProgress(
                         index,
@@ -112,14 +113,14 @@ class ArtifactIndexer(
         sourceWriter: ArtifactIndexDatabase.SourceArtifactWriter,
     ): ArtifactParseOutcome {
         val destination = entry.destination?.let(Uri::parse)
-            ?: error("${entry.sourceItem} has no readable destination URI.")
+            ?: error("${entry.displaySourceItem()} has no readable destination URI.")
         return sourceWriter.replaceArtifact(metadata) { writer ->
             context.contentResolver.openInputStream(destination).use { input ->
-                checkNotNull(input) { "Android could not open ${entry.sourceItem}." }
+                checkNotNull(input) { "Android could not open ${entry.displaySourceItem()}." }
                 when (entry.extension()) {
                     "zip" -> parseZip(input, entry, writer)
-                    "jsonl", "ndjson" -> parseJsonLines(input, entry.sourceItem, entry.category, writer)
-                    else -> parseJson(input, entry.sourceItem, entry.category, writer)
+                    "jsonl", "ndjson" -> parseJsonLines(input, entry.displaySourceItem(), entry.category, writer)
+                    else -> parseJson(input, entry.displaySourceItem(), entry.category, writer)
                 }
             }
         }
@@ -130,26 +131,27 @@ class ArtifactIndexer(
         metadata: ArtifactIndexMetadata,
         sourceWriter: ArtifactIndexDatabase.SourceArtifactWriter,
     ): ArtifactParseOutcome {
+        val displaySourceItem = entry.displaySourceItem()
         return sourceWriter.replaceArtifact(metadata) { writer ->
             val modified = entry.sourceModifiedAtEpochMillis.takeIf { it > 0 }
                 ?.let { Instant.ofEpochMilli(it).toString() }
             val fields = buildList {
-                add(FlattenedJsonField("file.name", "name", FlattenedValueType.STRING, entry.sourceItem.substringAfterLast('/')))
-                add(FlattenedJsonField("file.path", "path", FlattenedValueType.STRING, entry.sourceItem))
+                add(FlattenedJsonField("file.name", "name", FlattenedValueType.STRING, displaySourceItem.substringAfterLast('/')))
+                add(FlattenedJsonField("file.path", "path", FlattenedValueType.STRING, displaySourceItem))
                 add(FlattenedJsonField("file.mimeType", "mimeType", FlattenedValueType.STRING, metadata.mimeType))
                 add(FlattenedJsonField("file.bytes", "bytes", FlattenedValueType.NUMBER, entry.bytesTransferred.toString()))
                 entry.contentSha256?.let { add(FlattenedJsonField("file.sha256", "sha256", FlattenedValueType.STRING, it)) }
                 modified?.let { add(FlattenedJsonField("file.modifiedUtc", "modifiedUtc", FlattenedValueType.STRING, it)) }
             }
             writer.insert(
-                jsonSource = entry.sourceItem,
+                jsonSource = displaySourceItem,
                 category = entry.category,
                 record = FlattenedJsonRecord(
                     recordIndex = 0,
                     recordType = recoveredFileType(entry),
                     recordKind = recordKindForArchiveEntry(entry.category),
-                    title = entry.sourceItem.substringAfterLast('/').ifBlank { "Recovered file" },
-                    summary = "${formatBytes(entry.bytesTransferred)} · ${entry.sourceItem}",
+                    title = displaySourceItem.substringAfterLast('/').ifBlank { "Recovered file" },
+                    summary = "${formatBytes(entry.bytesTransferred)} · $displaySourceItem",
                     timestamp = modified,
                     fields = fields,
                 ),
@@ -173,7 +175,8 @@ class ArtifactIndexer(
         var records = 0
         var fields = 0
         var jsonEntries = 0
-        val detectedArchiveCategory = TransferClassifier.classify(entry.sourceItem)
+        val displaySourceItem = entry.displaySourceItem()
+        val detectedArchiveCategory = TransferClassifier.classify(displaySourceItem)
         val archiveCategory = if (
             entry.category == ConsentCategory.SMS_EXPORTS || detectedArchiveCategory == ConsentCategory.SMS_EXPORTS
         ) {
@@ -185,7 +188,7 @@ class ArtifactIndexer(
             while (true) {
                 val zipEntry = archive.nextEntry ?: break
                 if (!zipEntry.isDirectory) {
-                    val virtualPath = "${entry.sourceItem}/${zipEntry.name}"
+                    val virtualPath = "$displaySourceItem/${zipEntry.name}"
                     val detectedNestedCategory = TransferClassifier.classify(virtualPath)
                     val standaloneCategory = TransferClassifier.classify(zipEntry.name)
                     if (
@@ -213,7 +216,7 @@ class ArtifactIndexer(
                         val record = readArchiveEntryRecord(
                             input = archive,
                             zipEntry = zipEntry,
-                            containerPath = entry.sourceItem,
+                            containerPath = displaySourceItem,
                             detectedCategory = standaloneCategory,
                             recordIndex = records,
                         )
@@ -346,19 +349,22 @@ class ArtifactIndexer(
     }
 
     private fun AuditEntry.toIndexMetadata(sourceId: String, sourceName: String): ArtifactIndexMetadata {
+        val displaySourceItem = displaySourceItem()
         return ArtifactIndexMetadata(
             transferId = id,
             sourceId = sourceId,
             sourceName = sourceName,
             category = category,
-            sourcePath = sourceItem,
+            sourcePath = displaySourceItem,
             destinationUri = destination,
             mimeType = DataExportManager(context).mimeType(this),
             bytes = bytesTransferred,
             sha256 = contentSha256,
-            folderMetadata = deriveFolderMetadata(sourceItem, category),
+            folderMetadata = deriveFolderMetadata(displaySourceItem, category),
         )
     }
+
+    private fun AuditEntry.displaySourceItem(): String = Uri.decode(sourceItem)
 
     private fun AuditEntry.canContainJson(): Boolean {
         return extension() in JSON_EXTENSIONS || sourceItem.lowercase(Locale.US).endsWith(".json.zip")

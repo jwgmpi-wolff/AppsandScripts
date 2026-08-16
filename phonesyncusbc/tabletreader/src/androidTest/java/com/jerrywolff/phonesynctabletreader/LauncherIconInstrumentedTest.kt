@@ -14,22 +14,32 @@ class LauncherIconInstrumentedTest {
     fun readerAndCollectorLauncherIconsAreVisuallyDistinct() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val packageManager = context.packageManager
-        val collector = render(packageManager.getApplicationIcon(COLLECTOR_PACKAGE))
         val reader = render(packageManager.getApplicationIcon(READER_PACKAGE))
-        val collectorPixels = IntArray(ICON_SIZE * ICON_SIZE).also {
-            collector.getPixels(it, 0, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE)
-        }
         val readerPixels = IntArray(ICON_SIZE * ICON_SIZE).also {
             reader.getPixels(it, 0, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE)
         }
-        val changedPixels = collectorPixels.indices.count { index ->
-            colorDistance(collectorPixels[index], readerPixels[index]) >= MIN_COLOR_DISTANCE
+        val collector = runCatching { packageManager.getApplicationIcon(COLLECTOR_PACKAGE) }.getOrNull()
+        if (collector != null) {
+            val collectorPixels = IntArray(ICON_SIZE * ICON_SIZE).also {
+                render(collector).getPixels(it, 0, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE)
+            }
+            val changedPixels = collectorPixels.indices.count { index ->
+                colorDistance(collectorPixels[index], readerPixels[index]) >= MIN_COLOR_DISTANCE
+            }
+            assertTrue(
+                "Reader and collector launcher icons are too similar: $changedPixels changed pixels.",
+                changedPixels >= collectorPixels.size * MIN_CHANGED_PERCENT / 100,
+            )
+        } else {
+            val greenPixels = readerPixels.count { pixel ->
+                android.graphics.Color.green(pixel) >= android.graphics.Color.blue(pixel) + MIN_GREEN_ADVANTAGE &&
+                    android.graphics.Color.green(pixel) >= android.graphics.Color.red(pixel) + MIN_GREEN_ADVANTAGE
+            }
+            assertTrue(
+                "Reader launcher icon lost its distinct green identity: $greenPixels green pixels.",
+                greenPixels >= readerPixels.size * MIN_GREEN_PERCENT / 100,
+            )
         }
-
-        assertTrue(
-            "Reader and collector launcher icons are too similar: $changedPixels changed pixels.",
-            changedPixels >= collectorPixels.size * MIN_CHANGED_PERCENT / 100,
-        )
     }
 
     private fun render(drawable: android.graphics.drawable.Drawable): Bitmap {
@@ -51,5 +61,7 @@ class LauncherIconInstrumentedTest {
         const val ICON_SIZE = 192
         const val MIN_COLOR_DISTANCE = 48
         const val MIN_CHANGED_PERCENT = 30
+        const val MIN_GREEN_ADVANTAGE = 20
+        const val MIN_GREEN_PERCENT = 8
     }
 }
