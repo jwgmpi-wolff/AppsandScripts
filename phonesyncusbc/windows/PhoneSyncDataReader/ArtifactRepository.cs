@@ -46,7 +46,13 @@ public sealed class ArtifactRepository : IDisposable
         return result;
     }
 
-    public IReadOnlyList<RecordRow> Search(string query, string? sourceId, string? kind, int limit = 500)
+    public IReadOnlyList<RecordRow> Search(
+        string query,
+        string? sourceId,
+        string? kind,
+        RecordFocus focus = RecordFocus.All,
+        IReadOnlyCollection<long>? recordIds = null,
+        int limit = 500)
     {
         var conditions = new List<string>();
         using var command = _connection.CreateCommand();
@@ -59,6 +65,38 @@ public sealed class ArtifactRepository : IDisposable
         {
             conditions.Add("r.record_kind=$kind");
             command.Parameters.AddWithValue("$kind", kind);
+        }
+        switch (focus)
+        {
+            case RecordFocus.Images:
+                var imageConditions = ImageExtensions.Select((_, index) => $"LOWER(COALESCE(r.archive_entry,a.relative_path)) LIKE $image{index}").ToArray();
+                conditions.Add("(" + string.Join(" OR ", imageConditions) + ")");
+                for (var index = 0; index < ImageExtensions.Length; index++)
+                    command.Parameters.AddWithValue($"$image{index}", $"%.{ImageExtensions[index]}");
+                break;
+            case RecordFocus.Messages:
+                conditions.Add("r.record_kind='Message' AND r.category NOT IN ('SMS_EXPORTS','VOICEMAIL_EXPORTS')");
+                break;
+            case RecordFocus.Sms:
+                conditions.Add("r.category='SMS_EXPORTS'");
+                break;
+            case RecordFocus.Voicemails:
+                conditions.Add("r.category='VOICEMAIL_EXPORTS'");
+                break;
+        }
+        if (recordIds is not null)
+        {
+            var ids = recordIds.Take(900).ToArray();
+            if (ids.Length == 0)
+            {
+                conditions.Add("1=0");
+            }
+            else
+            {
+                var parameters = ids.Select((_, index) => $"$record{index}").ToArray();
+                conditions.Add("r.id IN (" + string.Join(',', parameters) + ")");
+                for (var index = 0; index < ids.Length; index++) command.Parameters.AddWithValue(parameters[index], ids[index]);
+            }
         }
         if (!string.IsNullOrWhiteSpace(query))
         {
@@ -128,6 +166,9 @@ public sealed class ArtifactRepository : IDisposable
 
     private static string EscapeLike(string value) => value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
     private static string Friendly(string value) => string.Concat(value.Select((character, index) => index > 0 && char.IsUpper(character) ? $" {character}" : character.ToString()));
+
+    private static readonly string[] ImageExtensions =
+    ["bmp", "dng", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp"];
 
     public void Dispose() => _connection.Dispose();
 }

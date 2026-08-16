@@ -6,10 +6,12 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-Windows archive reader 2.2.0:
+Windows archive reader 2.3.1:
 
-- [Windows ARM64](releases/PhoneSyncDataReader-2.2.0-win-arm64.zip)
-- [Windows x64](releases/PhoneSyncDataReader-2.2.0-win-x64.zip)
+- [Windows ARM64](releases/PhoneSyncDataReader-2.3.1-win-arm64.zip)
+- [Windows x64](releases/PhoneSyncDataReader-2.3.1-win-x64.zip)
+
+Install the matching Windows package with `./scripts/install_windows_reader.ps1 -Launch`. It creates **Phone Sync Data Reader** shortcuts on the Desktop and Start menu.
 
 ## Trusted Repository APK
 
@@ -69,11 +71,13 @@ Phone Sync never reports protected data as recovered unless the source actually 
 
 ## Parsed Data Readers
 
-The Android **Parsed data reader** builds a local SQLite index from the verified recovery set for the selected external source. It streams JSON and JSONL records, flattens nested fields, derives source and collection labels from folders and ZIP entry paths, and supports source/type filters, search, and full field detail.
+The Android **Data Reader** tab builds a local SQLite index from the verified recovery set for the selected external source. It streams JSON and JSONL records, flattens nested fields, derives source and collection labels from folders and ZIP entry paths, and provides scrollable Images, Messages, SMS, and Voicemails focus filters. Results can be selected individually or by page, narrowed to selected-only, searched, and opened for message detail, full-size image viewing, or voicemail playback.
 
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 
-The native Windows reader under [windows/PhoneSyncDataReader](windows/PhoneSyncDataReader) selects a synchronized or local archive folder directly. It builds an atomic SQLite index under `%LOCALAPPDATA%\PhoneSync\DataReader\Indexes`, searches flattened records and fields, and previews loose or ZIP-contained images without modifying the archive. Exact files deduplicate by source-scoped SHA-256, and logical records deduplicate by canonical field hash within their labeled collection.
+Every backup target, direct provider handoff, and compatibility ZIP is bound to one selected external USB peer. Blank-peer, mixed-peer, legacy collector, `This Android`, and `Selected folder` rows are refused. ZIP manifests retain the peer ID and source fingerprint so the Windows reader can quarantine contaminated or ambiguous archives.
+
+The native Windows reader under [windows/PhoneSyncDataReader](windows/PhoneSyncDataReader) selects a synchronized or local archive folder directly. It builds an atomic SQLite index under `%LOCALAPPDATA%\PhoneSync\DataReader\Indexes`, offers the same focus and selected-only workflow, searches flattened records and fields, previews loose or ZIP-contained images, and opens voicemail audio without modifying the archive. Exact files deduplicate by source-scoped SHA-256, and logical records deduplicate by canonical field hash within their labeled collection.
 
 ## iPhone Photos Missing
 

@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using Newtonsoft.Json.Linq;
 
 namespace PhoneSyncDataReader;
 
@@ -191,10 +192,13 @@ public sealed class ArchiveIndexer
         var archiveClassification = ArchiveClassifier.Classify(relativePath);
         var isSmsArchive = archiveClassification.Category == "SMS_EXPORTS";
         using var archive = ZipFile.OpenRead(fullPath);
+        var trustedManifestPaths = TrustedManifestPaths(archive);
         foreach (var entry in archive.Entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(entry.Name)) continue;
+            if (entry.FullName.Equals("backup-manifest.json", StringComparison.OrdinalIgnoreCase)) continue;
+            if (trustedManifestPaths is not null && !trustedManifestPaths.Contains(NormalizeEntry(entry.FullName))) continue;
             var virtualPath = $"{relativePath}!/{entry.FullName}";
             if (ArchiveClassifier.IsCollectorOwnedPath(virtualPath)) continue;
             var classification = ArchiveClassifier.Classify(virtualPath);
@@ -231,6 +235,38 @@ public sealed class ArchiveIndexer
         }
         return new(parsedJson ? "PARSED" : "NO_JSON", records, fields, null);
     }
+
+    private static HashSet<string>? TrustedManifestPaths(ZipArchive archive)
+    {
+        var manifestEntry = archive.Entries.FirstOrDefault(entry =>
+            entry.FullName.Equals("backup-manifest.json", StringComparison.OrdinalIgnoreCase));
+        if (manifestEntry is null) return null;
+        using var input = manifestEntry.Open();
+        using var text = new StreamReader(input, Encoding.UTF8, true, 64 * 1024);
+        var manifest = JObject.Parse(text.ReadToEnd());
+        var externalPeerId = manifest.Value<string>("externalPeerId");
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(externalPeerId)) return allowed;
+        foreach (var item in manifest["entries"]?.OfType<JObject>() ?? [])
+        {
+            var peerId = item.Value<string>("peerId");
+            var fingerprint = item.Value<string>("sourceFingerprint");
+            var sourceItem = item.Value<string>("sourceItem");
+            var archivePath = item.Value<string>("archivePath");
+            if (!string.Equals(peerId, externalPeerId, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(fingerprint) ||
+                string.IsNullOrWhiteSpace(sourceItem) ||
+                string.IsNullOrWhiteSpace(archivePath) ||
+                ArchiveClassifier.IsCollectorOwnedPath(sourceItem))
+            {
+                continue;
+            }
+            allowed.Add(NormalizeEntry(archivePath));
+        }
+        return allowed;
+    }
+
+    private static string NormalizeEntry(string path) => path.Replace('\\', '/').TrimStart('/');
 
     private static ArtifactOutcome ParseJsonStream(
         IndexWriter writer,

@@ -48,13 +48,6 @@ public static class ArchiveClassifier
             return new("PASSWORD_EXPORTS", RecordKind.Generic, true, false, false, false);
         }
 
-        var isImage = ImageExtensions.Contains(extension);
-        var isVideo = VideoExtensions.Contains(extension);
-        if (isImage || isVideo)
-        {
-            return new("PHOTOS_AND_VIDEOS", RecordKind.Media, false, false, isImage, isVideo);
-        }
-
         var isJson = extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".jsonl", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".ndjson", StringComparison.OrdinalIgnoreCase);
@@ -75,6 +68,12 @@ public static class ArchiveClassifier
             return new("NOTIFICATION_EXPORTS", RecordKind.Notification, false, isJson, false, false);
         if (ContainsAny(normalized, "/voicemail/", "/voicemails/", "/voicemail_exports/", "/voicemail-exports/", "visual-voicemail", "visual_voicemail", "voicemail-", "voicemail_"))
             return new("VOICEMAIL_EXPORTS", RecordKind.Message, false, isJson, false, false);
+        var isImage = ImageExtensions.Contains(extension);
+        var isVideo = VideoExtensions.Contains(extension);
+        if (isImage || isVideo)
+        {
+            return new("PHOTOS_AND_VIDEOS", RecordKind.Media, false, false, isImage, isVideo);
+        }
         if (extension is ".log" or ".evtx" or ".etl" || ContainsAny(normalized, "/logs/", "/log/", "crash", "diagnostic"))
             return new("LOGS", RecordKind.Log, false, isJson, false, false);
         if (ContainsAny(normalized, "system-info", "system_information", "device-info", "bugreport", "build.prop"))
@@ -116,7 +115,12 @@ public static class ArchiveClassifier
         return normalized.Contains("/phone sync/this android/") ||
                normalized.Contains("/phonesync/this android/") ||
                normalized.Contains("/phone sync/local-android/") ||
-               normalized.Contains("/phonesync/local-android/");
+             normalized.Contains("/phonesync/local-android/") ||
+             normalized.Contains("/phone sync/selected folder/") ||
+             normalized.Contains("/phonesync/selected folder/") ||
+             normalized.Contains("/phone sync backups/") ||
+             normalized.Contains("/phone sync uploads/") ||
+             normalized.Contains("/phone sync/data reader/");
     }
 
     private static string Normalize(string path) => path.Replace('\\', '/').ToLowerInvariant();

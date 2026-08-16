@@ -4,12 +4,12 @@ Native Windows reader for an archived Phone Sync recovery folder.
 
 ## Download
 
-- [Windows ARM64](../../releases/PhoneSyncDataReader-2.2.0-win-arm64.zip)  
-	SHA-256: `09d02f75d12e9339c32aaf7c29ec69b3ea16a9d02bf2623fc1cd7f12c4aebb29`
-- [Windows x64](../../releases/PhoneSyncDataReader-2.2.0-win-x64.zip)  
-	SHA-256: `afb8a4769718b1c7c179787c972472e79487321418d2c9a67bf1e3a768111ca3`
+- [Windows ARM64](../../releases/PhoneSyncDataReader-2.3.1-win-arm64.zip)  
+	SHA-256: `aba921320713b620d4ce50509be888aca2e4fe645b478541815e690eeb6a2308`
+- [Windows x64](../../releases/PhoneSyncDataReader-2.3.1-win-x64.zip)  
+	SHA-256: `2de397d98215fdd7557f354626bf10eaf1cd2de057907a491d6a0ec724300f9d`
 
-Extract the self-contained package and run `PhoneSyncDataReader.exe`; no separate .NET installation is required.
+Run `./scripts/install_windows_reader.ps1 -Launch` from the repository root to install the matching self-contained package and create Desktop and Start-menu shortcuts. No separate .NET installation is required.
 
 ## What it does
 
@@ -21,8 +21,11 @@ Extract the self-contained package and run `PhoneSyncDataReader.exe`; no separat
 - Uses archive folders and ZIP entry folders as source, collection, folder, and record labels.
 - Deduplicates files by SHA-256 and parsed records by canonical field hash.
 - Searches titles, message bodies, field names, and field values.
-- Presents message-friendly summaries, full flattened fields, and image previews.
+- Filters directly to Images, Messages, SMS, or Voicemails.
+- Supports row selection, select-shown, and selected-only result lists.
+- Presents message-friendly summaries, full flattened fields, image previews, and voicemail open/play actions.
 - Excludes password and credential artifacts, including sensitive entries nested inside otherwise eligible ZIP files, from parsing and preview.
+- Enforces peer-bound Phone Sync manifests and rejects collector, mixed-peer, and ambiguous legacy ZIP entries.
 
 The local index is stored under `%LOCALAPPDATA%\PhoneSync\DataReader\Indexes`. Rebuilding is atomic and produces the same logical record set when the same archive is selected repeatedly.
 

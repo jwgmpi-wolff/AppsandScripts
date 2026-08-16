@@ -8,10 +8,13 @@ import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -129,6 +132,79 @@ class ArtifactIndexerInstrumentedTest {
         assertTrue(firstRows.any { it.jsonSource == "attachments/photo.jpg" && it.recordKind == ParsedRecordKind.MEDIA })
         assertTrue(firstRows.any { it.jsonSource == "databases/mmssms.db" && it.recordKind == ParsedRecordKind.APPLICATION })
         assertTrue(firstRows.any { it.jsonSource == "attachments/raw.bin" && it.recordType == "Archive item" })
+        assertEquals(5, database.queryRecords(sourceId = SOURCE_ID, focus = ArtifactFocus.SMS, limit = 20).size)
+        assertEquals(1, database.queryRecords(sourceId = SOURCE_ID, focus = ArtifactFocus.IMAGES, limit = 20).size)
+    }
+
+    @Test
+    fun looseImagesAndVoicemailsBecomeBrowseableRecords() {
+        val image = File(testDirectory, "photo.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val voicemail = File(testDirectory, "voicemail-message.amr").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+        val entries = listOf(
+            auditEntry(image).copy(
+                id = 20,
+                category = ConsentCategory.PHOTOS_AND_VIDEOS,
+                sourceItem = "/DCIM/Camera/photo.jpg",
+                sourceFingerprint = "$SOURCE_ID|photo.jpg|${image.length()}|${image.lastModified()}",
+            ),
+            auditEntry(voicemail).copy(
+                id = 21,
+                category = ConsentCategory.VOICEMAIL_EXPORTS,
+                sourceItem = "/Exports/Voicemail/voicemail-message.amr",
+                sourceFingerprint = "$SOURCE_ID|voicemail-message.amr|${voicemail.length()}|${voicemail.lastModified()}",
+            ),
+        )
+
+        val result = ArtifactIndexer(context, database).rebuild(entries, SOURCE_ID, SOURCE_NAME)
+        val rows = database.queryRecords(sourceId = SOURCE_ID, limit = 10)
+        val images = database.queryRecords(sourceId = SOURCE_ID, focus = ArtifactFocus.IMAGES, limit = 10)
+        val voicemails = database.queryRecords(sourceId = SOURCE_ID, focus = ArtifactFocus.VOICEMAILS, limit = 10)
+
+        assertEquals(2, result.recordsIndexed)
+        assertTrue(rows.any { it.recordKind == ParsedRecordKind.MEDIA && it.title == "photo.jpg" })
+        assertTrue(rows.any { it.category == ConsentCategory.VOICEMAIL_EXPORTS && it.recordType == "Voicemail" })
+        assertEquals(listOf("photo.jpg"), images.map { it.title })
+        assertEquals(listOf("voicemail-message.amr"), voicemails.map { it.title })
+        assertEquals(
+            listOf("photo.jpg"),
+            database.queryRecords(sourceId = SOURCE_ID, recordIds = setOf(images.single().id), limit = 10).map { it.title },
+        )
+    }
+
+    @Test
+    fun uploadZipRefusesCollectorAndMixedPeerEntries() {
+        val externalFile = File(testDirectory, "external.txt").apply { writeText("external") }
+        val valid = auditEntry(externalFile).copy(
+            id = 30,
+            category = ConsentCategory.DOCUMENTS,
+            sourceItem = "/Documents/external.txt",
+            sourceFingerprint = "external-fingerprint",
+        )
+        val collector = valid.copy(
+            id = 31,
+            sourceItem = "/Download/Phone Sync/Selected folder/external.txt",
+            sourceFingerprint = "collector-fingerprint",
+        )
+        val otherPeer = valid.copy(
+            id = 32,
+            peerId = "other-peer",
+            sourceFingerprint = "other-fingerprint",
+        )
+        val manager = DataExportManager(context)
+
+        val collectorResult = manager.createUploadArchive(listOf(valid, collector), SOURCE_ID)
+        val mixedPeerResult = manager.createUploadArchive(listOf(valid, otherPeer), SOURCE_ID)
+        assertNull(collectorResult.uri)
+        assertNull(mixedPeerResult.uri)
+        assertTrue(collectorResult.error.orEmpty().contains("exact selected-USB-source provenance"))
+        assertTrue(mixedPeerResult.error.orEmpty().contains("exact selected-USB-source provenance"))
+
+        val validResult = manager.createUploadArchive(listOf(valid), SOURCE_ID)
+        assertNotNull(validResult.uri)
+        val manifest = readZipText(validResult.uri!!, "backup-manifest.json")
+        assertTrue(manifest.contains("\"externalPeerId\": \"$SOURCE_ID\""))
+        assertTrue(manifest.contains("\"peerId\": \"$SOURCE_ID\""))
+        context.contentResolver.delete(validResult.uri!!, null, null)
     }
 
     private fun auditEntry(zip: File): AuditEntry = AuditEntry(
@@ -178,6 +254,22 @@ class ArtifactIndexerInstrumentedTest {
         MessageDigest.getInstance("SHA-256").digest(input.readBytes()).joinToString("") { byte ->
             (byte.toInt() and 0xff).toString(16).padStart(2, '0')
         }
+    }
+
+    private fun readZipText(uri: Uri, entryName: String): String {
+        var text: String? = null
+        context.contentResolver.openInputStream(uri).use { input ->
+            ZipInputStream(checkNotNull(input)).use { archive ->
+                while (text == null) {
+                    val entry = archive.nextEntry ?: break
+                    if (!entry.isDirectory && entry.name == entryName) {
+                        text = archive.reader().readText()
+                    }
+                    archive.closeEntry()
+                }
+            }
+        }
+        return checkNotNull(text) { "$entryName is missing" }
     }
 
     private companion object {

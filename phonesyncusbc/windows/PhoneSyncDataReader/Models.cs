@@ -17,6 +17,15 @@ public enum RecordKind
     Generic,
 }
 
+public enum RecordFocus
+{
+    All,
+    Images,
+    Messages,
+    Sms,
+    Voicemails,
+}
+
 public enum ValueType
 {
     String,
@@ -67,6 +76,26 @@ public sealed record ReaderStats(int SourceCount, int ArtifactCount, int ParsedA
 public sealed record FilterOption(string? Value, string Label)
 {
     public override string ToString() => Label;
+}
+
+public sealed record FocusOption(RecordFocus Value, string Label);
+
+public sealed class SelectableRecordRow
+{
+    public SelectableRecordRow(RecordRow record, bool selected)
+    {
+        Record = record;
+        IsSelected = selected;
+    }
+
+    public RecordRow Record { get; }
+    public bool IsSelected { get; set; }
+    public long Id => Record.Id;
+    public string? Timestamp => Record.Timestamp;
+    public string CollectionLabel => Record.CollectionLabel;
+    public RecordKind Kind => Record.Kind;
+    public string Title => Record.Title;
+    public string Summary => Record.Summary;
 }
 
 public sealed record RecordRow(

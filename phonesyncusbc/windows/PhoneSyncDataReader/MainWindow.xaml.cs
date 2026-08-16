@@ -15,6 +15,10 @@ public partial class MainWindow : Window
     private string? _archiveRoot;
     private string? _databasePath;
     private bool _busy;
+    private readonly HashSet<long> _selectedRecordIds = [];
+    private IReadOnlyList<SelectableRecordRow> _visibleRecords = [];
+    private RecordRow? _detailRecord;
+    private readonly string _previewDirectory = Path.Combine(Path.GetTempPath(), "PhoneSyncDataReader", "Preview");
 
     public MainWindow()
     {
@@ -23,6 +27,15 @@ public partial class MainWindow : Window
         KindFilter.SelectedIndex = 0;
         SourceFilter.ItemsSource = new[] { new FilterOption(null, "All sources") };
         SourceFilter.SelectedIndex = 0;
+        FocusFilter.ItemsSource = new[]
+        {
+            new FocusOption(RecordFocus.All, "All"),
+            new FocusOption(RecordFocus.Images, "Images"),
+            new FocusOption(RecordFocus.Messages, "Messages"),
+            new FocusOption(RecordFocus.Sms, "SMS"),
+            new FocusOption(RecordFocus.Voicemails, "Voicemails"),
+        };
+        FocusFilter.SelectedIndex = 0;
     }
 
     private async void ChooseFolder_Click(object sender, RoutedEventArgs e)
@@ -107,10 +120,12 @@ public partial class MainWindow : Window
     private void SearchRecords()
     {
         if (_repository is null) return;
-        var records = _repository.Search(SearchText.Text, SelectedValue(SourceFilter), SelectedValue(KindFilter));
-        RecordsGrid.ItemsSource = records;
-        ResultCountText.Text = $"{records.Count:N0} shown";
-        if (records.Count > 0) RecordsGrid.SelectedIndex = 0;
+        var selectedOnly = SelectedOnlyCheckBox.IsChecked == true ? _selectedRecordIds : null;
+        var records = _repository.Search(SearchText.Text, SelectedValue(SourceFilter), SelectedValue(KindFilter), SelectedFocus(), selectedOnly);
+        _visibleRecords = records.Select(record => new SelectableRecordRow(record, _selectedRecordIds.Contains(record.Id))).ToArray();
+        RecordsGrid.ItemsSource = _visibleRecords;
+        ResultCountText.Text = $"{records.Count:N0} shown · {_selectedRecordIds.Count:N0} selected";
+        if (_visibleRecords.Count > 0) RecordsGrid.SelectedIndex = 0;
         else ClearDetail();
     }
 
@@ -128,16 +143,73 @@ public partial class MainWindow : Window
         SearchRecords();
     }
 
+    private void SelectedOnly_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_repository is not null) SearchRecords();
+    }
+
+    private void RecordSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as System.Windows.Controls.CheckBox)?.DataContext is not SelectableRecordRow row) return;
+        if (row.IsSelected) _selectedRecordIds.Add(row.Id);
+        else _selectedRecordIds.Remove(row.Id);
+        ResultCountText.Text = $"{_visibleRecords.Count:N0} shown · {_selectedRecordIds.Count:N0} selected";
+    }
+
+    private void SelectShown_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var row in _visibleRecords) { row.IsSelected = true; _selectedRecordIds.Add(row.Id); }
+        RecordsGrid.Items.Refresh();
+        ResultCountText.Text = $"{_visibleRecords.Count:N0} shown · {_selectedRecordIds.Count:N0} selected";
+    }
+
+    private void ClearSelection_Click(object sender, RoutedEventArgs e)
+    {
+        _selectedRecordIds.Clear();
+        if (SelectedOnlyCheckBox.IsChecked == true) SearchRecords();
+        else { foreach (var row in _visibleRecords) row.IsSelected = false; RecordsGrid.Items.Refresh(); }
+    }
+
     private void RecordsGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (_repository is null || RecordsGrid.SelectedItem is not RecordRow row) return;
-        var detail = _repository.GetDetail(row.Id);
+        if (_repository is null || RecordsGrid.SelectedItem is not SelectableRecordRow selected) return;
+        var detail = _repository.GetDetail(selected.Id);
         if (detail is null) return;
         DetailTitle.Text = detail.Record.Title;
         DetailMetadata.Text = $"{detail.Record.Kind} · {detail.Record.CollectionLabel} · {detail.Record.FolderLabel} · {detail.Record.SourceName}\n{detail.Record.RelativePath}";
         DetailSummary.Text = detail.Record.Summary;
         FieldsGrid.ItemsSource = detail.Fields;
+        _detailRecord = detail.Record;
         ShowPreview(detail.Record);
+        OpenMediaButton.Visibility = IsImage(detail.Record) || IsVoicemail(detail.Record) ? Visibility.Visible : Visibility.Collapsed;
+        OpenMediaButton.Content = IsVoicemail(detail.Record) ? "Play voicemail" : "Open image";
+    }
+
+    private void OpenMedia_Click(object sender, RoutedEventArgs e)
+    {
+        if (_detailRecord is null) return;
+        try
+        {
+            var path = MaterializeMedia(_detailRecord);
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "Media could not be opened", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private string MaterializeMedia(RecordRow record)
+    {
+        if (record.ArchiveEntry is null) return record.FullPath;
+        Directory.CreateDirectory(_previewDirectory);
+        var destination = Path.Combine(_previewDirectory, $"{record.Id}-{Path.GetFileName(record.ArchiveEntry)}");
+        using var archive = ZipFile.OpenRead(record.FullPath);
+        var entry = archive.GetEntry(record.ArchiveEntry) ?? throw new InvalidDataException("The media entry is missing from its archive.");
+        using var input = entry.Open();
+        using var output = File.Create(destination);
+        input.CopyTo(output);
+        return destination;
     }
 
     private void ShowPreview(RecordRow record)
@@ -199,6 +271,12 @@ public partial class MainWindow : Window
     private static string? SelectedValue(System.Windows.Controls.ComboBox comboBox) =>
         (comboBox.SelectedItem as FilterOption)?.Value;
 
+    private RecordFocus SelectedFocus() => (FocusFilter.SelectedItem as FocusOption)?.Value ?? RecordFocus.All;
+
+    private static bool IsImage(RecordRow record) => ArchiveClassifier.IsImagePath(record.ArchiveEntry ?? record.RelativePath);
+
+    private static bool IsVoicemail(RecordRow record) => record.Category == "VOICEMAIL_EXPORTS";
+
     private void SetBusy(bool busy)
     {
         _busy = busy;
@@ -215,11 +293,14 @@ public partial class MainWindow : Window
         FieldsGrid.ItemsSource = null;
         PreviewImage.Source = null;
         PreviewBorder.Visibility = Visibility.Collapsed;
+        OpenMediaButton.Visibility = Visibility.Collapsed;
+        _detailRecord = null;
     }
 
     protected override void OnClosed(EventArgs e)
     {
         _repository?.Dispose();
+        if (Directory.Exists(_previewDirectory)) Directory.Delete(_previewDirectory, true);
         base.OnClosed(e);
     }
 }

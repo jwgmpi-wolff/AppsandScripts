@@ -50,11 +50,18 @@
                     <TextBlock Text="Query" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
                     <TextBlock Text="Source folder" FontWeight="SemiBold" />
                     <ComboBox x:Name="SourceFilter" Margin="0,5,0,12" SelectionChanged="Filter_Changed" DisplayMemberPath="Label" />
+                    <TextBlock Text="Focus" FontWeight="SemiBold" />
+                    <ComboBox x:Name="FocusFilter" Margin="0,5,0,12" SelectionChanged="Filter_Changed" DisplayMemberPath="Label" />
                     <TextBlock Text="Data type" FontWeight="SemiBold" />
                     <ComboBox x:Name="KindFilter" Margin="0,5,0,12" SelectionChanged="Filter_Changed" DisplayMemberPath="Label" />
                     <TextBlock Text="Search records and fields" FontWeight="SemiBold" />
                     <TextBox x:Name="SearchText" Margin="0,5,0,8" KeyDown="SearchText_KeyDown" />
                     <Button Content="Search database" Click="Search_Click" Margin="0,0,0,12" />
+                    <CheckBox x:Name="SelectedOnlyCheckBox" Content="Show selected only" Checked="SelectedOnly_Changed" Unchecked="SelectedOnly_Changed" Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,12">
+                        <Button Style="{StaticResource SecondaryButton}" Content="Select shown" Click="SelectShown_Click" />
+                        <Button Style="{StaticResource SecondaryButton}" Content="Clear" Click="ClearSelection_Click" />
+                    </WrapPanel>
                     <TextBlock Text="Folder labels" FontWeight="SemiBold" />
                     <TextBlock Text="Source, collection, and record labels are derived from archive folders and ZIP entry folders." TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" />
                     <TextBlock Text="Idempotency" FontWeight="SemiBold" Margin="0,16,0,0" />
@@ -74,16 +81,23 @@
                         <TextBlock Text="Records" FontSize="18" FontWeight="SemiBold" DockPanel.Dock="Left" />
                         <TextBlock x:Name="ResultCountText" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" />
                     </DockPanel>
-                    <DataGrid Grid.Row="1" x:Name="RecordsGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                    <DataGrid Grid.Row="1" x:Name="RecordsGrid" AutoGenerateColumns="False" IsReadOnly="False"
                               SelectionMode="Single" SelectionChanged="RecordsGrid_SelectionChanged"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0"
                               RowHeaderWidth="0" AlternatingRowBackground="#F6F9F7">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp}" Width="145" />
-                            <DataGridTextColumn Header="Collection" Binding="{Binding CollectionLabel}" Width="130" />
-                            <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="100" />
-                            <DataGridTextColumn Header="Title / sender" Binding="{Binding Title}" Width="170" />
-                            <DataGridTextColumn Header="Message / summary" Binding="{Binding Summary}" Width="*" />
+                            <DataGridTemplateColumn Header="Pick" Width="50">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Click="RecordSelection_Click" HorizontalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp}" Width="145" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Collection" Binding="{Binding CollectionLabel}" Width="130" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="100" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Title / sender" Binding="{Binding Title}" Width="170" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Message / summary" Binding="{Binding Summary}" Width="*" IsReadOnly="True" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -97,16 +111,18 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="220" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" x:Name="DetailTitle" Text="Select a record" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
                     <TextBlock Grid.Row="1" x:Name="DetailMetadata" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                     <TextBlock Grid.Row="2" x:Name="DetailSummary" TextWrapping="Wrap" FontSize="15" Margin="0,12,0,10" />
-                    <Border Grid.Row="3" x:Name="PreviewBorder" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Background="#EEF2F0" Visibility="Collapsed">
+                    <Button Grid.Row="3" x:Name="OpenMediaButton" Content="Open media" Click="OpenMedia_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,10" />
+                    <Border Grid.Row="4" x:Name="PreviewBorder" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Background="#EEF2F0" Visibility="Collapsed">
                         <Image x:Name="PreviewImage" Stretch="Uniform" Margin="6" />
                     </Border>
-                    <DataGrid Grid.Row="4" x:Name="FieldsGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                    <DataGrid Grid.Row="5" x:Name="FieldsGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                               GridLinesVisibility="Horizontal" BorderThickness="0" Margin="0,10,0,0" RowHeaderWidth="0">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Field path" Binding="{Binding Path}" Width="180" />

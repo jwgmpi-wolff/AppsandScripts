@@ -41,7 +41,7 @@ class ArtifactIndexer(
         sourceName: String,
         onProgress: (ArtifactIndexProgress) -> Unit = {},
     ): ArtifactIndexResult {
-        val sourceEntries = externalDeviceRecoveryEntries(entries.filter { it.peerId == sourceId })
+        val sourceEntries = externalDeviceRecoveryEntries(entries, sourceId)
         return database.replaceSourceArtifacts(sourceId, sourceName) { sourceWriter ->
             var indexedArtifacts = 0
             var parsedArtifacts = 0
@@ -71,7 +71,7 @@ class ArtifactIndexer(
                             statusWhenNotParsed = ArtifactParseStatus.SKIPPED_SENSITIVE,
                         )
                     }
-                    !entry.canContainJson() -> sourceWriter.replaceArtifact(metadata)
+                    !entry.canContainJson() -> indexRecoveredFile(entry, metadata, sourceWriter)
                     else -> runCatching { indexJsonArtifact(entry, metadata, sourceWriter) }
                         .getOrElse { throwable ->
                             failedArtifacts += 1
@@ -123,6 +123,46 @@ class ArtifactIndexer(
                 }
             }
         }
+    }
+
+    private fun indexRecoveredFile(
+        entry: AuditEntry,
+        metadata: ArtifactIndexMetadata,
+        sourceWriter: ArtifactIndexDatabase.SourceArtifactWriter,
+    ): ArtifactParseOutcome {
+        return sourceWriter.replaceArtifact(metadata) { writer ->
+            val modified = entry.sourceModifiedAtEpochMillis.takeIf { it > 0 }
+                ?.let { Instant.ofEpochMilli(it).toString() }
+            val fields = buildList {
+                add(FlattenedJsonField("file.name", "name", FlattenedValueType.STRING, entry.sourceItem.substringAfterLast('/')))
+                add(FlattenedJsonField("file.path", "path", FlattenedValueType.STRING, entry.sourceItem))
+                add(FlattenedJsonField("file.mimeType", "mimeType", FlattenedValueType.STRING, metadata.mimeType))
+                add(FlattenedJsonField("file.bytes", "bytes", FlattenedValueType.NUMBER, entry.bytesTransferred.toString()))
+                entry.contentSha256?.let { add(FlattenedJsonField("file.sha256", "sha256", FlattenedValueType.STRING, it)) }
+                modified?.let { add(FlattenedJsonField("file.modifiedUtc", "modifiedUtc", FlattenedValueType.STRING, it)) }
+            }
+            writer.insert(
+                jsonSource = entry.sourceItem,
+                category = entry.category,
+                record = FlattenedJsonRecord(
+                    recordIndex = 0,
+                    recordType = recoveredFileType(entry),
+                    recordKind = recordKindForArchiveEntry(entry.category),
+                    title = entry.sourceItem.substringAfterLast('/').ifBlank { "Recovered file" },
+                    summary = "${formatBytes(entry.bytesTransferred)} · ${entry.sourceItem}",
+                    timestamp = modified,
+                    fields = fields,
+                ),
+            )
+            ArtifactParseOutcome(ArtifactParseStatus.NO_JSON)
+        }
+    }
+
+    private fun recoveredFileType(entry: AuditEntry): String = when {
+        entry.category == ConsentCategory.VOICEMAIL_EXPORTS -> "Voicemail"
+        entry.category == ConsentCategory.SMS_EXPORTS -> "SMS export"
+        entry.category == ConsentCategory.PHOTOS_AND_VIDEOS -> "Recovered media"
+        else -> "Recovered file"
     }
 
     private fun parseZip(

@@ -8,18 +8,32 @@ import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 
 private const val LEGACY_COLLECTOR_PEER_ID = "local-android"
 
-fun isExternalSourcePeer(peerId: String): Boolean = peerId != LEGACY_COLLECTOR_PEER_ID
+fun isExternalSourcePeer(peerId: String): Boolean = peerId.isNotBlank() && peerId != LEGACY_COLLECTOR_PEER_ID
 
 fun isCollectorOwnedSourceItem(sourceItem: String): Boolean {
     val normalized = "/" + sourceItem.replace('\\', '/').trim('/').lowercase() + "/"
     return "/phone sync/this android/" in normalized ||
         "/phonesync/this android/" in normalized ||
         "/phone sync/local-android/" in normalized ||
-        "/phonesync/local-android/" in normalized
+        "/phonesync/local-android/" in normalized ||
+        "/phone sync/selected folder/" in normalized ||
+        "/phonesync/selected folder/" in normalized ||
+        "/phone sync backups/" in normalized ||
+        "/phone sync uploads/" in normalized ||
+        "/phone sync/data reader/" in normalized
 }
 
 fun isExternalSourceRecord(peerId: String, sourceItem: String): Boolean {
     return isExternalSourcePeer(peerId) && !isCollectorOwnedSourceItem(sourceItem)
+}
+
+fun AuditEntry.isExternalSourceFor(expectedPeerId: String): Boolean {
+    return expectedPeerId.isNotBlank() &&
+        peerId == expectedPeerId &&
+        isExternalSourceRecord(peerId, sourceItem) &&
+        sourceFingerprint.isNotBlank() &&
+        status == TransferStatus.COMPLETED &&
+        !destination.isNullOrBlank()
 }
 
 enum class SyncStatus {
@@ -60,7 +74,15 @@ fun AuditEntry.idempotencyKey(): String = when {
 fun externalDeviceRecoveryEntries(entries: List<AuditEntry>): List<AuditEntry> {
     return entries
         .asSequence()
-        .filter { (it.peerId.isBlank() || isExternalSourcePeer(it.peerId)) && !isCollectorOwnedSourceItem(it.sourceItem) }
+        .filter { isExternalSourceRecord(it.peerId, it.sourceItem) && it.sourceFingerprint.isNotBlank() }
+        .distinctBy(AuditEntry::idempotencyKey)
+        .toList()
+}
+
+fun externalDeviceRecoveryEntries(entries: List<AuditEntry>, expectedPeerId: String): List<AuditEntry> {
+    return entries
+        .asSequence()
+        .filter { it.isExternalSourceFor(expectedPeerId) }
         .distinctBy(AuditEntry::idempotencyKey)
         .toList()
 }
@@ -427,7 +449,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
 
     fun completedExternalTransfers(peerId: String?, limit: Int? = null): List<AuditEntry> {
         if (peerId == null || !isExternalSourcePeer(peerId)) return emptyList()
-        return externalDeviceRecoveryEntries(completedTransfers(peerId))
+        return externalDeviceRecoveryEntries(completedTransfers(peerId), peerId)
             .asSequence()
             .let { entries -> limit?.let(entries::take) ?: entries }
             .toList()
@@ -436,7 +458,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
     fun latestExternalPeerId(): String? {
         readableDatabase.query(
             "transfers",
-            arrayOf("peer_id", "source_item"),
+            arrayOf("peer_id", "source_item", "source_fingerprint"),
             "peer_id != ? AND status = ? AND destination IS NOT NULL",
             arrayOf(LEGACY_COLLECTOR_PEER_ID, TransferStatus.COMPLETED.name),
             null,
@@ -446,7 +468,7 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val peerId = cursor.getString(0)
-                if (isExternalSourceRecord(peerId, cursor.getString(1))) return peerId
+                if (isExternalSourceRecord(peerId, cursor.getString(1)) && cursor.getString(2).isNotBlank()) return peerId
             }
             return null
         }

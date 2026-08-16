@@ -106,6 +106,7 @@ import java.util.Date
 
 private enum class AppSection(val label: String) {
     USB_SOURCE("USB Source"),
+    DATA_READER("Data Reader"),
     BACKUP_ACTIVITY("Backup"),
 }
 
@@ -331,7 +332,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             )
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
-                    DataExportManager(context).export(libraryEntries, uri) { progress ->
+                    DataExportManager(context).export(
+                        libraryEntries,
+                        uri,
+                        identity?.peerId ?: backupPeerId,
+                    ) { progress ->
                         scope.launch(Dispatchers.Main.immediate) {
                             backupActivity = BackupActivityUi(
                                 title = "Export recovered data",
@@ -525,6 +530,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
     fun uploadBackupEntries(
         entries: List<AuditEntry>,
+        expectedPeerId: String,
         packageName: String?,
         label: String,
         ownerSection: AppSection,
@@ -533,6 +539,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         activeSection = ownerSection
         if (entries.isEmpty()) {
             updateBackupWorkflowStatus(ownerSection, "Select at least one available item before uploading.")
+            return
+        }
+        if (externalDeviceRecoveryEntries(entries, expectedPeerId).size != entries.size) {
+            updateBackupWorkflowStatus(
+                ownerSection,
+                "Upload refused: selection contains collector, legacy, blank-peer, or mixed-peer data.",
+            )
             return
         }
         val directUris = entries.mapNotNull { it.destination?.let(Uri::parse) }
@@ -568,7 +581,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         )
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                DataExportManager(context).createUploadArchive(entries) { progress ->
+                DataExportManager(context).createUploadArchive(entries, expectedPeerId) { progress ->
                     scope.launch(Dispatchers.Main.immediate) {
                         val progressStatus =
                             "Local ZIP: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}. " +
@@ -623,6 +636,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
     fun backupEntriesToSelectedTarget(
         entries: List<AuditEntry>,
+        expectedPeerId: String,
         ownerSection: AppSection,
     ) {
         val destination = targetUri
@@ -631,6 +645,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             updateBackupWorkflowStatus(
                 ownerSection,
                 "Select at least one available item before starting backup.",
+            )
+            return
+        }
+        if (externalDeviceRecoveryEntries(entries, expectedPeerId).size != entries.size) {
+            updateBackupWorkflowStatus(
+                ownerSection,
+                "Backup refused: selection contains collector, legacy, blank-peer, or mixed-peer data.",
             )
             return
         }
@@ -671,9 +692,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         }
                     }
                     if (destination == null) {
-                        DataExportManager(context).backupToDownloads(entries, publishProgress)
+                        DataExportManager(context).backupToDownloads(entries, expectedPeerId, publishProgress)
                     } else {
-                        DataExportManager(context).export(entries, destination, publishProgress)
+                        DataExportManager(context).export(entries, destination, expectedPeerId, publishProgress)
                     }
                 }
             }.onSuccess { result ->
@@ -714,7 +735,15 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         entries: List<AuditEntry>,
         ownerSection: AppSection,
     ) {
-        val externalEntries = externalDeviceRecoveryEntries(entries)
+        val expectedPeerId = identity?.peerId ?: backupPeerId
+        if (expectedPeerId.isNullOrBlank()) {
+            val failure = "Backup refused: no selected external USB source identity is available."
+            updateBackupWorkflowStatus(ownerSection, failure)
+            message = failure
+            messageSection = ownerSection
+            return
+        }
+        val externalEntries = externalDeviceRecoveryEntries(entries, expectedPeerId)
         val excludedItems = entries.size - externalEntries.size
         if (excludedItems > 0) {
             val exclusionStatus =
@@ -726,10 +755,11 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         if (externalEntries.isEmpty()) return
         val providerTarget = targetType.providerTarget()
         if (providerTarget == null) {
-            backupEntriesToSelectedTarget(externalEntries, ownerSection)
+            backupEntriesToSelectedTarget(externalEntries, expectedPeerId, ownerSection)
         } else {
             uploadBackupEntries(
                 externalEntries,
+                expectedPeerId,
                 providerTarget.packageName,
                 providerTarget.label,
                 ownerSection,
@@ -758,6 +788,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         selected = activeSection == section,
                         onClick = {
                             activeSection = section
+                            if (section == AppSection.DATA_READER) {
+                                val peerId = identity?.peerId ?: backupPeerId
+                                libraryEntries = application.auditLog.completedExternalTransfers(peerId)
+                                showParsedData = true
+                                showLibrary = true
+                            }
                             scope.launch { listState.scrollToItem(0) }
                         },
                         text = { Text(section.label) },
@@ -789,6 +825,18 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupActivityPanel(backupActivity)
+            }
+            if (activeSection == AppSection.DATA_READER) {
+                item {
+                    ArtifactDataReaderView(
+                        entries = libraryEntries,
+                        initialSourceId = identity?.peerId ?: backupPeerId,
+                        initialSourceName = source?.detected?.displayName ?: "External source",
+                        database = application.artifactIndexDatabase,
+                        indexer = application.artifactIndexer,
+                        onBack = { activeSection = AppSection.USB_SOURCE },
+                    )
+                }
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupPanel(
@@ -1649,7 +1697,7 @@ private fun ImportedDataView(
                 enabled = entries.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Parse and browse JSON data")
+                Text("Browse images, messages, SMS, and voicemail")
             }
             Text("Recovered source folders", style = MaterialTheme.typography.titleMedium)
             Text(

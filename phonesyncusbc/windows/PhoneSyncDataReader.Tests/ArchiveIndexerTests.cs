@@ -39,10 +39,13 @@ public sealed class ArchiveIndexerTests : IDisposable
     {
         var external = Path.Combine(_root, "SMS Exports", "Family");
         var collector = Path.Combine(_root, "Phone Sync", "This Android", "sms_exports");
+        var legacyCollector = Path.Combine(_root, "Phone Sync", "Selected folder", "sms_exports");
         Directory.CreateDirectory(external);
         Directory.CreateDirectory(collector);
+        Directory.CreateDirectory(legacyCollector);
         await File.WriteAllTextAsync(Path.Combine(external, "messages.json"), "[{\"body\":\"external\"}]");
         await File.WriteAllTextAsync(Path.Combine(collector, "messages.json"), "[{\"body\":\"collector\"}]");
+        await File.WriteAllTextAsync(Path.Combine(legacyCollector, "messages.json"), "[{\"body\":\"legacy collector\"}]");
 
         var result = await new ArchiveIndexer().BuildAsync(_root, null, CancellationToken.None);
         using var repository = new ArtifactRepository(result.DatabasePath);
@@ -51,6 +54,40 @@ public sealed class ArchiveIndexerTests : IDisposable
         Assert.Single(rows);
         Assert.Equal("external", rows[0].Summary);
     }
+
+        [Fact]
+        public async Task PhoneSyncBackupManifestExcludesCollectorAndMixedPeerEntries()
+        {
+                Directory.CreateDirectory(_root);
+                var zipPath = Path.Combine(_root, "PhoneSyncBackup-verified.zip");
+                using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+                {
+                        WriteEntry(archive, "documents/external.txt", "external");
+                        WriteEntry(archive, "sms_exports/collector.json", "[{\"body\":\"collector\"}]");
+                        WriteEntry(archive, "documents/other-peer.txt", "other");
+                        WriteEntry(
+                                archive,
+                                "backup-manifest.json",
+                                """
+                                {
+                                    "externalPeerId": "usb-external",
+                                    "entries": [
+                                        {"peerId":"usb-external","sourceFingerprint":"fp-1","sourceItem":"/Documents/external.txt","archivePath":"documents/external.txt"},
+                                        {"peerId":"usb-external","sourceFingerprint":"fp-2","sourceItem":"/Download/Phone Sync/Selected folder/messages.json","archivePath":"sms_exports/collector.json"},
+                                        {"peerId":"other-peer","sourceFingerprint":"fp-3","sourceItem":"/Documents/other.txt","archivePath":"documents/other-peer.txt"}
+                                    ]
+                                }
+                                """);
+                }
+
+                var result = await new ArchiveIndexer().BuildAsync(_root, null, CancellationToken.None);
+                using var repository = new ArtifactRepository(result.DatabasePath);
+                var rows = repository.Search(string.Empty, null, null);
+
+                var record = Assert.Single(rows);
+                Assert.Equal("documents/external.txt", record.ArchiveEntry);
+                Assert.DoesNotContain(rows, row => row.Summary.Contains("collector", StringComparison.OrdinalIgnoreCase));
+        }
 
     [Fact]
     public void FolderLabelsUseNestedArchiveMetadata()
@@ -98,6 +135,25 @@ public sealed class ArchiveIndexerTests : IDisposable
         var raw = Assert.Single(rows, row => row.ArchiveEntry == "attachments/raw.bin" && row.RecordType == "Archive item");
         var rawDetail = Assert.IsType<RecordDetail>(repository.GetDetail(raw.Id));
         Assert.Contains(rawDetail.Fields, field => field.Path == "archive.sha256" && field.Value.Length == 64);
+        Assert.Single(repository.Search(string.Empty, null, null, RecordFocus.Images));
+        Assert.Equal(5, repository.Search(string.Empty, null, null, RecordFocus.Sms).Count);
+        Assert.Single(repository.Search(string.Empty, null, null, RecordFocus.All, new[] { raw.Id }));
+    }
+
+    [Fact]
+    public async Task VoicemailFocusFindsLooseAudio()
+    {
+        var folder = Path.Combine(_root, "voicemail_exports");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "voicemail-message.amr"), [1, 2, 3]);
+
+        var result = await new ArchiveIndexer().BuildAsync(_root, null, CancellationToken.None);
+        using var repository = new ArtifactRepository(result.DatabasePath);
+        var rows = repository.Search(string.Empty, null, null, RecordFocus.Voicemails);
+
+        var voicemail = Assert.Single(rows);
+        Assert.Equal("VOICEMAIL_EXPORTS", voicemail.Category);
+        Assert.Equal("voicemail-message.amr", voicemail.Title);
     }
 
     private static void WriteEntry(ZipArchive archive, string path, string content)

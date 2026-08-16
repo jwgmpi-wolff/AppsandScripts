@@ -9,6 +9,7 @@ class SourceOwnershipTest {
     @Test
     fun `collector exports are not external source data`() {
         assertFalse(isExternalSourcePeer("local-android"))
+        assertFalse(isExternalSourcePeer(""))
     }
 
     @Test
@@ -20,6 +21,8 @@ class SourceOwnershipTest {
     fun `collector folder is rejected even when peer was mislabeled external`() {
         assertTrue(isCollectorOwnedSourceItem("/Download/Phone Sync/This Android/sms_exports/messages.json"))
         assertTrue(isCollectorOwnedSourceItem("PhoneSync/local-android/call_logs/calls.json"))
+        assertTrue(isCollectorOwnedSourceItem("/Download/Phone Sync/Selected folder/sms_exports/messages.zip"))
+        assertTrue(isCollectorOwnedSourceItem("/Download/Phone Sync Uploads/PhoneSyncBackup.zip"))
         assertFalse(
             isExternalSourceRecord(
                 "usb-peer-sha256",
@@ -43,6 +46,22 @@ class SourceOwnershipTest {
         )
 
         assertEquals(listOf(1L, 3L), externalDeviceRecoveryEntries(entries).map(AuditEntry::id))
+    }
+
+    @Test
+    fun `strict external entries require exact peer and complete provenance`() {
+        val valid = auditEntry(1, "/DCIM/Camera/photo.jpg", "hash-1", "fingerprint-1")
+        val otherPeer = auditEntry(2, "/DCIM/Camera/other.jpg", "hash-2", "fingerprint-2").copy(peerId = "other-peer")
+        val blankFingerprint = auditEntry(3, "/DCIM/Camera/blank.jpg", "hash-3", "")
+        val collector = auditEntry(4, "/Download/Phone Sync/Selected folder/photo.jpg", "hash-4", "fingerprint-4")
+
+        assertEquals(
+            listOf(valid.id),
+            externalDeviceRecoveryEntries(
+                listOf(valid, otherPeer, blankFingerprint, collector),
+                "usb-peer-sha256",
+            ).map(AuditEntry::id),
+        )
     }
 
     private fun auditEntry(id: Long, path: String, hash: String?, fingerprint: String): AuditEntry {

@@ -94,12 +94,13 @@ class DataExportManager(private val context: Context) {
 
     fun backupToDownloads(
         entries: List<AuditEntry>,
+        expectedPeerId: String?,
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
         if (entries.isEmpty()) return ExportResult(0, 0, 0, "No recovered artifacts are available to preserve.")
-        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
-        if (collectorItems > 0) {
-            return ExportResult(0, collectorItems, 0, "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
+        if (invalidItems > 0) {
+            return ExportResult(0, invalidItems, 0, provenanceError(invalidItems))
         }
         val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Backups/" +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
@@ -185,11 +186,12 @@ class DataExportManager(private val context: Context) {
     fun export(
         entries: List<AuditEntry>,
         destinationTree: Uri,
+        expectedPeerId: String?,
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
-        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
-        if (collectorItems > 0) {
-            return ExportResult(0, collectorItems, 0, "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
+        if (invalidItems > 0) {
+            return ExportResult(0, invalidItems, 0, provenanceError(invalidItems))
         }
         val root = DocumentFile.fromTreeUri(context, destinationTree)
             ?: return ExportResult(0, entries.size, 0, "The selected destination is unavailable.")
@@ -270,12 +272,13 @@ class DataExportManager(private val context: Context) {
 
     fun createUploadArchive(
         entries: List<AuditEntry>,
+        expectedPeerId: String?,
         onProgress: (ArchiveProgress) -> Unit = {},
     ): ArchiveResult {
         if (entries.isEmpty()) return ArchiveResult(error = "No recovered artifacts are selected for preservation.")
-        val collectorItems = entries.count { isCollectorOwnedSourceItem(it.sourceItem) }
-        if (collectorItems > 0) {
-            return ArchiveResult(error = "Refused $collectorItems collector-origin item(s). Refresh the external source set.")
+        val invalidItems = invalidExternalEntries(entries, expectedPeerId)
+        if (invalidItems > 0) {
+            return ArchiveResult(error = provenanceError(invalidItems))
         }
 
         val displayName = "PhoneSyncBackup-${timestamp()}.zip"
@@ -368,6 +371,8 @@ class DataExportManager(private val context: Context) {
                     manifestEntries.put(
                         JSONObject()
                             .put("category", entry.category.name)
+                            .put("peerId", entry.peerId)
+                            .put("sourceFingerprint", entry.sourceFingerprint)
                             .put("sourceItem", entry.sourceItem)
                             .put("sourceSize", entry.sourceSize)
                             .put("sourceModifiedAtEpochMillis", entry.sourceModifiedAtEpochMillis)
@@ -392,6 +397,7 @@ class DataExportManager(private val context: Context) {
 
                 val manifest = JSONObject()
                     .put("createdAtEpochMillis", System.currentTimeMillis())
+                    .put("externalPeerId", expectedPeerId)
                     .put("itemCount", entries.size)
                     .put("sourceBytes", sourceBytes)
                     .put("entries", manifestEntries)
@@ -435,6 +441,16 @@ class DataExportManager(private val context: Context) {
         return queriedName
             ?.takeIf { it.isNotBlank() }
             ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
+    }
+
+    private fun invalidExternalEntries(entries: List<AuditEntry>, expectedPeerId: String?): Int {
+        val expected = expectedPeerId.orEmpty()
+        return entries.count { !it.isExternalSourceFor(expected) }
+    }
+
+    private fun provenanceError(invalidItems: Int): String {
+        return "Refused $invalidItems item(s) without exact selected-USB-source provenance. " +
+            "Collector, legacy, blank-peer, and mixed-peer data cannot be exported."
     }
 
     fun mimeType(entry: AuditEntry): String {

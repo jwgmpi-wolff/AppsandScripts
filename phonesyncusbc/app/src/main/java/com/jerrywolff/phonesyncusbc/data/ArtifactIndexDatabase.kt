@@ -20,6 +20,14 @@ enum class ArtifactParseStatus {
     ERROR,
 }
 
+enum class ArtifactFocus(val label: String) {
+    ALL("All"),
+    IMAGES("Images"),
+    MESSAGES("Messages"),
+    SMS("SMS"),
+    VOICEMAILS("Voicemails"),
+}
+
 data class IndexedSource(
     val sourceId: String,
     val displayName: String,
@@ -334,6 +342,27 @@ class ArtifactIndexDatabase(
         }
     }
 
+    @Synchronized
+    fun retainOnlySource(sourceId: String) {
+        writableDatabase.delete("sources", "source_id != ?", arrayOf(sourceId))
+    }
+
+    fun sourceTransferIds(sourceId: String): Set<Long> {
+        readableDatabase.query(
+            "artifacts",
+            arrayOf("transfer_id"),
+            "source_id = ?",
+            arrayOf(sourceId),
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            return buildSet {
+                while (cursor.moveToNext()) add(cursor.getLong(0))
+            }
+        }
+    }
+
     fun recordKinds(sourceId: String? = null): List<ParsedRecordKind> {
         val selection = sourceId?.let { " WHERE source_id = ?" }.orEmpty()
         readableDatabase.rawQuery(
@@ -351,6 +380,8 @@ class ArtifactIndexDatabase(
         sourceId: String? = null,
         category: ConsentCategory? = null,
         recordKind: ParsedRecordKind? = null,
+        focus: ArtifactFocus = ArtifactFocus.ALL,
+        recordIds: Set<Long>? = null,
         limit: Int = 250,
         offset: Int = 0,
     ): List<IndexedRecordSummary> {
@@ -367,6 +398,38 @@ class ArtifactIndexDatabase(
         recordKind?.let {
             conditions += "r.record_kind = ?"
             arguments += it.name
+        }
+        when (focus) {
+            ArtifactFocus.ALL -> Unit
+            ArtifactFocus.IMAGES -> {
+                conditions += IMAGE_EXTENSIONS.joinToString(" OR ", prefix = "(", postfix = ")") {
+                    "LOWER(r.json_source) LIKE ?"
+                }
+                arguments += IMAGE_EXTENSIONS.map { "%.${it}" }
+            }
+            ArtifactFocus.MESSAGES -> {
+                conditions += "r.record_kind = ? AND r.category NOT IN (?, ?)"
+                arguments += ParsedRecordKind.MESSAGE.name
+                arguments += ConsentCategory.SMS_EXPORTS.name
+                arguments += ConsentCategory.VOICEMAIL_EXPORTS.name
+            }
+            ArtifactFocus.SMS -> {
+                conditions += "r.category = ?"
+                arguments += ConsentCategory.SMS_EXPORTS.name
+            }
+            ArtifactFocus.VOICEMAILS -> {
+                conditions += "r.category = ?"
+                arguments += ConsentCategory.VOICEMAIL_EXPORTS.name
+            }
+        }
+        recordIds?.let { ids ->
+            val boundedIds = ids.take(MAX_SELECTED_RECORDS)
+            if (boundedIds.isEmpty()) {
+                conditions += "1 = 0"
+            } else {
+                conditions += boundedIds.joinToString(",", prefix = "r.id IN (", postfix = ")") { "?" }
+                arguments += boundedIds.map(Long::toString)
+            }
         }
         search.trim().takeIf(String::isNotEmpty)?.let { query ->
             conditions += "(r.search_text LIKE ? ESCAPE '\\' OR EXISTS (" +
@@ -397,7 +460,7 @@ class ArtifactIndexDatabase(
         }
     }
 
-    fun recordDetail(recordId: Long): IndexedRecordDetail? {
+    fun recordDetail(recordId: Long, sourceId: String): IndexedRecordDetail? {
         val record = readableDatabase.rawQuery(
             """
             SELECT r.id, r.artifact_id, r.source_id, s.display_name, a.source_path, a.destination_uri,
@@ -407,9 +470,9 @@ class ArtifactIndexDatabase(
             FROM records r
             JOIN artifacts a ON a.id = r.artifact_id
             JOIN sources s ON s.source_id = r.source_id
-            WHERE r.id = ?
+            WHERE r.id = ? AND r.source_id = ?
             """.trimIndent(),
-            arrayOf(recordId.toString()),
+            arrayOf(recordId.toString(), sourceId),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toRecordSummary() else null } ?: return null
         val fields = readableDatabase.query(
             "fields",
@@ -618,8 +681,10 @@ class ArtifactIndexDatabase(
 
     private companion object {
         const val DATABASE_NAME = "artifact_index.sqlite"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 4
         const val MAX_SEARCH_FIELD_CHARS = 2_048
         const val MAX_SEARCH_TEXT_CHARS = 262_144
+        const val MAX_SELECTED_RECORDS = 900
+        val IMAGE_EXTENSIONS = listOf("bmp", "dng", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp")
     }
 }
