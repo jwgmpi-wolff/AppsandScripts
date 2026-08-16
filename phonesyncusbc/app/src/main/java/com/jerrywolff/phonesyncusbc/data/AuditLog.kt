@@ -301,12 +301,26 @@ class AuditLog(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null
         }
     }
 
-    fun completedTransferByContent(peerId: String, contentSha256: String): AuditEntry? {
+    fun completedTransferByContent(
+        peerId: String,
+        contentSha256: String,
+        category: ConsentCategory? = null,
+    ): AuditEntry? {
+        val selection = buildString {
+            append("peer_id = ? AND content_sha256 = ? AND status = ? AND destination IS NOT NULL")
+            if (category != null) append(" AND category = ?")
+        }
+        val arguments = buildList {
+            add(peerId)
+            add(contentSha256)
+            add(TransferStatus.COMPLETED.name)
+            category?.let { add(it.name) }
+        }.toTypedArray()
         readableDatabase.query(
             "transfers",
             AUDIT_ENTRY_COLUMNS,
-            "peer_id = ? AND content_sha256 = ? AND status = ? AND destination IS NOT NULL",
-            arrayOf(peerId, contentSha256, TransferStatus.COMPLETED.name),
+            selection,
+            arguments,
             null,
             null,
             "transferred_at DESC",

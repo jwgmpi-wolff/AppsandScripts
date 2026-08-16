@@ -45,6 +45,7 @@ object RecoveryProfiles {
                 "User profiles and Desktop, Documents, and Downloads",
                 "Browser data, PST/OST mail files, and OneDrive cache files",
                 "Event logs, registry hives, application databases, and configuration files",
+                "Complete owner-approved Windows backup/archive ZIPs and individual exports",
             ),
             passwordTarget = "Password vaults, browser credential stores, and provider-supported encrypted passkey backups",
         )
@@ -54,6 +55,7 @@ object RecoveryProfiles {
                 "Internal and SD-card photos, videos, documents, and application data",
                 "SMS/MMS, contacts, call history, and chat backups exported to shared storage",
                 "Device logs, configuration files, diagnostics, and system-information exports",
+                "Complete owner-approved Android backup/archive ZIPs and individual app exports",
             ),
             passwordTarget = "Password-manager vaults and provider-supported encrypted password/passkey exports",
         )
@@ -61,8 +63,9 @@ object RecoveryProfiles {
             deviceType,
             recoverableTargets = listOf(
                 "Photos, videos, app documents, and locally available iCloud-synchronized files",
-                "Encrypted backup files and exported messages, notes, and contacts",
+                "Complete owner-approved Apple local backups, including raw Messages/SMS databases and attachments",
                 "Configuration, diagnostics, and application data exported by iOS or its apps",
+                "Complete owner-approved iPhone app/provider archives and individual exports",
             ),
             passwordTarget = "Encrypted password-manager vaults, keychain backups, and provider-supported passkey backups",
         )
@@ -72,6 +75,7 @@ object RecoveryProfiles {
                 "SD-card contents, photos, recorded footage, and documents",
                 "Configuration files, logs, diagnostics, and device settings backups",
                 "Application databases and system-information reports exposed by the device",
+                "Complete owner-approved Camera/IoT backup/archive ZIPs and individual exports",
             ),
             passwordTarget = "Credential backups and password-protected configuration archives",
         )

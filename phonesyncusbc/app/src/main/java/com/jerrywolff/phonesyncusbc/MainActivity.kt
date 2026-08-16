@@ -71,6 +71,12 @@ import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.displayName
 import com.jerrywolff.phonesyncusbc.data.externalDeviceRecoveryEntries
+import com.jerrywolff.phonesyncusbc.data.IosBackupImportProgress
+import com.jerrywolff.phonesyncusbc.data.IosBackupImportResult
+import com.jerrywolff.phonesyncusbc.data.IosBackupImportStage
+import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportProgress
+import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportResult
+import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportStage
 import com.jerrywolff.phonesyncusbc.data.isCollectorOwnedSourceItem
 import com.jerrywolff.phonesyncusbc.data.mergeSourceBackupSelection
 import com.jerrywolff.phonesyncusbc.data.storageLocation
@@ -78,6 +84,7 @@ import com.jerrywolff.phonesyncusbc.data.StoredTrust
 import com.jerrywolff.phonesyncusbc.data.TargetSelectionStore
 import com.jerrywolff.phonesyncusbc.data.RecoveryIssue
 import com.jerrywolff.phonesyncusbc.data.planExternalRecoveryEntries
+import com.jerrywolff.phonesyncusbc.data.recoveredCoverageCategories
 import com.jerrywolff.phonesyncusbc.data.primaryActionLabel
 import com.jerrywolff.phonesyncusbc.data.providerTarget
 import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
@@ -202,6 +209,13 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var identityReadError by remember { mutableStateOf<String?>(null) }
     var identityReadRequest by remember { mutableStateOf(0) }
     var recoveryIssues by remember { mutableStateOf(emptyList<RecoveryIssue>()) }
+    var iosBackupImporting by remember { mutableStateOf(false) }
+    var iosBackupImportProgress by remember { mutableStateOf<IosBackupImportProgress?>(null) }
+    var iosBackupImportResult by remember { mutableStateOf<IosBackupImportResult?>(null) }
+    var ownerArchiveImporting by remember { mutableStateOf(false) }
+    var ownerArchiveImportProgress by remember { mutableStateOf<OwnerArchiveImportProgress?>(null) }
+    var ownerArchiveImportResult by remember { mutableStateOf<OwnerArchiveImportResult?>(null) }
+    var auditRevision by remember { mutableStateOf(0) }
     var showLibrary by remember { mutableStateOf(false) }
     var showParsedData by remember { mutableStateOf(false) }
     var libraryEntries by remember { mutableStateOf(emptyList<AuditEntry>()) }
@@ -389,6 +403,123 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     failed = result.failedItems > 0,
                 )
             }
+        }
+    }
+
+    val iosBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val currentSource = selectedSource
+        val currentIdentity = identity
+        if (currentSource?.detected?.platform != SourcePlatform.IOS || currentIdentity == null) {
+            message = "Select and authorize the connected iPhone before importing its owner-approved backup."
+            messageSection = AppSection.USB_SOURCE
+            return@rememberLauncherForActivityResult
+        }
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        iosBackupImporting = true
+        ownerArchiveImporting = true
+        iosBackupImportProgress = IosBackupImportProgress(
+            IosBackupImportStage.PRESERVING_BACKUP,
+            "Opening owner-approved Apple backup",
+        )
+        iosBackupImportResult = null
+        ownerArchiveImportResult = null
+        message = "IPHONE BACKUP: preserving the complete backup before extracting messages..."
+        messageSection = AppSection.USB_SOURCE
+        scope.launch {
+            val universalResult = withContext(Dispatchers.IO) {
+                application.ownerApprovedArchiveImporter.importSource(
+                    sourceUri = uri,
+                    peerId = currentIdentity.peerId,
+                    sourceName = currentSource.detected.displayName,
+                    deviceType = RecoveryDeviceType.IPHONE_IPAD,
+                ) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        ownerArchiveImportProgress = progress
+                        message = buildOwnerArchiveStatus(progress)
+                        messageSection = AppSection.USB_SOURCE
+                    }
+                }
+            }
+            ownerArchiveImporting = false
+            ownerArchiveImportResult = universalResult
+            val result = withContext(Dispatchers.IO) {
+                application.iosBackupImporter.importBackup(
+                    archiveUri = uri,
+                    peerId = currentIdentity.peerId,
+                    sourceName = currentSource.detected.displayName,
+                ) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        iosBackupImportProgress = progress
+                        message = buildIosBackupStatus(progress)
+                        messageSection = AppSection.USB_SOURCE
+                    }
+                }
+            }
+            iosBackupImporting = false
+            iosBackupImportResult = result
+            recoveryIssues = (universalResult.issues + result.issues)
+                .distinctBy { "${it.reason}:${it.sourceItem}:${it.remediation}" }
+            auditRevision += 1
+            backupPeerId = currentIdentity.peerId
+            backupEntries = application.auditLog.completedExternalTransfers(currentIdentity.peerId)
+            selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+            message = buildIosBackupCompletionStatus(result)
+            messageSection = AppSection.USB_SOURCE
+        }
+    }
+
+    val ownerArchiveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val currentSource = selectedSource
+        val currentIdentity = identity
+        if (currentSource == null || currentIdentity == null) {
+            message = "Select and authorize the matching external device before importing its owner-approved export."
+            messageSection = AppSection.USB_SOURCE
+            return@rememberLauncherForActivityResult
+        }
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        ownerArchiveImporting = true
+        ownerArchiveImportProgress = OwnerArchiveImportProgress(
+            OwnerArchiveImportStage.PRESERVING_SOURCE,
+            "Opening owner-approved source data",
+        )
+        ownerArchiveImportResult = null
+        message = "OWNER EXPORT: preserving the complete source before recovering every item..."
+        messageSection = AppSection.USB_SOURCE
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                application.ownerApprovedArchiveImporter.importSource(
+                    sourceUri = uri,
+                    peerId = currentIdentity.peerId,
+                    sourceName = currentSource.detected.displayName,
+                    deviceType = recoveryDeviceType,
+                ) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        ownerArchiveImportProgress = progress
+                        message = buildOwnerArchiveStatus(progress)
+                        messageSection = AppSection.USB_SOURCE
+                    }
+                }
+            }
+            ownerArchiveImporting = false
+            ownerArchiveImportResult = result
+            recoveryIssues = (recoveryIssues + result.issues)
+                .distinctBy { "${it.reason}:${it.sourceItem}:${it.remediation}" }
+            auditRevision += 1
+            backupPeerId = currentIdentity.peerId
+            backupEntries = application.auditLog.completedExternalTransfers(currentIdentity.peerId)
+            selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
+            message = buildOwnerArchiveCompletionStatus(result)
+            messageSection = AppSection.USB_SOURCE
         }
     }
 
@@ -1149,6 +1280,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 liveProgress = liveProgress,
                                 mtpScanSummary = mtpScanSummary,
                                 recoveryIssues = recoveryIssues,
+                                iosBackupImporting = iosBackupImporting,
+                                iosBackupImportProgress = iosBackupImportProgress,
+                                iosBackupImportResult = iosBackupImportResult,
+                                ownerArchiveImporting = ownerArchiveImporting,
+                                ownerArchiveImportProgress = ownerArchiveImportProgress,
+                                ownerArchiveImportResult = ownerArchiveImportResult,
+                                auditRevision = auditRevision,
+                                recoveryDeviceType = recoveryDeviceType,
                                 sourcePlatform = source.detected.platform,
                                 auditLog = application.auditLog,
                                 onViewLibrary = {
@@ -1205,7 +1344,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                             advertisedBytes = scan?.advertisedBytes ?: 0,
                                         )
                                         mtpScanSummary = result.mtpScan
-                                        message = buildSyncCompletionStatus(result)
+                                        val recoveredCategories = recoveredCoverageCategories(
+                                            application.auditLog.completedExternalTransfers(currentIdentity.peerId),
+                                        )
+                                        message = buildSyncCompletionStatus(result, recoveredCategories)
                                         messageSection = AppSection.USB_SOURCE
                                         backupPeerId = currentIdentity.peerId
                                         backupEntries = application.auditLog.completedExternalTransfers(
@@ -1214,6 +1356,18 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                         selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
                                         refreshToken += 1
                                     }
+                                },
+                                onImportIosBackup = {
+                                    iosBackupLauncher.launch(
+                                        arrayOf(
+                                            "application/zip",
+                                            "application/octet-stream",
+                                            "application/x-zip-compressed",
+                                        ),
+                                    )
+                                },
+                                onImportOwnerArchive = {
+                                    ownerArchiveLauncher.launch(arrayOf("*/*"))
                                 },
                                 onRevoke = {
                                     trust = application.trustStore.revoke(trust!!)
@@ -1361,15 +1515,28 @@ private fun TrustedDashboard(
     liveProgress: SyncProgress?,
     mtpScanSummary: MtpScanSummary?,
     recoveryIssues: List<RecoveryIssue>,
+    iosBackupImporting: Boolean,
+    iosBackupImportProgress: IosBackupImportProgress?,
+    iosBackupImportResult: IosBackupImportResult?,
+    ownerArchiveImporting: Boolean,
+    ownerArchiveImportProgress: OwnerArchiveImportProgress?,
+    ownerArchiveImportResult: OwnerArchiveImportResult?,
+    auditRevision: Int,
+    recoveryDeviceType: RecoveryDeviceType,
     sourcePlatform: SourcePlatform,
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
+    onImportIosBackup: () -> Unit,
+    onImportOwnerArchive: () -> Unit,
     onRevoke: () -> Unit,
 ) {
     val latest = remember(trust.updatedAtEpochMillis) { auditLog.latestSession(trust.record.peerDeviceId) }
-    val audit = remember(trust.updatedAtEpochMillis, mtpScanSummary) {
+    val audit = remember(trust.updatedAtEpochMillis, mtpScanSummary, auditRevision) {
         auditLog.recentTransfers(trust.record.peerDeviceId, 25)
+    }
+    val recoveredCategories = remember(trust.updatedAtEpochMillis, mtpScanSummary, auditRevision) {
+        recoveredCoverageCategories(auditLog.completedExternalTransfers(trust.record.peerDeviceId))
     }
     val failedRecoveryIssues = remember(audit) {
         planExternalRecoveryEntries(
@@ -1456,7 +1623,26 @@ private fun TrustedDashboard(
                 )
             }
             mtpScanSummary?.let { scan ->
-                SourceExportReadiness(sourcePlatform, scan, syncing, onSync)
+                SourceExportReadiness(
+                    sourcePlatform = sourcePlatform,
+                    scan = scan,
+                    recoveredCategories = recoveredCategories,
+                    syncing = syncing,
+                    iosBackupImporting = iosBackupImporting,
+                    iosBackupImportProgress = iosBackupImportProgress,
+                    iosBackupImportResult = iosBackupImportResult,
+                    onImportIosBackup = onImportIosBackup,
+                    onRescan = onSync,
+                )
+            }
+            if (sourcePlatform == SourcePlatform.IOS && mtpScanSummary == null) {
+                IosBackupRequirementPanel(
+                    smsRecovered = ConsentCategory.SMS_EXPORTS in recoveredCategories,
+                    importing = iosBackupImporting,
+                    progress = iosBackupImportProgress,
+                    result = iosBackupImportResult,
+                    onImport = onImportIosBackup,
+                )
             }
             Button(
                 onClick = onSync,
@@ -1465,6 +1651,13 @@ private fun TrustedDashboard(
             ) {
                 Text(if (syncing) "Recovering and verifying..." else "Recover all USB-visible data")
             }
+            OwnerApprovedArchivePanel(
+                deviceType = recoveryDeviceType,
+                importing = ownerArchiveImporting,
+                progress = ownerArchiveImportProgress,
+                result = ownerArchiveImportResult,
+                onImport = onImportOwnerArchive,
+            )
             if (currentRecoveryIssues.isNotEmpty()) {
                 RecoveryRemediationPanel(currentRecoveryIssues, syncing, onSync)
             }
@@ -1473,8 +1666,8 @@ private fun TrustedDashboard(
                 Text("View recovered artifacts")
             }
             Text(
-                "Every recovered item must be advertised by the active tethered device over MTP/PTP. " +
-                    "Password vaults, voicemails, and app records must first be exported on that device into USB-visible storage.",
+                "Data may be recovered from objects advertised by the active tethered device over MTP/PTP or from an owner-approved " +
+                    "backup/archive/export explicitly imported for this selected source. Every path is inventoried and integrity checked.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
@@ -1506,13 +1699,19 @@ private fun TrustedDashboard(
 private fun SourceExportReadiness(
     sourcePlatform: SourcePlatform,
     scan: MtpScanSummary,
+    recoveredCategories: Set<ConsentCategory>,
     syncing: Boolean,
+    iosBackupImporting: Boolean,
+    iosBackupImportProgress: IosBackupImportProgress?,
+    iosBackupImportResult: IosBackupImportResult?,
+    onImportIosBackup: () -> Unit,
     onRescan: () -> Unit,
 ) {
-    val found = SourceExportRequirements.categories.filter { it in scan.visibleCategories }
-    val missing = SourceExportRequirements.missingFrom(scan.visibleCategories)
-    val ownerExportWorkflow = OwnerExportCoordinator.trigger(sourcePlatform, scan.visibleCategories)
-    var showOwnerActions by remember(scan.visibleCategories) { mutableStateOf(false) }
+    val coveredCategories = scan.visibleCategories + recoveredCategories
+    val found = SourceExportRequirements.categories.filter { it in coveredCategories }
+    val missing = SourceExportRequirements.missingFrom(coveredCategories)
+    val ownerExportWorkflow = OwnerExportCoordinator.trigger(sourcePlatform, coveredCategories)
+    var showOwnerActions by remember(coveredCategories) { mutableStateOf(false) }
 
     HorizontalDivider()
     Text("USB export readiness", style = MaterialTheme.typography.titleMedium)
@@ -1559,6 +1758,13 @@ private fun SourceExportReadiness(
                 "set Photos > Transfer to Mac or PC to Keep Originals, then scan again.",
             style = MaterialTheme.typography.bodySmall,
         )
+        IosBackupRequirementPanel(
+            smsRecovered = ConsentCategory.SMS_EXPORTS in coveredCategories,
+            importing = iosBackupImporting,
+            progress = iosBackupImportProgress,
+            result = iosBackupImportResult,
+            onImport = onImportIosBackup,
+        )
     }
     if (found.isNotEmpty()) {
         Text("Found: ${found.joinToString { sourceExportLabel(it) }}")
@@ -1571,17 +1777,17 @@ private fun SourceExportReadiness(
         Text(
             when (sourcePlatform) {
                 SourcePlatform.ANDROID ->
-                    "On the external source phone, use each source app's supported export and save the result in " +
-                        "shared USB-visible storage. Reconnect using File transfer / Android Auto mode and recover again."
+                    "On the external source phone, use each source app's supported export. Save it in shared USB-visible storage " +
+                        "for another USB scan, or import the complete owner-approved export/archive above."
                 SourcePlatform.IOS ->
-                    "iPhone PTP exposes downloaded photos and videos, not private SMS, call, voicemail, mail, or password databases. " +
-                        "Only files that iOS itself advertises over PTP can be recovered."
+                    "iPhone PTP exposes downloaded photos and videos, not its private app databases. Import a complete Apple local backup " +
+                        "for Messages/SMS and use owner-approved app/provider exports or complete archives for the remaining categories."
                 SourcePlatform.WINDOWS_PHONE ->
                     "Phone Sync already requested every MTP-visible Lumia object. Windows Phone provides no USB consent " +
                         "request for private SMS, call history, or email. Restore SMS through the phone's Microsoft account " +
                         "backup when available, and export email from its mail provider; call history has no standard USB export."
                 else ->
-                    "Create SMS, call, and email export files on the source, expose their folder over MTP, then recover again."
+                    "Create supported owner exports on the source, expose them over MTP/PTP or import the complete owner-approved archive above, then verify coverage again."
             },
             style = MaterialTheme.typography.bodySmall,
         )
@@ -1606,8 +1812,135 @@ private fun SourceExportReadiness(
             }
         }
     } else {
-        Text("SMS, chat, call, and email exports are exposed and eligible for recovery.")
+        Text("All required message, communication, contact, calendar, voicemail, notification, and credential exports are represented in this recovery set.")
     }
+}
+
+@androidx.compose.runtime.Composable
+private fun OwnerApprovedArchivePanel(
+    deviceType: RecoveryDeviceType,
+    importing: Boolean,
+    progress: OwnerArchiveImportProgress?,
+    result: OwnerArchiveImportResult?,
+    onImport: () -> Unit,
+) {
+    HorizontalDivider()
+    Text("Owner-approved source data", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "Import a complete ${deviceType.label} backup/archive ZIP or an individual owner-created export. " +
+            "The original is preserved first; every ZIP entry is then inventoried as recovered, already recovered, directory metadata, or remediation required.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Button(
+        onClick = onImport,
+        enabled = !importing,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (importing) "Importing owner-approved data..." else "Import owner-approved backup / archive / export")
+    }
+    if (importing) {
+        val current = progress
+        val fraction = current?.takeIf { it.totalItems > 0 }
+            ?.let { it.completedItems.toFloat() / it.totalItems }
+            ?: 0f
+        LinearProgressIndicator(
+            progress = { fraction.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        current?.let {
+            Text(ownerArchiveStageLabel(it.stage), style = MaterialTheme.typography.titleSmall)
+            Text(
+                buildString {
+                    append(it.currentItem)
+                    if (it.totalItems > 0) append(" · ${it.completedItems}/${it.totalItems}")
+                    if (it.bytesProcessed > 0) append(" · ${formatBytes(it.bytesProcessed)}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+    result?.let {
+        Text(
+            "Original preserved: ${if (it.sourcePreserved) "Yes" else "No"} · " +
+                "${it.recoveredItems} files recovered · ${it.declaredItems} total entries · " +
+                "${it.alreadyRecoveredItems} already verified · ${it.directoryItems} directories · " +
+                "${it.failedItems} need remediation",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        if (it.categoriesRecovered.isNotEmpty()) {
+            Text(
+                "Recovered categories: ${it.categoriesRecovered.joinToString { category -> category.label() }}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        it.error?.let { error -> Text(error, color = MaterialTheme.colorScheme.error) }
+    }
+    Text(
+        "Credential/password artifacts are copied intact and inventoried as opaque; they are not decrypted or omitted.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+@androidx.compose.runtime.Composable
+private fun IosBackupRequirementPanel(
+    smsRecovered: Boolean,
+    importing: Boolean,
+    progress: IosBackupImportProgress?,
+    result: IosBackupImportResult?,
+    onImport: () -> Unit,
+) {
+    HorizontalDivider()
+    Text("Required iPhone Messages / SMS", style = MaterialTheme.typography.titleMedium)
+    Text(
+        if (smsRecovered) {
+            "Requirement satisfied: an owner-approved iPhone message artifact is preserved and available to the Data Reader."
+        } else {
+            "Requirement not satisfied. iPhone PTP cannot expose Messages or sms.db. Import a complete owner-approved local Apple backup to retrieve them."
+        },
+        color = if (smsRecovered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+    )
+    Button(
+        onClick = onImport,
+        enabled = !importing,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (importing) "Importing Apple backup..." else "Import owner-approved Apple backup ZIP")
+    }
+    if (importing) {
+        val current = progress
+        val fraction = current?.takeIf { it.totalItems > 0 }
+            ?.let { it.completedItems.toFloat() / it.totalItems }
+            ?: 0f
+        LinearProgressIndicator(
+            progress = { fraction.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        current?.let {
+            Text(iosBackupStageLabel(it.stage), style = MaterialTheme.typography.titleSmall)
+            Text(
+                buildString {
+                    append(it.currentItem)
+                    if (it.totalItems > 0) append(" · ${it.completedItems}/${it.totalItems}")
+                    if (it.bytesProcessed > 0) append(" · ${formatBytes(it.bytesProcessed)}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+    result?.let {
+        Text(
+            "Backup preserved: ${if (it.backupPreserved) "Yes" else "No"} · " +
+                "${it.presentFiles}/${it.declaredFiles} declared files present · " +
+                "${it.messagesExported} messages · ${it.attachmentsExported} attachments",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        it.error?.let { error -> Text(error, color = MaterialTheme.colorScheme.error) }
+    }
+    Text(
+        "Create the local backup with Apple Devices on Windows or Finder on macOS, ZIP the complete backup directory, then select it here. " +
+            "Encrypted backups are preserved intact but must be decrypted by the owner on a trusted computer before message parsing.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @androidx.compose.runtime.Composable
@@ -1711,6 +2044,70 @@ private fun identityReadStageLabel(stage: IdentityReadStage): String = when (sta
     IdentityReadStage.COMPLETE -> "Source identity ready"
 }
 
+private fun iosBackupStageLabel(stage: IosBackupImportStage): String = when (stage) {
+    IosBackupImportStage.PRESERVING_BACKUP -> "Preserving complete Apple backup"
+    IosBackupImportStage.READING_MANIFEST -> "Reading Apple backup manifest"
+    IosBackupImportStage.VERIFYING_BACKUP_FILES -> "Accounting for every declared backup file"
+    IosBackupImportStage.EXTRACTING_MESSAGES -> "Extracting raw Messages database"
+    IosBackupImportStage.EXPORTING_MESSAGES -> "Exporting searchable SMS and iMessage rows"
+    IosBackupImportStage.EXPORTING_ATTACHMENTS -> "Collecting message attachments"
+    IosBackupImportStage.COMPLETE -> "Apple backup import complete"
+}
+
+private fun ownerArchiveStageLabel(stage: OwnerArchiveImportStage): String = when (stage) {
+    OwnerArchiveImportStage.PRESERVING_SOURCE -> "Preserving complete owner-approved source"
+    OwnerArchiveImportStage.COUNTING_ITEMS -> "Counting every archive entry"
+    OwnerArchiveImportStage.RECOVERING_ITEMS -> "Recovering and verifying archive entries"
+    OwnerArchiveImportStage.WRITING_INVENTORY -> "Writing complete entry inventory"
+    OwnerArchiveImportStage.COMPLETE -> "Owner-approved source import complete"
+}
+
+private fun buildOwnerArchiveStatus(progress: OwnerArchiveImportProgress): String {
+    val count = if (progress.totalItems > 0) {
+        " ${progress.completedItems}/${progress.totalItems}."
+    } else {
+        ""
+    }
+    val bytes = if (progress.bytesProcessed > 0) {
+        " ${formatBytes(progress.bytesProcessed)} published."
+    } else {
+        ""
+    }
+    return "OWNER EXPORT: ${ownerArchiveStageLabel(progress.stage)}: ${progress.currentItem}.$count$bytes"
+}
+
+private fun buildOwnerArchiveCompletionStatus(result: OwnerArchiveImportResult): String {
+    return "OWNER EXPORT: preserved=${result.sourcePreserved}, " +
+        "recovered files=${result.recoveredItems}, total entries=${result.declaredItems}, " +
+        "already verified=${result.alreadyRecoveredItems}, " +
+        "directories=${result.directoryItems}, remediation=${result.failedItems}."
+}
+
+private fun buildIosBackupStatus(progress: IosBackupImportProgress): String {
+    val count = if (progress.totalItems > 0) {
+        " ${progress.completedItems}/${progress.totalItems}."
+    } else {
+        ""
+    }
+    val bytes = if (progress.bytesProcessed > 0) {
+        " ${formatBytes(progress.bytesProcessed)} processed."
+    } else {
+        ""
+    }
+    return "IPHONE BACKUP: ${iosBackupStageLabel(progress.stage)}: ${progress.currentItem}.$count$bytes"
+}
+
+private fun buildIosBackupCompletionStatus(result: IosBackupImportResult): String {
+    val requirement = if (result.smsRequirementSatisfied) {
+        "Messages/SMS requirement satisfied with ${result.messagesExported} searchable rows."
+    } else {
+        "Messages/SMS requirement remains unresolved. Follow the listed recovery action and import again."
+    }
+    return "IPHONE BACKUP: preserved=${result.backupPreserved}, " +
+        "files=${result.presentFiles}/${result.declaredFiles}, " +
+        "attachments=${result.attachmentsExported}. $requirement"
+}
+
 private fun buildLiveStatus(progress: SyncProgress): String {
     if (progress.phase == SyncPhase.DISCOVERING) {
         return "LIVE: ${progress.discoveredItems} USB-visible files found, " +
@@ -1730,11 +2127,14 @@ private fun buildLiveStatus(progress: SyncProgress): String {
         "${progress.skippedItems} skipped, ${progress.failedItems} failed.$current"
 }
 
-private fun buildSyncCompletionStatus(result: SyncResult): String {
-    val missingExports = result.mtpScan
-        ?.let { SourceExportRequirements.missingFrom(it.visibleCategories) }
-        .orEmpty()
-    val base = "${result.status}: ${result.transferredItems} transferred, " +
+private fun buildSyncCompletionStatus(
+    result: SyncResult,
+    recoveredCategories: Set<ConsentCategory> = emptySet(),
+): String {
+    val visibleCategories = result.mtpScan?.visibleCategories.orEmpty() + recoveredCategories
+    val missingExports = SourceExportRequirements.missingFrom(visibleCategories)
+    val displayedStatus = if (missingExports.isEmpty()) result.status.toString() else "REQUIRED DATA PENDING"
+    val base = "$displayedStatus: ${result.transferredItems} transferred, " +
         "${result.skippedItems} already verified, ${result.failedItems} failed."
     val inventory = result.recoveryInventory
     val inventoryStatus = when {

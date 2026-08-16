@@ -42,6 +42,23 @@ class OwnerExportCoordinatorTest {
         assertTrue(workflow.actions.any { it.category == ConsentCategory.SMS_EXPORTS })
         assertTrue(workflow.actions.any { it.category == ConsentCategory.CALL_LOGS })
         assertTrue(workflow.actions.any { it.category == ConsentCategory.EMAIL_EXPORTS })
+        assertTrue(workflow.actions.any { it.category == ConsentCategory.CONTACTS })
+        assertTrue(workflow.actions.any { it.category == ConsentCategory.CALENDAR })
+        assertTrue(workflow.actions.any { it.category == ConsentCategory.VOICEMAIL_EXPORTS })
+        assertTrue(workflow.actions.any { it.category == ConsentCategory.NOTIFICATION_EXPORTS })
+        assertTrue(workflow.actions.any { it.category == ConsentCategory.PASSWORD_EXPORTS })
         assertTrue(workflow.actions.any { it.service == "Other messaging or meeting app" })
+    }
+
+    @Test
+    fun `iPhone SMS remediation requires an Apple local backup import`() {
+        val workflow = OwnerExportCoordinator.trigger(SourcePlatform.IOS, emptySet())
+        val smsAction = workflow.actions.single { it.category == ConsentCategory.SMS_EXPORTS }
+
+        assertTrue(smsAction.service.contains("Apple Messages"))
+        assertTrue(smsAction.ownerSteps.contains("Apple Devices"))
+        assertTrue(smsAction.ownerSteps.contains("Finder"))
+        assertTrue(smsAction.expectedArtifacts.contains("Manifest.db"))
+        assertTrue(smsAction.expectedArtifacts.contains("sms.db"))
     }
 }

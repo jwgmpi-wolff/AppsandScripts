@@ -23,17 +23,7 @@ object OwnerExportCoordinator {
         val actions = buildList {
             if (ConsentCategory.CHAT_EXPORTS in missingCategories) addAll(chatExportActions(sourcePlatform))
             if (ConsentCategory.SMS_EXPORTS in missingCategories) {
-                add(
-                    OwnerExportAction(
-                        service = "SMS/MMS app",
-                        category = ConsentCategory.SMS_EXPORTS,
-                        ownerSteps = sourceAction(
-                            sourcePlatform,
-                            "use the messaging app's backup/export command and save an XML, JSON, CSV, text, or ZIP export",
-                        ),
-                        expectedArtifacts = "SMS/MMS export (.xml, .json, .csv, .txt, or .zip)",
-                    ),
-                )
+                add(smsExportAction(sourcePlatform))
             }
             if (ConsentCategory.CALL_LOGS in missingCategories) {
                 add(
@@ -61,8 +51,96 @@ object OwnerExportCoordinator {
                     ),
                 )
             }
+            if (ConsentCategory.CONTACTS in missingCategories) {
+                add(
+                    OwnerExportAction(
+                        service = "Contacts / address book",
+                        category = ConsentCategory.CONTACTS,
+                        ownerSteps = sourceAction(
+                            sourcePlatform,
+                            "use Export or Share All Contacts and save a vCard (.vcf) export",
+                        ),
+                        expectedArtifacts = "Contacts vCard (.vcf or .vcard)",
+                    ),
+                )
+            }
+            if (ConsentCategory.CALENDAR in missingCategories) {
+                add(
+                    OwnerExportAction(
+                        service = "Calendar provider / app",
+                        category = ConsentCategory.CALENDAR,
+                        ownerSteps = sourceAction(
+                            sourcePlatform,
+                            "use the calendar provider's export function and save an iCalendar or complete account export",
+                        ),
+                        expectedArtifacts = "Calendar export (.ics, .ical, .json, or account-export ZIP)",
+                    ),
+                )
+            }
+            if (ConsentCategory.VOICEMAIL_EXPORTS in missingCategories) {
+                add(
+                    OwnerExportAction(
+                        service = "Phone / visual voicemail",
+                        category = ConsentCategory.VOICEMAIL_EXPORTS,
+                        ownerSteps = sourceAction(
+                            sourcePlatform,
+                            "share or save every voicemail audio item and transcript, or include them in a complete owner-approved device backup",
+                        ),
+                        expectedArtifacts = "Voicemail audio, transcript, metadata, or backup archive",
+                    ),
+                )
+            }
+            if (ConsentCategory.NOTIFICATION_EXPORTS in missingCategories) {
+                add(
+                    OwnerExportAction(
+                        service = "Notification history / device report",
+                        category = ConsentCategory.NOTIFICATION_EXPORTS,
+                        ownerSteps = sourceAction(
+                            sourcePlatform,
+                            "use the device or management app's supported notification-history/data export when available",
+                        ),
+                        expectedArtifacts = "Owner-created notification history (.json, .xml, .csv, .txt, or ZIP)",
+                    ),
+                )
+            }
+            if (ConsentCategory.PASSWORD_EXPORTS in missingCategories) {
+                add(
+                    OwnerExportAction(
+                        service = "Password manager / credential provider",
+                        category = ConsentCategory.PASSWORD_EXPORTS,
+                        ownerSteps = sourceAction(
+                            sourcePlatform,
+                            "use the provider's owner-authenticated encrypted export or backup function; use provider sync/recovery for non-exportable hardware-backed passkeys",
+                        ),
+                        expectedArtifacts = "Encrypted password vault/backup or provider-supported passkey backup; private hardware-backed passkey keys remain provider-managed",
+                    ),
+                )
+            }
         }
         return OwnerExportWorkflow(sourcePlatform, actions)
+    }
+
+    private fun smsExportAction(sourcePlatform: SourcePlatform): OwnerExportAction {
+        return if (sourcePlatform == SourcePlatform.IOS) {
+            OwnerExportAction(
+                service = "Apple Messages / SMS local backup",
+                category = ConsentCategory.SMS_EXPORTS,
+                ownerSteps = "On an owner-trusted Windows PC, use Apple Devices, or use Finder on macOS, to create a complete local iPhone backup. " +
+                    "ZIP the complete backup directory without renaming or removing its hashed files, then use Import owner-approved Apple backup ZIP in Phone Sync. " +
+                    "If the backup is encrypted, decrypt a copy on that trusted computer before importing; Phone Sync never requests or bypasses the backup password.",
+                expectedArtifacts = "Complete Apple local-backup ZIP containing Manifest.db and HomeDomain/Library/SMS/sms.db",
+            )
+        } else {
+            OwnerExportAction(
+                service = "SMS/MMS app",
+                category = ConsentCategory.SMS_EXPORTS,
+                ownerSteps = sourceAction(
+                    sourcePlatform,
+                    "use the messaging app's backup/export command and save an XML, JSON, CSV, text, or ZIP export",
+                ),
+                expectedArtifacts = "SMS/MMS export (.xml, .json, .csv, .txt, or .zip)",
+            )
+        }
     }
 
     private fun chatExportActions(sourcePlatform: SourcePlatform): List<OwnerExportAction> {

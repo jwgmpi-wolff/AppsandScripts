@@ -6,6 +6,8 @@ import com.jerrywolff.phonesyncusbc.data.ArtifactIndexDatabase
 import com.jerrywolff.phonesyncusbc.data.ArtifactIndexer
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.DeviceKeyManager
+import com.jerrywolff.phonesyncusbc.data.IosBackupImporter
+import com.jerrywolff.phonesyncusbc.data.OwnerApprovedArchiveImporter
 import com.jerrywolff.phonesyncusbc.data.TrustStore
 import com.jerrywolff.phonesyncusbc.sync.MtpSyncEngine
 import com.jerrywolff.phonesyncusbc.usb.UsbSourceResolver
@@ -28,6 +30,10 @@ class PhoneSyncApplication : Application() {
     val auditLog: AuditLog by lazy { AuditLog(this) }
     val artifactIndexDatabase: ArtifactIndexDatabase by lazy { ArtifactIndexDatabase(this) }
     val artifactIndexer: ArtifactIndexer by lazy { ArtifactIndexer(this, artifactIndexDatabase) }
+    val iosBackupImporter: IosBackupImporter by lazy { IosBackupImporter(this, auditLog) }
+    val ownerApprovedArchiveImporter: OwnerApprovedArchiveImporter by lazy {
+        OwnerApprovedArchiveImporter(this, auditLog)
+    }
     val usbSourceResolver: UsbSourceResolver by lazy { UsbSourceResolver(this) }
     val mtpSyncEngine: MtpSyncEngine by lazy {
         MtpSyncEngine(this, auditLog, usbSourceResolver)

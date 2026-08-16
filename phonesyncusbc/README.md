@@ -67,9 +67,20 @@ Passkey private keys held by Google Password Manager, Microsoft Authenticator, S
 
 ## Source Coverage
 
+Every connected source profile also provides **Import owner-approved backup / archive / export**. This accepts an individual export or complete ZIP for Windows PC, Android, iPhone/iPad, and Camera/IoT recoveries. Phone Sync preserves the original first, inventories every ZIP entry, publishes every safely readable file with size and SHA-256 verification, copies credential artifacts opaque, and records blocked entries with remediation instead of silently omitting them.
+
+To package any owner-approved file or directory read-only on Windows:
+
+```powershell
+.\scripts\package_owner_export.ps1 -SourcePath 'D:\Owner Export' -DeviceType Android
+```
+
+Use `Windows PC`, `Android`, `iPhone iPad`, or `Camera IoT` as `-DeviceType`. The script does not modify the source and writes a SHA-256-reported ZIP under **Downloads / Phone Sync / Owner Exports** by default.
+
 - **MTP Android/Windows sources:** media, documents, and export files exposed in shared storage.
 - **Legacy MTP sources:** when a phone such as a Lumia rejects 64-bit chunked reads, Phone Sync automatically retries with MTP's standard full-object request.
 - **PTP iPhone sources:** locally available photos and videos exposed by iOS. Phone Sync tries 64-bit chunked, standard chunked, and full-file PTP reads in order.
+- **iPhone Messages/SMS:** PTP cannot expose the private Messages database. Use **Import owner-approved Apple backup ZIP** with a complete local backup created by Apple Devices on Windows or Finder on macOS. Phone Sync first preserves the complete ZIP unchanged, inventories every `Manifest.db` row as present or missing, then publishes raw `sms.db`, every SMS/iMessage row as searchable JSONL, and all declared message attachments. The Messages requirement remains visibly unresolved until message data is recovered.
 - **Android protected data:** use each app's supported export on the external phone and save the export in shared storage before connecting with **File transfer / Android Auto** mode.
 - **Email and chat:** exports must already exist in USB-visible shared storage on the external device.
 - **Owner export actions:** after a scan, **Start owner export actions** provides source-device steps for WhatsApp, Teams, Zoom, Webex, Signal, Telegram, Slack, Google Chat, Discord, Messenger, SMS, calls, mail, and other apps. Complete the owner-controlled export, then choose **Owner exports complete - rescan**.
@@ -78,7 +89,7 @@ Passkey private keys held by Google Password Manager, Microsoft Authenticator, S
 - **Passkeys:** keep the source device unlocked and signed in to its credential provider. Use Microsoft Authenticator or Samsung Pass restore/sync on this device, or the equivalent provider on another device. A copied metadata/export file is not a usable private passkey by itself.
 - **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, voicemail, mail, chat, passwords, or notification databases. Only objects iOS advertises over PTP can be recovered.
 
-Phone Sync never reports protected data as recovered unless the source actually exposes a readable object or export.
+Phone Sync never reports protected data as recovered unless the source actually exposes a readable object or the owner supplies a supported backup/export. Unreadable or encrypted Apple backups are still preserved intact and reported with an explicit owner-remediation step; they are never silently ignored or reported as parsed.
 
 ## Parsed Data Readers
 
@@ -108,6 +119,14 @@ After each iPhone scan, **iPhone photo coverage** reports the exact PTP-visible 
 If **USB export readiness** reports that SMS, calls, or email were not exposed, create supported exports using apps on the external device, save them in that device's shared storage, reconnect it unlocked in **File transfer / Android Auto** mode, and recover again.
 
 iPhone PTP exposes photos and videos, not private SMS, call, or mail databases. Those records require a supported source-app or backup export before Phone Sync can recover them.
+
+On Windows, after Apple Devices finishes an owner-approved local backup, package the newest complete backup without changing its contents:
+
+```powershell
+.\scripts\package_iphone_backup.ps1
+```
+
+Use `-List` to show detected backups or `-BackupPath` to select one explicitly. The script reads the source backup without modifying it, creates a ZIP under **Downloads / Phone Sync / Owner Exports**, and prints its SHA-256. Import that ZIP from the selected iPhone's **Required iPhone Messages / SMS** panel.
 
 Windows Phone exposes shared media through MTP but does not publish its private SMS, call-history, or email stores as MTP objects. Phone Sync requests every object the phone advertises, including a legacy full-file compatibility request, but no acquisition-host app can force Windows Phone to expose stores its OS withholds. Use Microsoft-account SMS backup when available and export email from its server/provider; Windows Phone has no standard USB call-history export.
 

@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.TransferClassifier
+import java.io.InputStream
 import java.security.MessageDigest
 
 data class TargetWriteResult(
@@ -224,6 +225,39 @@ class TargetMediaStore(private val context: Context) {
                     checkNotNull(output) { "Android could not open the destination item." }
                     input.copyTo(output)
                 }
+            }
+        }
+    }
+
+    fun copyFromStream(
+        source: InputStream,
+        displayName: String,
+        mimeType: String?,
+        category: ConsentCategory,
+        sourceName: String,
+        modifiedAtEpochMillis: Long,
+        onBytesTransferred: (Long) -> Unit = {},
+    ): TargetWriteResult {
+        return writePendingItem(
+            displayName = displayName,
+            category = category,
+            sourceName = sourceName,
+            modifiedAtEpochMillis = modifiedAtEpochMillis,
+            mimeType = mimeType ?: mimeType(displayName, category),
+        ) { destination ->
+            context.contentResolver.openOutputStream(destination, "w").use { output ->
+                checkNotNull(output) { "Android could not open the destination item." }
+                val buffer = ByteArray(MTP_CHUNK_BYTES)
+                var total = 0L
+                while (true) {
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    output.write(buffer, 0, count)
+                    total += count
+                    onBytesTransferred(total)
+                }
+                total
             }
         }
     }

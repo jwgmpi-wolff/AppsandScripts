@@ -342,7 +342,7 @@ class MtpSyncEngine(
                         )
                     }
                     transfer.onSuccess { result ->
-                        val contentMatch = auditLog.completedTransferByContent(identity.peerId, result.sha256)
+                        val contentMatch = auditLog.completedTransferByContent(identity.peerId, result.sha256, category)
                         val contentMatchIntegrity = contentMatch?.let { existing ->
                             targetMediaStore.verifyStoredItem(
                                 destination = existing.destination,
