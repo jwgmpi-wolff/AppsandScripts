@@ -1650,7 +1650,15 @@ private fun buildSyncCompletionStatus(result: SyncResult): String {
             } else {
                 " No USB-visible password artifacts were found."
             }
-            " Inventory saved as ${inventory.displayName}.$passwordStatus"
+            val passkeyStatus = if (inventory.passkeyRelatedArtifactCount > 0) {
+                " ${inventory.recoveredPasskeyRelatedArtifactCount}/${inventory.passkeyRelatedArtifactCount} " +
+                    "passkey-related backup artifacts preserved. Private passkey keys were not extracted; " +
+                    "restore them through their credential provider."
+            } else {
+                " No provider-supported USB-visible passkey backup was found. Hardware-backed passkey keys " +
+                    "remain in the credential provider and require provider sync or account recovery."
+            }
+            " Inventory saved as ${inventory.displayName}.$passwordStatus$passkeyStatus"
         }
         inventory?.error != null -> " Inventory generation failed: ${inventory.error}."
         else -> ""

@@ -6,12 +6,17 @@ import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -22,7 +27,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -30,11 +39,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.jerrywolff.phonesyncusbc.data.ArtifactIndexDatabase
 import com.jerrywolff.phonesyncusbc.data.ArtifactIndexProgress
@@ -53,6 +66,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.zip.ZipInputStream
+
+internal enum class ReaderLayoutPreference(val label: String) {
+    AUTO("Auto"),
+    MOBILE("Mobile"),
+    TABLET("Tablet"),
+}
+
+internal fun shouldUseTabletReaderLayout(
+    screenWidthDp: Int,
+    preference: ReaderLayoutPreference,
+): Boolean = screenWidthDp >= TABLET_MIN_WIDTH_DP && preference != ReaderLayoutPreference.MOBILE
 
 @Composable
 fun ArtifactDataReaderView(
@@ -81,6 +105,14 @@ fun ArtifactDataReaderView(
     var offset by remember { mutableStateOf(0) }
     var detail by remember { mutableStateOf<IndexedRecordDetail?>(null) }
     var status by remember { mutableStateOf("Build the local index to flatten recovered JSON data.") }
+    var layoutPreferenceName by rememberSaveable { mutableStateOf(ReaderLayoutPreference.AUTO.name) }
+    val layoutPreference = ReaderLayoutPreference.valueOf(layoutPreferenceName)
+    val configuration = LocalConfiguration.current
+    val tabletAvailable = configuration.screenWidthDp >= TABLET_MIN_WIDTH_DP
+    val useTabletLayout = shouldUseTabletReaderLayout(configuration.screenWidthDp, layoutPreference)
+    val tabletHeight = (configuration.screenHeightDp - TABLET_VERTICAL_CHROME_DP)
+        .coerceAtLeast(TABLET_MIN_HEIGHT_DP)
+        .dp
 
     fun refresh(resetOffset: Boolean = false) {
         if (resetOffset) offset = 0
@@ -104,6 +136,54 @@ fun ArtifactDataReaderView(
             sources = snapshot.sources
             kinds = snapshot.kinds
             records = snapshot.records
+        }
+    }
+
+    fun rebuildIndex() {
+        val sourceId = initialSourceId
+        if (sourceId.isNullOrBlank()) {
+            status = "No external recovery source is selected."
+            return
+        }
+        indexing = true
+        indexResult = null
+        scope.launch {
+            val strictEntries = externalDeviceRecoveryEntries(entries, sourceId)
+            val result = withContext(Dispatchers.IO) {
+                indexer.rebuild(strictEntries, sourceId, initialSourceName) { update ->
+                    scope.launch(Dispatchers.Main.immediate) { progress = update }
+                }
+            }
+            indexing = false
+            indexResult = result
+            status = if (result.failedArtifacts == 0) {
+                "Indexed ${result.recordsIndexed} records and ${result.fieldsIndexed} fields."
+            } else {
+                "Indexed ${result.recordsIndexed} records; ${result.failedArtifacts} artifacts failed."
+            }
+            selectedSourceId = sourceId
+            refresh(resetOffset = true)
+        }
+    }
+
+    fun exportIndex() {
+        exporting = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { database.exportSnapshot() }
+            exporting = false
+            status = if (result.uri != null) {
+                "Windows database exported to Downloads / Phone Sync / Data Reader / ${result.displayName}."
+            } else {
+                "Database export failed: ${result.error ?: "unknown error"}"
+            }
+        }
+    }
+
+    fun openRecord(record: IndexedRecordSummary) {
+        scope.launch {
+            detail = selectedSourceId?.let { sourceId ->
+                withContext(Dispatchers.IO) { database.recordDetail(record.id, sourceId) }
+            }
         }
     }
 
@@ -142,6 +222,67 @@ fun ArtifactDataReaderView(
         refresh(resetOffset = true)
     }
 
+    if (useTabletLayout) {
+        TabletReaderLayout(
+            height = tabletHeight,
+            sourceName = sources.singleOrNull { it.sourceId == selectedSourceId }?.displayName ?: initialSourceName,
+            stats = stats,
+            status = status,
+            indexing = indexing,
+            exporting = exporting,
+            progress = progress,
+            layoutPreference = layoutPreference,
+            tabletAvailable = tabletAvailable,
+            onLayoutPreferenceChanged = { layoutPreferenceName = it.name },
+            selectedFocus = selectedFocus,
+            onFocusSelected = {
+                selectedFocus = it
+                refresh(resetOffset = true)
+            },
+            kinds = kinds,
+            selectedKind = selectedKind,
+            onKindSelected = {
+                selectedKind = it
+                refresh(resetOffset = true)
+            },
+            search = search,
+            onSearchChanged = { search = it },
+            onSearch = { refresh(resetOffset = true) },
+            selectedOnly = selectedOnly,
+            selectedRecordIds = selectedRecordIds,
+            onSelectedOnlyChanged = {
+                selectedOnly = it
+                refresh(resetOffset = true)
+            },
+            onClearSelection = {
+                selectedRecordIds = emptySet()
+                if (selectedOnly) refresh(resetOffset = true)
+            },
+            onSelectPage = { selectedRecordIds = selectedRecordIds + records.map(IndexedRecordSummary::id) },
+            records = records,
+            offset = offset,
+            onPreviousPage = {
+                offset = (offset - PAGE_SIZE).coerceAtLeast(0)
+                refresh()
+            },
+            onNextPage = {
+                offset += PAGE_SIZE
+                refresh()
+            },
+            onRecordSelected = { record, selected ->
+                selectedRecordIds = if (selected) selectedRecordIds + record.id else selectedRecordIds - record.id
+                if (selectedOnly) refresh(resetOffset = true)
+            },
+            detail = detail,
+            onOpenRecord = ::openRecord,
+            onCloseDetail = { detail = null },
+            onBack = onBack,
+            onRebuild = ::rebuildIndex,
+            onExport = ::exportIndex,
+        )
+        return
+    }
+
     detail?.let { selected ->
         ParsedRecordDetail(
             detail = selected,
@@ -157,34 +298,16 @@ fun ArtifactDataReaderView(
                 "JSON records and every allowed SMS ZIP item are indexed locally. Password artifacts are excluded.",
                 style = MaterialTheme.typography.bodySmall,
             )
+            ReaderLayoutSelector(
+                preference = layoutPreference,
+                tabletAvailable = tabletAvailable,
+                onSelected = { layoutPreferenceName = it.name },
+                modifier = Modifier.fillMaxWidth(),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onBack, enabled = !indexing && !exporting) { Text("Files") }
                 Button(
-                    onClick = {
-                        val sourceId = initialSourceId
-                        if (sourceId == null) {
-                            status = "No external recovery source is selected."
-                        } else {
-                            indexing = true
-                            indexResult = null
-                            scope.launch {
-                                val result = withContext(Dispatchers.IO) {
-                                    indexer.rebuild(entries, sourceId, initialSourceName) { update ->
-                                        scope.launch(Dispatchers.Main.immediate) { progress = update }
-                                    }
-                                }
-                                indexing = false
-                                indexResult = result
-                                status = if (result.failedArtifacts == 0) {
-                                    "Indexed ${result.recordsIndexed} records and ${result.fieldsIndexed} fields."
-                                } else {
-                                    "Indexed ${result.recordsIndexed} records; ${result.failedArtifacts} artifacts failed."
-                                }
-                                selectedSourceId = sourceId
-                                refresh(resetOffset = true)
-                            }
-                        }
-                    },
+                    onClick = ::rebuildIndex,
                     enabled = !indexing && !exporting && entries.isNotEmpty(),
                 ) {
                     Text(if (stats.artifactCount > 0) "Refresh index" else "Build index")
@@ -213,18 +336,7 @@ fun ArtifactDataReaderView(
                 style = MaterialTheme.typography.titleSmall,
             )
             Button(
-                onClick = {
-                    exporting = true
-                    scope.launch {
-                        val result = withContext(Dispatchers.IO) { database.exportSnapshot() }
-                        exporting = false
-                        status = if (result.uri != null) {
-                            "Windows database exported to Downloads / Phone Sync / Data Reader / ${result.displayName}."
-                        } else {
-                            "Database export failed: ${result.error ?: "unknown error"}"
-                        }
-                    }
-                },
+                onClick = ::exportIndex,
                 enabled = !indexing && !exporting && stats.artifactCount > 0,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -296,13 +408,7 @@ fun ArtifactDataReaderView(
                             selectedRecordIds = if (selected) selectedRecordIds + record.id else selectedRecordIds - record.id
                             if (selectedOnly) refresh(resetOffset = true)
                         },
-                        onOpen = {
-                            scope.launch {
-                                detail = selectedSourceId?.let { sourceId ->
-                                    withContext(Dispatchers.IO) { database.recordDetail(record.id, sourceId) }
-                                }
-                            }
-                        },
+                        onOpen = { openRecord(record) },
                     )
                 }
                 OutlinedButton(
@@ -327,6 +433,259 @@ fun ArtifactDataReaderView(
                     Text("${offset + 1}-${offset + records.size}", modifier = Modifier.padding(top = 12.dp))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ReaderLayoutSelector(
+    preference: ReaderLayoutPreference,
+    tabletAvailable: Boolean,
+    onSelected: (ReaderLayoutPreference) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SingleChoiceSegmentedButtonRow(modifier = modifier) {
+        ReaderLayoutPreference.entries.forEachIndexed { index, option ->
+            SegmentedButton(
+                selected = preference == option,
+                onClick = { onSelected(option) },
+                enabled = option != ReaderLayoutPreference.TABLET || tabletAvailable,
+                shape = SegmentedButtonDefaults.itemShape(index, ReaderLayoutPreference.entries.size),
+            ) {
+                Text(option.label)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabletReaderLayout(
+    height: Dp,
+    sourceName: String,
+    stats: ArtifactIndexStats,
+    status: String,
+    indexing: Boolean,
+    exporting: Boolean,
+    progress: ArtifactIndexProgress?,
+    layoutPreference: ReaderLayoutPreference,
+    tabletAvailable: Boolean,
+    onLayoutPreferenceChanged: (ReaderLayoutPreference) -> Unit,
+    selectedFocus: ArtifactFocus,
+    onFocusSelected: (ArtifactFocus) -> Unit,
+    kinds: List<ParsedRecordKind>,
+    selectedKind: ParsedRecordKind?,
+    onKindSelected: (ParsedRecordKind?) -> Unit,
+    search: String,
+    onSearchChanged: (String) -> Unit,
+    onSearch: () -> Unit,
+    selectedOnly: Boolean,
+    selectedRecordIds: Set<Long>,
+    onSelectedOnlyChanged: (Boolean) -> Unit,
+    onClearSelection: () -> Unit,
+    onSelectPage: () -> Unit,
+    records: List<IndexedRecordSummary>,
+    offset: Int,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onRecordSelected: (IndexedRecordSummary, Boolean) -> Unit,
+    detail: IndexedRecordDetail?,
+    onOpenRecord: (IndexedRecordSummary) -> Unit,
+    onCloseDetail: () -> Unit,
+    onBack: () -> Unit,
+    onRebuild: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth().height(height)) {
+        Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Recovered data browser", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            "${stats.artifactCount} artifacts · ${stats.recordCount} records · ${selectedRecordIds.size} selected",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    OutlinedButton(onClick = onBack, enabled = !indexing && !exporting) { Text("Files") }
+                    Button(onClick = onRebuild, enabled = !indexing && !exporting) {
+                        Text(if (indexing) "Indexing" else "Refresh")
+                    }
+                }
+                ReaderLayoutSelector(
+                    preference = layoutPreference,
+                    tabletAvailable = tabletAvailable,
+                    onSelected = onLayoutPreferenceChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (indexing) {
+                    val fraction = progress?.takeIf { it.totalArtifacts > 0 }
+                        ?.let { it.processedArtifacts.toFloat() / it.totalArtifacts }
+                        ?: 0f
+                    LinearProgressIndicator(
+                        progress = { fraction.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+            HorizontalDivider()
+            Row(Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .weight(0.78f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Query", style = MaterialTheme.typography.titleLarge)
+                    Text("Source", style = MaterialTheme.typography.labelLarge)
+                    Text(sourceName, style = MaterialTheme.typography.bodyMedium)
+                    HorizontalDivider()
+                    Text("Focus", style = MaterialTheme.typography.labelLarge)
+                    ArtifactFocus.entries.forEach { focus ->
+                        ReaderFilterButton(
+                            label = focus.label,
+                            selected = selectedFocus == focus,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { onFocusSelected(focus) }
+                    }
+                    Text("Data type", style = MaterialTheme.typography.labelLarge)
+                    ReaderFilterButton(
+                        label = "All types",
+                        selected = selectedKind == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { onKindSelected(null) }
+                    kinds.forEach { kind ->
+                        ReaderFilterButton(
+                            label = kind.readerLabel(),
+                            selected = selectedKind == kind,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { onKindSelected(kind) }
+                    }
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = onSearchChanged,
+                        label = { Text("Search records") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(onClick = onSearch, enabled = !indexing, modifier = Modifier.fillMaxWidth()) {
+                        Text("Search")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = selectedOnly, onCheckedChange = onSelectedOnlyChanged)
+                        Text("Selected only")
+                    }
+                    OutlinedButton(
+                        onClick = onClearSelection,
+                        enabled = selectedRecordIds.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Clear selection") }
+                    OutlinedButton(
+                        onClick = onExport,
+                        enabled = !indexing && !exporting && stats.artifactCount > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (exporting) "Exporting" else "Export database") }
+                }
+
+                VerticalDivider(Modifier.fillMaxHeight())
+
+                Column(
+                    modifier = Modifier.weight(1.38f).fillMaxHeight().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Records", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        Text("${records.size} shown", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = onSelectPage, enabled = records.isNotEmpty()) { Text("Select shown") }
+                    }
+                    if (records.isEmpty()) {
+                        Text("No records match this query.")
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(records, key = IndexedRecordSummary::id) { record ->
+                                TabletRecordRow(
+                                    record = record,
+                                    selected = record.id in selectedRecordIds,
+                                    onSelectedChange = { selected -> onRecordSelected(record, selected) },
+                                    onOpen = { onOpenRecord(record) },
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = onPreviousPage, enabled = offset > 0) { Text("Previous") }
+                        OutlinedButton(onClick = onNextPage, enabled = records.size == PAGE_SIZE) { Text("Next") }
+                        Text(
+                            if (records.isEmpty()) "0 records" else "${offset + 1}-${offset + records.size}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+
+                VerticalDivider(Modifier.fillMaxHeight())
+
+                Column(
+                    modifier = Modifier
+                        .weight(1.18f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(12.dp),
+                ) {
+                    if (detail == null) {
+                        Text("Select a record", style = MaterialTheme.typography.titleLarge)
+                    } else {
+                        ParsedRecordDetail(detail = detail, onBack = onCloseDetail)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabletRecordRow(
+    record: IndexedRecordSummary,
+    selected: Boolean,
+    onSelectedChange: (Boolean) -> Unit,
+    onOpen: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = selected, onCheckedChange = onSelectedChange)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(record.title, style = MaterialTheme.typography.titleSmall)
+                record.timestamp?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                Text(record.summary, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                Text(
+                    "${record.recordKind.readerLabel()} · ${record.collectionLabel}",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            OutlinedButton(onClick = onOpen) { Text("View") }
         }
     }
 }
@@ -529,9 +888,14 @@ private fun String.normalizedEntry(): String = replace('\\', '/').trimStart('/')
 private fun extensionOf(path: String): String = path.substringAfterLast('.', "").lowercase()
 
 @Composable
-private fun ReaderFilterButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    if (selected) Button(onClick = onClick) { Text(label) }
-    else OutlinedButton(onClick = onClick) { Text(label) }
+private fun ReaderFilterButton(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    if (selected) Button(onClick = onClick, modifier = modifier) { Text(label) }
+    else OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
 }
 
 private fun ParsedRecordKind.readerLabel(): String = name
@@ -547,5 +911,8 @@ private data class ReaderSnapshot(
 
 private const val PAGE_SIZE = 50
 private const val FIELD_PAGE_SIZE = 100
+private const val TABLET_MIN_WIDTH_DP = 600
+private const val TABLET_VERTICAL_CHROME_DP = 150
+private const val TABLET_MIN_HEIGHT_DP = 480
 private val IMAGE_EXTENSIONS = setOf("bmp", "dng", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp")
 private val AUDIO_EXTENSIONS = setOf("3gp", "3gpp", "aac", "aif", "aiff", "amr", "au", "awb", "caf", "evrc", "flac", "m4a", "m4b", "mp3", "mp4", "oga", "ogg", "opus", "qcp", "snd", "wav", "weba", "wma")

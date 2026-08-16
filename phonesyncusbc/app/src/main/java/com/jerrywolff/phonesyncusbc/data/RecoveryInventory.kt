@@ -10,6 +10,7 @@ import com.jerrywolff.phonesyncusbc.domain.RecoveryDeviceType
 import com.jerrywolff.phonesyncusbc.domain.RecoveryProfiles
 import com.jerrywolff.phonesyncusbc.domain.LOGICAL_ACQUISITION_LIMIT
 import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
+import com.jerrywolff.phonesyncusbc.domain.TransferClassifier
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -46,6 +47,8 @@ data class RecoveryInventoryResult(
     val itemCount: Int = 0,
     val passwordArtifactCount: Int = 0,
     val recoveredPasswordArtifactCount: Int = 0,
+    val passkeyRelatedArtifactCount: Int = 0,
+    val recoveredPasskeyRelatedArtifactCount: Int = 0,
     val error: String? = null,
 )
 
@@ -59,6 +62,8 @@ data class RecoveryInventorySummary(
     val accountedBytes: Long,
     val passwordArtifacts: Int,
     val recoveredPasswordArtifacts: Int,
+    val passkeyRelatedArtifacts: Int,
+    val recoveredPasskeyRelatedArtifacts: Int,
 )
 
 fun summarizeRecoveryItems(items: List<RecoveryInventoryItem>): RecoveryInventorySummary {
@@ -79,6 +84,15 @@ fun summarizeRecoveryItems(items: List<RecoveryInventoryItem>): RecoveryInventor
         passwordArtifacts = items.count { it.category == ConsentCategory.PASSWORD_EXPORTS },
         recoveredPasswordArtifacts = items.count {
             it.category == ConsentCategory.PASSWORD_EXPORTS &&
+                it.status in setOf(RecoveryItemStatus.RECOVERED, RecoveryItemStatus.ALREADY_RECOVERED)
+        },
+        passkeyRelatedArtifacts = items.count {
+            it.category == ConsentCategory.PASSWORD_EXPORTS &&
+                TransferClassifier.isPasskeyRelatedArtifact(it.sourcePath)
+        },
+        recoveredPasskeyRelatedArtifacts = items.count {
+            it.category == ConsentCategory.PASSWORD_EXPORTS &&
+                TransferClassifier.isPasskeyRelatedArtifact(it.sourcePath) &&
                 it.status in setOf(RecoveryItemStatus.RECOVERED, RecoveryItemStatus.ALREADY_RECOVERED)
         },
     )
@@ -138,6 +152,8 @@ class RecoveryInventoryWriter(private val context: Context) {
                 itemCount = items.size,
                 passwordArtifactCount = summary.passwordArtifacts,
                 recoveredPasswordArtifactCount = summary.recoveredPasswordArtifacts,
+                passkeyRelatedArtifactCount = summary.passkeyRelatedArtifacts,
+                recoveredPasskeyRelatedArtifactCount = summary.recoveredPasskeyRelatedArtifacts,
             )
         } catch (throwable: Throwable) {
             context.contentResolver.delete(destination, null, null)
@@ -145,6 +161,8 @@ class RecoveryInventoryWriter(private val context: Context) {
                 itemCount = items.size,
                 passwordArtifactCount = summary.passwordArtifacts,
                 recoveredPasswordArtifactCount = summary.recoveredPasswordArtifacts,
+                passkeyRelatedArtifactCount = summary.passkeyRelatedArtifacts,
+                recoveredPasskeyRelatedArtifactCount = summary.recoveredPasskeyRelatedArtifacts,
                 error = throwable.message ?: throwable.javaClass.simpleName,
             )
         }
@@ -187,6 +205,8 @@ class RecoveryInventoryWriter(private val context: Context) {
                     .put("recoverableTargets", JSONArray(profile.recoverableTargets))
                     .put("passwordTarget", profile.passwordTarget)
                     .put("passwordHandling", "COPIED_OPAQUE_NO_DECRYPTION")
+                    .put("passkeyHandling", "PROVIDER_MANAGED_PRIVATE_KEYS_NOT_EXTRACTED")
+                    .put("passkeyRestoreRequired", true)
                     .put("acquisitionType", "READ_ONLY_LOGICAL_MTP_PTP")
                     .put("physicalDiskImageCreated", false)
                     .put("deletedBlockCarvingPerformed", false),
@@ -215,7 +235,10 @@ class RecoveryInventoryWriter(private val context: Context) {
                     .put("recoveredBytes", summary.recoveredBytes)
                     .put("accountedBytes", summary.accountedBytes)
                     .put("passwordArtifacts", summary.passwordArtifacts)
-                    .put("recoveredPasswordArtifacts", summary.recoveredPasswordArtifacts),
+                    .put("recoveredPasswordArtifacts", summary.recoveredPasswordArtifacts)
+                    .put("passkeyRelatedArtifacts", summary.passkeyRelatedArtifacts)
+                    .put("recoveredPasskeyRelatedArtifacts", summary.recoveredPasskeyRelatedArtifacts)
+                    .put("passkeyPrivateKeysExtracted", false),
             )
             .put("items", entries)
     }

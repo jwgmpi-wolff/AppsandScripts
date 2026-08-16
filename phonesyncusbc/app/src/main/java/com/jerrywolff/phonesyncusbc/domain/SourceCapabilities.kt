@@ -135,7 +135,8 @@ object SourceCapabilityPolicy {
                 CategoryCapability(
                     ConsentCategory.PASSWORD_EXPORTS,
                     AccessMode.PORTABLE_EXPORT,
-                    "Owner-created password-manager vault exports such as encrypted .kdbx files",
+                    "Owner-created encrypted password-manager or provider-supported passkey backup exports; " +
+                        "hardware-backed passkey private keys are not USB-exportable",
                 ),
                 CategoryCapability(
                     ConsentCategory.VOICEMAIL_EXPORTS,

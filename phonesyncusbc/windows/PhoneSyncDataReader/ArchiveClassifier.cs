@@ -22,7 +22,11 @@ public static class ArchiveClassifier
         "1password", "lastpass", "dashlane", "protonpass", "enpass", "passwordsafe",
         "password-vault", "credential-backup", "credential_store", "keychain", "login data",
         "logins.json", "key3.db", "key4.db", "signons.sqlite", "passwords.csv",
-        "passwords.json", "credentials.csv", "credentials.json"
+        "passwords.json", "credentials.csv", "credentials.json", "/passkey/", "/passkeys/",
+        "/passkey_exports/", "/passkey-exports/",
+        "passkey-backup", "passkey_export", "webauthn-backup", "webauthn_export",
+        "fido2-backup", "fido2_export", "passkeys.json", "webauthn-credentials.json",
+        "fido2-credentials.json"
     };
 
     private static readonly HashSet<string> KnownCategoryFolders = new(StringComparer.OrdinalIgnoreCase)

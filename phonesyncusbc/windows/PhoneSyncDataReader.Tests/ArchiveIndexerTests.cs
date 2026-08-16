@@ -103,6 +103,16 @@ public sealed class ArchiveIndexerTests : IDisposable
     }
 
     [Fact]
+    public void PasskeyExportsRemainOpaqueSensitiveArtifacts()
+    {
+        var passkeys = ArchiveClassifier.Classify("Exports/Passkeys/passkeys.json");
+
+        Assert.True(passkeys.Sensitive);
+        Assert.Equal("PASSWORD_EXPORTS", passkeys.Category);
+        Assert.False(passkeys.IsJson);
+    }
+
+    [Fact]
     public async Task SmsZipIndexesEveryNonSensitiveEntryAndRemainsIdempotent()
     {
         Assert.Equal("SMS_EXPORTS", ArchiveClassifier.Classify("sms-backup.zip").Category);

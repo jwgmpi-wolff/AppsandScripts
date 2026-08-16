@@ -10,6 +10,7 @@ class RecoveryInventorySummaryTest {
         val items = listOf(
             item("new", RecoveryItemStatus.RECOVERED, 10, ConsentCategory.PASSWORD_EXPORTS),
             item("existing", RecoveryItemStatus.ALREADY_RECOVERED, 20, ConsentCategory.PASSWORD_EXPORTS),
+            item("/Exports/Passkeys/passkeys.json", RecoveryItemStatus.RECOVERED, 5, ConsentCategory.PASSWORD_EXPORTS),
             item("unauthorized", RecoveryItemStatus.NOT_AUTHORIZED),
             item("not-recovered", RecoveryItemStatus.NOT_RECOVERED),
             item("failed", RecoveryItemStatus.FAILED),
@@ -17,15 +18,17 @@ class RecoveryInventorySummaryTest {
 
         val summary = summarizeRecoveryItems(items)
 
-        assertEquals(5, summary.discoveredItems)
-        assertEquals(1, summary.recoveredItems)
+        assertEquals(6, summary.discoveredItems)
+        assertEquals(2, summary.recoveredItems)
         assertEquals(1, summary.alreadyRecoveredItems)
         assertEquals(2, summary.notRecoveredItems)
         assertEquals(1, summary.failedItems)
-        assertEquals(10, summary.recoveredBytes)
-        assertEquals(30, summary.accountedBytes)
-        assertEquals(2, summary.passwordArtifacts)
-        assertEquals(2, summary.recoveredPasswordArtifacts)
+        assertEquals(15, summary.recoveredBytes)
+        assertEquals(35, summary.accountedBytes)
+        assertEquals(3, summary.passwordArtifacts)
+        assertEquals(3, summary.recoveredPasswordArtifacts)
+        assertEquals(1, summary.passkeyRelatedArtifacts)
+        assertEquals(1, summary.recoveredPasskeyRelatedArtifacts)
         assertEquals(
             summary.discoveredItems,
             summary.recoveredItems + summary.alreadyRecoveredItems +

@@ -25,6 +25,20 @@ object TransferClassifier {
         "credential_store",
         "keychain",
     )
+    private val passkeyExportMarkers = listOf(
+        "/passkey/",
+        "/passkeys/",
+        "/passkey_exports/",
+        "/passkey-exports/",
+        "passkey-backup",
+        "passkey_backup",
+        "passkey-export",
+        "passkey_export",
+        "webauthn-backup",
+        "webauthn_export",
+        "fido2-backup",
+        "fido2_export",
+    )
     private val portableCredentialFileNames = setOf(
         "login data",
         "logins.json",
@@ -35,6 +49,10 @@ object TransferClassifier {
         "passwords.json",
         "credentials.csv",
         "credentials.json",
+        "passkeys.json",
+        "passkeys.zip",
+        "webauthn-credentials.json",
+        "fido2-credentials.json",
     )
 
     fun classify(path: String): ConsentCategory {
@@ -153,6 +171,7 @@ object TransferClassifier {
     private fun isPasswordExport(path: String, fileName: String): Boolean {
         val extension = fileName.substringAfterLast('.', "")
         if (fileName in portableCredentialFileNames) return true
+        if (isPasskeyRelatedArtifact(path)) return true
         if (extension in setOf("kdb", "kdbx", "psafe3", "enpassbackup", "1pux", "crd", "vcrd", "keychain-db")) {
             return true
         }
@@ -168,6 +187,32 @@ object TransferClassifier {
             "sqlite",
             "sqlite3",
             "plist",
+        )
+    }
+
+    fun isPasskeyRelatedArtifact(path: String): Boolean {
+        val normalizedPath = "/" + path.replace('\\', '/').lowercase().trimStart('/')
+        val fileName = normalizedPath.substringAfterLast('/')
+        val extension = fileName.substringAfterLast('.', "")
+        val explicitlyNamed = fileName in setOf(
+            "passkeys.json",
+            "passkeys.zip",
+            "webauthn-credentials.json",
+            "fido2-credentials.json",
+        )
+        val marked = passkeyExportMarkers.any { it in normalizedPath || it in fileName }
+        return (explicitlyNamed || marked) && extension in setOf(
+            "json",
+            "cbor",
+            "zip",
+            "bak",
+            "backup",
+            "bin",
+            "db",
+            "sqlite",
+            "sqlite3",
+            "1pux",
+            "kdbx",
         )
     }
 

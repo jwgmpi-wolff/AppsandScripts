@@ -1,7 +1,7 @@
 <Window x:Class="PhoneSyncDataReader.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Phone Sync Data Reader" Height="860" Width="1480" MinHeight="700" MinWidth="1100"
+        Title="Phone Sync Data Reader" Icon="Assets/PhoneSyncDataReader.ico" Height="860" Width="1480" MinHeight="700" MinWidth="1100"
         Background="#F2F5F3" Foreground="{StaticResource InkBrush}">
     <Grid>
         <Grid.RowDefinitions>

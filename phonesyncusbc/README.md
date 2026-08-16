@@ -6,10 +6,10 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-Windows archive reader 2.3.1:
+Windows archive reader 2.4.0:
 
-- [Windows ARM64](releases/PhoneSyncDataReader-2.3.1-win-arm64.zip)
-- [Windows x64](releases/PhoneSyncDataReader-2.3.1-win-x64.zip)
+- [Windows ARM64](releases/PhoneSyncDataReader-2.4.0-win-arm64.zip)
+- [Windows x64](releases/PhoneSyncDataReader-2.4.0-win-x64.zip)
 
 Install the matching Windows package with `./scripts/install_windows_reader.ps1 -Launch`. It creates **Phone Sync Data Reader** shortcuts on the Desktop and Start menu.
 
@@ -54,7 +54,9 @@ Every newly recovered copy is reopened, checked against the source-advertised si
 - **iPhone/iPad:** PTP media plus encrypted backups and message, note, contact, app-document, configuration, iCloud-synchronized, and password artifacts that iOS or its apps explicitly expose.
 - **Camera/IoT:** exposed SD-card contents, footage, configuration, logs, settings backups, application databases, system reports, and credential backups.
 
-Password-manager vaults, browser credential stores, keychain or credential backups, and password exports are recovered for every profile when visible. They are classified as sensitive, copied intact, never previewed or parsed, and recorded as `COPIED_OPAQUE_NO_DECRYPTION` in the inventory.
+Password-manager vaults, browser credential stores, keychain or credential backups, password exports, and explicitly exported passkey backup archives are recovered when USB-visible. They are classified as sensitive, copied intact, never previewed or parsed, and recorded as `COPIED_OPAQUE_NO_DECRYPTION` in the inventory.
+
+Passkey private keys held by Google Password Manager, Microsoft Authenticator, Samsung Pass, Apple Passwords/iCloud Keychain, Windows Hello, or a hardware security module are intentionally non-exportable through MTP/PTP. Phone Sync records `PROVIDER_MANAGED_PRIVATE_KEYS_NOT_EXTRACTED` and never reports those protected keys as recovered. Restore usable passkeys through the original provider's signed-in sync/recovery flow; use each site's recovery process when provider access is unavailable.
 
 ## Source Coverage
 
@@ -65,6 +67,7 @@ Password-manager vaults, browser credential stores, keychain or credential backu
 - **Email and chat:** exports must already exist in USB-visible shared storage on the external device.
 - **Voicemail:** export voicemail audio or visual-voicemail data on the external device into USB-visible storage before recovery.
 - **Password vaults:** export on the external device, preferably to an encrypted format such as KeePass `.kdbx`. Phone Sync copies the USB-visible file unchanged and never previews or parses credentials.
+- **Passkeys:** keep the source device unlocked and signed in to its credential provider. Use Microsoft Authenticator or Samsung Pass restore/sync on this device, or the equivalent provider on another device. A copied metadata/export file is not a usable private passkey by itself.
 - **iPhone protected data:** generic USB PTP does not expose iPhone SMS, calls, voicemail, mail, chat, passwords, or notification databases. Only objects iOS advertises over PTP can be recovered.
 
 Phone Sync never reports protected data as recovered unless the source actually exposes a readable object or export.
@@ -72,6 +75,8 @@ Phone Sync never reports protected data as recovered unless the source actually 
 ## Parsed Data Readers
 
 The Android **Data Reader** tab builds a local SQLite index from the verified recovery set for the selected external source. It streams JSON and JSONL records, flattens nested fields, derives source and collection labels from folders and ZIP entry paths, and provides scrollable Images, Messages, SMS, and Voicemails focus filters. Results can be selected individually or by page, narrowed to selected-only, searched, and opened for message detail, full-size image viewing, or voicemail playback.
+
+On Android tablets and unfolded foldables at least 600dp wide, **Auto** uses a Windows-style three-pane layout: Query filters, selectable Records, and record Detail remain visible together with independent scrolling. The Data Reader also provides explicit **Mobile** and **Tablet** layout choices; narrow phone screens stay in the mobile layout.
 
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 

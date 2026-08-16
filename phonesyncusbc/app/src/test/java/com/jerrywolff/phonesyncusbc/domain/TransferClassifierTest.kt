@@ -178,6 +178,20 @@ class TransferClassifierTest {
     }
 
     @Test
+    fun `classifies explicit passkey backups as opaque credential artifacts`() {
+        listOf(
+            "/Android/Exports/Passkeys/passkeys.json",
+            "/Backups/passkey-backup.zip",
+            "/Browser/webauthn-backup/credentials.cbor",
+            "/Security/fido2_export/fido2-credentials.json",
+        ).forEach { path ->
+            assertTrue(path, TransferClassifier.isPasskeyRelatedArtifact(path))
+            assertEquals(path, ConsentCategory.PASSWORD_EXPORTS, TransferClassifier.classify(path))
+        }
+        assertFalse(TransferClassifier.isPasskeyRelatedArtifact("/Documents/passkey-notes.txt"))
+    }
+
+    @Test
     fun `classifies Windows and Android recovery artifacts`() {
         assertEquals(
             ConsentCategory.LOGS,

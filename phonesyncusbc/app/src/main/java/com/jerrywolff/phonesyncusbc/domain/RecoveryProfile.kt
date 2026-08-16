@@ -46,7 +46,7 @@ object RecoveryProfiles {
                 "Browser data, PST/OST mail files, and OneDrive cache files",
                 "Event logs, registry hives, application databases, and configuration files",
             ),
-            passwordTarget = "Password vaults, browser credential stores, and credential backups",
+            passwordTarget = "Password vaults, browser credential stores, and provider-supported encrypted passkey backups",
         )
         RecoveryDeviceType.ANDROID -> RecoveryProfile(
             deviceType,
@@ -55,7 +55,7 @@ object RecoveryProfiles {
                 "SMS/MMS, contacts, call history, and chat backups exported to shared storage",
                 "Device logs, configuration files, diagnostics, and system-information exports",
             ),
-            passwordTarget = "Password-manager vaults and browser password exports",
+            passwordTarget = "Password-manager vaults and provider-supported encrypted password/passkey exports",
         )
         RecoveryDeviceType.IPHONE_IPAD -> RecoveryProfile(
             deviceType,
@@ -64,7 +64,7 @@ object RecoveryProfiles {
                 "Encrypted backup files and exported messages, notes, and contacts",
                 "Configuration, diagnostics, and application data exported by iOS or its apps",
             ),
-            passwordTarget = "Encrypted password-manager vaults, keychain backups, and password exports",
+            passwordTarget = "Encrypted password-manager vaults, keychain backups, and provider-supported passkey backups",
         )
         RecoveryDeviceType.CAMERA_IOT -> RecoveryProfile(
             deviceType,
