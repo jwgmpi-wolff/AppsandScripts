@@ -1106,6 +1106,23 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
+    fun authorizeAllVisibleDataAndRescan() {
+        val currentTrust = trust ?: return
+        val currentCapabilities = capabilities ?: return
+        val authorizedCategories = currentCapabilities.supportedCategories
+        val updatedTrust = currentTrust.copy(
+            record = currentTrust.record.copy(authorizedCategories = authorizedCategories),
+            updatedAtEpochMillis = System.currentTimeMillis(),
+        )
+        application.trustStore.save(updatedTrust)
+        trust = updatedTrust
+        selectedCategories = authorizedCategories
+        recoveryIssues = emptyList()
+        message = "All USB-visible owner data categories are authorized. Starting a fresh collection."
+        messageSection = AppSection.USB_SOURCE
+        runUsbRecovery(packageAfterRecovery = false)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1489,6 +1506,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     showLibrary = true
                                 },
                                 onSync = { runUsbRecovery(packageAfterRecovery = false) },
+                                onAuthorizeAllAndRescan = ::authorizeAllVisibleDataAndRescan,
                                 onCompleteBackup = { runUsbRecovery(packageAfterRecovery = true) },
                                 onChooseTarget = {
                                     backupWorkflowSection = AppSection.USB_SOURCE
@@ -1663,6 +1681,7 @@ private fun TrustedDashboard(
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
+    onAuthorizeAllAndRescan: () -> Unit,
     onCompleteBackup: () -> Unit,
     onChooseTarget: () -> Unit,
     onImportIosBackup: () -> Unit,
@@ -1825,6 +1844,13 @@ private fun TrustedDashboard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Scan and recover only")
+            }
+            OutlinedButton(
+                onClick = onAuthorizeAllAndRescan,
+                enabled = !syncing && !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Authorize all USB-visible owner data & rescan")
             }
             OwnerApprovedArchivePanel(
                 deviceType = recoveryDeviceType,
