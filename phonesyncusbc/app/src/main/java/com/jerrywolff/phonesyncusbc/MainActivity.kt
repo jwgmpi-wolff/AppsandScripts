@@ -1,13 +1,11 @@
 package com.jerrywolff.phonesyncusbc
 
 import android.app.PendingIntent
-import android.Manifest
 import android.content.ClipData
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -77,8 +75,6 @@ import com.jerrywolff.phonesyncusbc.data.externalDeviceRecoveryEntries
 import com.jerrywolff.phonesyncusbc.data.IosBackupImportProgress
 import com.jerrywolff.phonesyncusbc.data.IosBackupImportResult
 import com.jerrywolff.phonesyncusbc.data.IosBackupImportStage
-import com.jerrywolff.phonesyncusbc.data.LocalSmsExportProgress
-import com.jerrywolff.phonesyncusbc.data.LocalSmsExportResult
 import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportProgress
 import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportResult
 import com.jerrywolff.phonesyncusbc.data.OwnerArchiveImportStage
@@ -227,9 +223,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var ownerArchiveImporting by remember { mutableStateOf(false) }
     var ownerArchiveImportProgress by remember { mutableStateOf<OwnerArchiveImportProgress?>(null) }
     var ownerArchiveImportResult by remember { mutableStateOf<OwnerArchiveImportResult?>(null) }
-    var localSmsCollecting by remember { mutableStateOf(false) }
-    var localSmsProgress by remember { mutableStateOf<LocalSmsExportProgress?>(null) }
-    var localSmsResult by remember { mutableStateOf<LocalSmsExportResult?>(null) }
     var auditRevision by remember { mutableStateOf(0) }
     var showLibrary by remember { mutableStateOf(false) }
     var showParsedData by remember { mutableStateOf(false) }
@@ -290,45 +283,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         previewText = null
         previewBitmap = null
         previewVideoUri = null
-    }
-
-    fun collectAllLocalSms() {
-        if (localSmsCollecting) return
-        localSmsCollecting = true
-        localSmsProgress = LocalSmsExportProgress(0, 0, 0)
-        localSmsResult = null
-        message = "SMS: reading every SMS row from this Android phone."
-        messageSection = AppSection.USB_SOURCE
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                application.localSmsExporter.exportAll { progress ->
-                    scope.launch(Dispatchers.Main.immediate) {
-                        localSmsProgress = progress
-                    }
-                }
-            }
-            localSmsCollecting = false
-            localSmsResult = result
-            localSmsProgress = null
-            message = if (result.uri == null) {
-                "SMS collection failed: ${result.error ?: "unknown error"}"
-            } else {
-                "SMS collection complete: ${result.messagesExported} messages saved to Downloads / " +
-                    "$productName / This Android / sms_exports. SHA-256 ${result.sha256.orEmpty()}."
-            }
-            messageSection = AppSection.USB_SOURCE
-        }
-    }
-
-    val readSmsPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            collectAllLocalSms()
-        } else {
-            message = "SMS collection needs Android's SMS permission. No messages were read."
-            messageSection = AppSection.USB_SOURCE
-        }
     }
 
     fun refreshSource() {
@@ -1229,22 +1183,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     },
                 )
             }
-            if (activeSection == AppSection.USB_SOURCE) item {
-                LocalSmsCollectionPanel(
-                    collecting = localSmsCollecting,
-                    progress = localSmsProgress,
-                    result = localSmsResult,
-                    onCollect = {
-                        if (context.checkSelfPermission(Manifest.permission.READ_SMS) ==
-                            PackageManager.PERMISSION_GRANTED
-                        ) {
-                            collectAllLocalSms()
-                        } else {
-                            readSmsPermissionLauncher.launch(Manifest.permission.READ_SMS)
-                        }
-                    },
-                )
-            }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupActivityPanel(backupActivity)
             }
@@ -1568,6 +1506,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     showLibrary = true
                                 },
                                 onSync = { runUsbRecovery(packageAfterRecovery = false) },
+                                onCollectSourceSms = { runUsbRecovery(packageAfterRecovery = false) },
                                 onAuthorizeAllAndRescan = ::authorizeAllVisibleDataAndRescan,
                                 onCompleteBackup = { runUsbRecovery(packageAfterRecovery = true) },
                                 onChooseTarget = {
@@ -1743,6 +1682,7 @@ private fun TrustedDashboard(
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
+    onCollectSourceSms: () -> Unit,
     onAuthorizeAllAndRescan: () -> Unit,
     onCompleteBackup: () -> Unit,
     onChooseTarget: () -> Unit,
@@ -1907,6 +1847,18 @@ private fun TrustedDashboard(
             ) {
                 Text("Scan and recover only")
             }
+            Button(
+                onClick = onCollectSourceSms,
+                enabled = !syncing && !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Collect all SMS from USB-connected source")
+            }
+            Text(
+                "This reads SMS only when the connected source exposes an SMS export or companion-protocol result over USB. " +
+                    "MTP cannot open the source phone's private SMS database.",
+                style = MaterialTheme.typography.bodySmall,
+            )
             OutlinedButton(
                 onClick = onAuthorizeAllAndRescan,
                 enabled = !syncing && !backingUp,
@@ -2268,70 +2220,6 @@ private fun RecoveryRemediationPanel(
 }
 
 private fun ConsentCategory.label(): String = name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
-
-@androidx.compose.runtime.Composable
-private fun LocalSmsCollectionPanel(
-    collecting: Boolean,
-    progress: LocalSmsExportProgress?,
-    result: LocalSmsExportResult?,
-    onCollect: () -> Unit,
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(
-            Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("This Android SMS", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Read every SMS row stored on this Android phone, including inbox, sent, draft, outbox, failed, and queued messages. " +
-                    "Android will ask for SMS permission before any message is read.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            progress?.let { current ->
-                if (current.totalMessages > 0) {
-                    LinearProgressIndicator(
-                        progress = {
-                            (current.exportedMessages.toFloat() / current.totalMessages).coerceIn(0f, 1f)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                Text(
-                    "${current.exportedMessages} of ${current.totalMessages} SMS messages · " +
-                        formatBytes(current.bytesWritten),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                current.currentAddress?.let { address ->
-                    Text(address, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            Button(
-                onClick = onCollect,
-                enabled = !collecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (collecting) "Collecting all SMS..." else "Collect all SMS on this Android")
-            }
-            result?.let { completed ->
-                if (completed.uri == null) {
-                    Text(
-                        completed.error ?: "SMS collection did not complete.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                } else {
-                    Text(
-                        "${completed.messagesExported} SMS messages verified · " +
-                            "${formatBytes(completed.bytesExported)} · SHA-256 ${completed.sha256.orEmpty()}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-    }
-}
 
 private fun AuditEntry.displayName(): String {
     return sourceItem.substringAfterLast('/').ifBlank { "Recovered artifact" }

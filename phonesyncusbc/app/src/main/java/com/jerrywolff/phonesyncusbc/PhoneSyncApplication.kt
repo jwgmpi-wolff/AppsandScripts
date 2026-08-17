@@ -7,7 +7,6 @@ import com.jerrywolff.phonesyncusbc.data.ArtifactIndexer
 import com.jerrywolff.phonesyncusbc.data.DataExportManager
 import com.jerrywolff.phonesyncusbc.data.DeviceKeyManager
 import com.jerrywolff.phonesyncusbc.data.IosBackupImporter
-import com.jerrywolff.phonesyncusbc.data.LocalSmsExporter
 import com.jerrywolff.phonesyncusbc.data.OwnerApprovedArchiveImporter
 import com.jerrywolff.phonesyncusbc.data.TrustStore
 import com.jerrywolff.phonesyncusbc.sync.MtpSyncEngine
@@ -32,7 +31,6 @@ class PhoneSyncApplication : Application() {
     val artifactIndexDatabase: ArtifactIndexDatabase by lazy { ArtifactIndexDatabase(this) }
     val artifactIndexer: ArtifactIndexer by lazy { ArtifactIndexer(this, artifactIndexDatabase) }
     val iosBackupImporter: IosBackupImporter by lazy { IosBackupImporter(this, auditLog) }
-    val localSmsExporter: LocalSmsExporter by lazy { LocalSmsExporter(this) }
     val ownerApprovedArchiveImporter: OwnerApprovedArchiveImporter by lazy {
         OwnerApprovedArchiveImporter(this, auditLog)
     }
