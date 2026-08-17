@@ -12,8 +12,8 @@ android {
         applicationId = "com.jerrywolff.phonesynctabletreader"
         minSdk = 29
         targetSdk = 35
-        versionCode = 8
-        versionName = "2.0.1"
+        versionCode = 9
+        versionName = "2.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
