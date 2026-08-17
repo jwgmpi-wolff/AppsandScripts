@@ -178,6 +178,18 @@ class TransferClassifierTest {
     }
 
     @Test
+    fun `sensitive markers take precedence over message folder names`() {
+        assertEquals(
+            ConsentCategory.PASSWORD_EXPORTS,
+            TransferClassifier.classify("/SMS/Exports/Passwords/sms-password-vault.json"),
+        )
+        assertEquals(
+            ConsentCategory.PASSWORD_EXPORTS,
+            TransferClassifier.classify("/WhatsApp/Backups/1Password/vault.1pux"),
+        )
+    }
+
+    @Test
     fun `classifies explicit passkey backups as opaque credential artifacts`() {
         listOf(
             "/Android/Exports/Passkeys/passkeys.json",

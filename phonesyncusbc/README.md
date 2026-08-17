@@ -6,10 +6,10 @@ Android USB host for owner-authorized, external-device-only data recovery and re
 
 [Download the current debug APK](releases/PhoneSyncUSB-C-debug.apk).
 
-Standalone Android tablet reader 1.1.2:
+RecoverByBackup Android tablet reader 1.2.0:
 
-- [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.2-android-tablet.apk)
-- [Tablet reader trust manifest](releases/PhoneSyncDataReader-1.1.2-android-tablet.apk.trust.json)
+- [RecoverByBackup APK](releases/RecoverByBackup-1.2.0-android-tablet.apk)
+- [RecoverByBackup trust manifest](releases/RecoverByBackup-1.2.0-android-tablet.apk.trust.json)
 
 Windows archive reader 2.4.0:
 
@@ -31,7 +31,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 `pushDebugToDevice` performs the same verification before installation, pulls the installed APK back from every device, and verifies it again. Any checksum, signer, package ID, or version mismatch stops the install workflow. Signing keystores and passwords remain outside Git through `.gitignore`.
 
-The tablet reader installs separately as `com.jerrywolff.phonesynctabletreader`. Verify it with the same script by passing the tablet APK and its adjacent trust manifest.
+RecoverByBackup installs as `com.jerrywolff.phonesynctabletreader`, preserving upgrades and existing Reader data. Verify it with the same script by passing its APK and adjacent trust manifest.
 
 Android does not treat GitHub as an app store, so manual downloads still require the user to approve **Install unknown apps** for the browser or file manager. The repository cannot bypass that Android security prompt.
 
@@ -77,6 +77,19 @@ To package any owner-approved file or directory read-only on Windows:
 
 Use `Windows PC`, `Android`, `iPhone iPad`, or `Camera IoT` as `-DeviceType`. The script does not modify the source and writes a SHA-256-reported ZIP under **Downloads / Phone Sync / Owner Exports** by default.
 
+To create one composite archive for RecoverByBackup from one or more owner-approved backup and export folders:
+
+```powershell
+.\scripts\new_recoverbybackup.ps1 `
+	-SourcePath 'D:\Phone Backup', 'D:\SMS and App Exports', 'D:\Mailbox Exports' `
+	-DeviceType Android `
+	-SourceName 'Owner phone'
+```
+
+The script includes every readable file under the selected paths, preserves relative folders under `payload/`, streams each file once, and records size, SHA-256, category, sensitivity handling, source fingerprint, and coverage limits in `recoverbybackup-manifest.json`. It fails rather than silently omitting an unreadable file. The default output is **Downloads / RecoverByBackup**.
+
+RecoverByBackup does not claim a physical or complete device image. SMS, messages, email, voicemail, application data, and credentials are present only when the owner supplied an OS backup or app export containing them. Credential archives are preserved opaque and are not decrypted or parsed.
+
 - **MTP Android/Windows sources:** media, documents, and export files exposed in shared storage.
 - **Legacy MTP sources:** when a phone such as a Lumia rejects 64-bit chunked reads, Phone Sync automatically retries with MTP's standard full-object request.
 - **PTP iPhone sources:** locally available photos and videos exposed by iOS. Phone Sync tries 64-bit chunked, standard chunked, and full-file PTP reads in order.
@@ -97,7 +110,7 @@ The Android **Data Reader** tab builds a local SQLite index from the verified re
 
 On Android tablets and unfolded foldables at least 600dp wide, **Auto** uses a Windows-style three-pane layout: Query filters, selectable Records, and record Detail remain visible together with independent scrolling. The Data Reader also provides explicit **Mobile** and **Tablet** layout choices; narrow phone screens stay in the mobile layout.
 
-The separate [Phone Sync Data Reader APK](releases/PhoneSyncDataReader-1.1.2-android-tablet.apk) can either import a Phone Sync backup ZIP or browse a selected OneDrive or storage folder recursively. **Connect folder** and **Resync folder** remain side by side in the first tablet viewport. **Open archive** and **Refresh archive** do the same for a recovery ZIP: the Reader retains its owner-approved SAF URI, reopens the current OneDrive archive, verifies every manifest item again, and exposes newly added nested folder paths without discarding the last verified snapshot when refresh fails. Common OneDrive ZIP MIME types are accepted. Folder resync continues to requery cloud directories while Android reports them loading, detect uploaded, changed, and deleted files, and preserve the last complete folder snapshot on partial results. Its green landscape-tablet and document-search icon remains distinct from the collector's blue portrait-phone icon.
+The separate [RecoverByBackup APK](releases/RecoverByBackup-1.2.0-android-tablet.apk) reads RecoverByBackup and legacy Phone Sync archives, or browses a selected OneDrive/storage folder directly. **Archive location** opens Android's folder-tree view instead of the ZIP-filtered Recent screen, recursively finds nested recovery ZIPs, and lists each path for explicit opening. **Refresh location** requeries OneDrive; **ZIP file** remains available for direct selection. RecoverByBackup verifies every manifest size and SHA-256 in place, avoiding a second full copy of a large composite backup. It indexes supported SMS, chat, email, image, voicemail, application-inventory, database, and document content by nested folder path; sensitive credential files remain preserved but unparsed. Legacy archives retain their extraction and peer-verification behavior.
 
 SMS ZIP archives are read entry by entry. JSON content is flattened into logical records; every other non-sensitive item, including media, XML, databases, voicemail, and opaque attachments, is fully streamed, SHA-256 hashed, and represented by a searchable archive-entry record. Credential entries nested in an SMS ZIP remain excluded from parsing. Rebuilding one source is atomic, and canonical hashes prevent duplicate records across repeated pulls and overlapping exports.
 

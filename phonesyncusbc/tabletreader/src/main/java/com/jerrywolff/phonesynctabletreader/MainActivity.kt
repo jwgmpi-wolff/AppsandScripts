@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,8 +66,9 @@ class MainActivity : ComponentActivity() {
                         ReaderArchiveActions(
                             busy = false,
                             refreshing = false,
-                            onOpen = {},
-                            onRefresh = {},
+                            onChooseLocation = {},
+                            onChooseZip = {},
+                            onRefreshLocation = {},
                         )
                     }
                 }
@@ -88,6 +91,13 @@ private fun TabletReaderApp() {
     val scope = rememberCoroutineScope()
     val importer = remember { ArchiveImporter(context) }
     val folderSourceManager = remember { ExternalFolderSourceManager(context) }
+    val archiveLocationManager = remember {
+        ExternalFolderSourceManager(
+            context = context,
+            stateFileName = ARCHIVE_LOCATION_STATE_FILE,
+            preferencesName = ARCHIVE_LOCATION_PREFERENCES,
+        )
+    }
     val sourcePreferences = remember {
         context.getSharedPreferences(READER_SOURCE_PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -118,10 +128,14 @@ private fun TabletReaderApp() {
     var progress by remember { mutableStateOf<ArchiveImportProgress?>(null) }
     var folderScanning by remember { mutableStateOf(false) }
     var folderProgress by remember { mutableStateOf<FolderScanProgress?>(null) }
+    var archiveLocationScanning by remember { mutableStateOf(false) }
+    var archiveLocationProgress by remember { mutableStateOf<FolderScanProgress?>(null) }
+    var archiveLocationName by remember { mutableStateOf<String?>(null) }
+    var archiveCandidates by remember { mutableStateOf(emptyList<ArchiveLocationCandidate>()) }
     var status by remember {
         mutableStateOf(
             when (initialMode) {
-                ReaderContentMode.ARCHIVE -> initialArchive?.let { "Verified ${it.entries.size} archive item(s)." }
+                ReaderContentMode.ARCHIVE -> initialArchive?.let { "Verified ${it.verifiedItemCount} archive item(s)." }
                 ReaderContentMode.FOLDER -> initialFolder?.let { "Loaded ${it.entries.size} folder file(s)." }
             } ?: "Connect a OneDrive or storage folder, or open a Phone Sync backup archive.",
         )
@@ -133,8 +147,10 @@ private fun TabletReaderApp() {
     }
 
     fun scanFolder(treeUri: Uri) {
-        if (folderScanning || importing) return
+        if (folderScanning || archiveLocationScanning || importing) return
         selectMode(ReaderContentMode.FOLDER)
+        archiveCandidates = emptyList()
+        archiveLocationName = null
         folderSourceManager.rememberTreeUri(treeUri)
         folderScanning = true
         folderProgress = null
@@ -181,7 +197,7 @@ private fun TabletReaderApp() {
     }
 
     fun importArchive(uri: Uri, refreshing: Boolean, accessPersisted: Boolean) {
-        if (importing || folderScanning) return
+        if (importing || folderScanning || archiveLocationScanning) return
         selectMode(ReaderContentMode.ARCHIVE)
         val previousArchive = archiveImport
         importing = true
@@ -212,9 +228,9 @@ private fun TabletReaderApp() {
             if (result.entries.isNotEmpty()) {
                 archiveImport = result
                 status = if (refreshing) {
-                    "Refreshed and verified ${result.entries.size} archive item(s)."
+                    "Refreshed and verified ${result.verifiedItemCount} archive item(s)."
                 } else {
-                    "Verified ${result.entries.size} external-source item(s)."
+                    "Verified ${result.verifiedItemCount} backup item(s)."
                 }
                 if (!accessPersisted) {
                     status += " Android granted temporary access; select this archive again for the next refresh."
@@ -237,9 +253,56 @@ private fun TabletReaderApp() {
         importArchive(uri, refreshing = archiveImport != null, accessPersisted = accessPersisted)
     }
 
+    fun scanArchiveLocation(treeUri: Uri) {
+        if (archiveLocationScanning || folderScanning || importing) return
+        selectMode(ReaderContentMode.ARCHIVE)
+        archiveLocationManager.rememberTreeUri(treeUri)
+        archiveLocationScanning = true
+        archiveLocationProgress = null
+        status = "Scanning the selected archive location and its subfolders..."
+        showReader = false
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                archiveLocationManager.findRecoveryArchives(treeUri) { update ->
+                    scope.launch(Dispatchers.Main.immediate) { archiveLocationProgress = update }
+                }
+            }
+            archiveLocationScanning = false
+            archiveLocationName = result.locationName
+            archiveCandidates = result.candidates
+            status = result.error ?: "Found ${result.candidates.size} recovery archive(s) in ${result.locationName}."
+        }
+    }
+
+    val archiveLocationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        val permissionError = runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }.exceptionOrNull()
+        if (permissionError != null || !archiveLocationManager.hasPersistedReadAccess(uri)) {
+            status = "Android could not retain access to this archive location. " +
+                "Choose it again and approve folder access. ${permissionError?.message.orEmpty()}"
+            return@rememberLauncherForActivityResult
+        }
+        scanArchiveLocation(uri)
+    }
+
+    fun refreshArchiveLocation() {
+        val treeUri = archiveLocationManager.selectedTreeUri()
+        if (treeUri != null && archiveLocationManager.hasPersistedReadAccess(treeUri)) {
+            scanArchiveLocation(treeUri)
+        } else {
+            status = "Choose the OneDrive or storage archive location again to refresh its contents."
+            archiveLocationPicker.launch(treeUri)
+        }
+    }
+
     fun refreshArchive() {
         val archiveUri = importer.selectedArchiveUri()
-        if (archiveUri != null && importer.hasPersistedReadAccess(archiveUri)) {
+        val archiveLocationUri = archiveLocationManager.selectedTreeUri()
+        val locationAccess = archiveLocationUri != null &&
+            archiveLocationManager.hasPersistedReadAccess(archiveLocationUri)
+        if (archiveUri != null && (importer.hasPersistedReadAccess(archiveUri) || locationAccess)) {
             importArchive(archiveUri, refreshing = true, accessPersisted = true)
         } else {
             status = "Select the recovery archive again to restore access and refresh it."
@@ -270,19 +333,19 @@ private fun TabletReaderApp() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Phone Sync Data Reader") },
+                    title = { Text("RecoverByBackup") },
                     navigationIcon = {
                         Image(
                             painter = painterResource(R.drawable.ic_reader_logo),
-                            contentDescription = "Data reader",
+                            contentDescription = "RecoverByBackup data reader",
                             modifier = Modifier.padding(start = 12.dp).size(40.dp),
                         )
                     },
                     actions = {
-                        if (sourceMode == ReaderContentMode.ARCHIVE) {
+                        if (sourceMode == ReaderContentMode.ARCHIVE && archiveImport != null) {
                             TextButton(
                                 onClick = ::refreshArchive,
-                                enabled = !importing && !folderScanning,
+                                enabled = !importing && !folderScanning && !archiveLocationScanning,
                             ) {
                                 Text(if (importing) "Refreshing..." else "Refresh archive")
                             }
@@ -323,23 +386,36 @@ private fun TabletReaderApp() {
                 return@Scaffold
             }
             Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text("Tablet recovery data reader", style = MaterialTheme.typography.headlineMedium)
-                Text("Connect a OneDrive or storage folder for recursive browsing and resync, or open a verified Phone Sync backup archive.")
+                Text("RecoverByBackup", style = MaterialTheme.typography.headlineMedium)
+                Text("Choose a backup location to find RecoverByBackup and legacy Phone Sync archives, or browse an owner-approved storage folder directly.")
                 ReaderFolderActions(
-                    busy = folderScanning || importing,
+                    busy = folderScanning || archiveLocationScanning || importing,
                     resyncing = folderScanning,
                     onConnect = { folderPicker.launch(folderSourceManager.selectedTreeUri()) },
                     onResync = ::resyncFolder,
                 )
                 ReaderArchiveActions(
-                    busy = folderScanning || importing,
-                    refreshing = importing,
-                    onOpen = { archivePicker.launch(ARCHIVE_MIME_TYPES) },
-                    onRefresh = ::refreshArchive,
+                    busy = folderScanning || archiveLocationScanning || importing,
+                    refreshing = archiveLocationScanning,
+                    onChooseLocation = { archiveLocationPicker.launch(archiveLocationManager.selectedTreeUri()) },
+                    onChooseZip = { archivePicker.launch(ARCHIVE_MIME_TYPES) },
+                    onRefreshLocation = ::refreshArchiveLocation,
                 )
+                if (archiveLocationScanning) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    archiveLocationProgress?.let { current ->
+                        Text(
+                            "Scanning archive location · ${current.discoveredFiles} ZIP(s) found · ${current.currentItem}",
+                        )
+                    }
+                }
                 if (folderScanning) {
                     val current = folderProgress
                     val fraction = current?.takeIf { it.totalFiles > 0 }
@@ -376,6 +452,38 @@ private fun TabletReaderApp() {
                     }
                 }
                 Text(status)
+                archiveLocationName?.let { locationName ->
+                    Text("Recovery archives in $locationName", style = MaterialTheme.typography.titleLarge)
+                }
+                archiveCandidates.forEach { candidate ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(candidate.displayName, style = MaterialTheme.typography.titleMedium)
+                                Text(candidate.relativePath, style = MaterialTheme.typography.bodySmall)
+                                Text(formatBytes(candidate.sizeBytes), style = MaterialTheme.typography.bodySmall)
+                            }
+                            Button(
+                                onClick = {
+                                    val locationAccess = archiveLocationManager.selectedTreeUri()?.let { treeUri ->
+                                        archiveLocationManager.hasPersistedReadAccess(treeUri)
+                                    } == true
+                                    importArchive(
+                                        candidate.uri,
+                                        refreshing = archiveImport != null,
+                                        accessPersisted = locationAccess,
+                                    )
+                                },
+                                enabled = !importing && !folderScanning && !archiveLocationScanning,
+                            ) {
+                                Text("Open")
+                            }
+                        }
+                    }
+                }
                 currentContent?.takeIf { it.entries.isNotEmpty() }?.let {
                     OutlinedButton(onClick = { showReader = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("Open reader database")
@@ -432,26 +540,34 @@ internal fun ReaderFolderActions(
 internal fun ReaderArchiveActions(
     busy: Boolean,
     refreshing: Boolean,
-    onOpen: () -> Unit,
-    onRefresh: () -> Unit,
+    onChooseLocation: () -> Unit,
+    onChooseZip: () -> Unit,
+    onRefreshLocation: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
-            onClick = onOpen,
+            onClick = onChooseLocation,
             enabled = !busy,
             modifier = Modifier.weight(1f),
         ) {
-            Text("Open archive")
+            Text("Archive location")
         }
         OutlinedButton(
-            onClick = onRefresh,
+            onClick = onChooseZip,
             enabled = !busy,
             modifier = Modifier.weight(1f),
         ) {
-            Text(if (refreshing) "Refreshing..." else "Refresh archive")
+            Text("ZIP file")
+        }
+        OutlinedButton(
+            onClick = onRefreshLocation,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(if (refreshing) "Scanning..." else "Refresh location")
         }
     }
 }
@@ -479,7 +595,7 @@ private data class ReaderContentSnapshot(
 private fun ArchiveImportResult.toContentSnapshot() = ReaderContentSnapshot(
     sourceId = sourceId,
     sourceName = sourceName,
-    sourceLabel = "Verified Phone Sync archive · ${entries.size} items",
+    sourceLabel = "Verified backup archive · $verifiedItemCount item(s)",
     entries = entries,
     issues = issues,
 )
@@ -494,6 +610,8 @@ private fun FolderScanResult.toContentSnapshot() = ReaderContentSnapshot(
 
 private const val READER_SOURCE_PREFERENCES = "reader_content_source"
 private const val READER_SOURCE_MODE_KEY = "source_mode"
+private const val ARCHIVE_LOCATION_STATE_FILE = "reader-archive-location.json"
+private const val ARCHIVE_LOCATION_PREFERENCES = "reader_archive_location"
 private val ARCHIVE_MIME_TYPES = arrayOf(
     "application/zip",
     "application/x-zip-compressed",

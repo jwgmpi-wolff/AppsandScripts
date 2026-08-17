@@ -160,6 +160,35 @@ class ExternalFolderSourceManagerInstrumentedTest {
         assertTrue(progressItems.any { it.startsWith("Waiting for OneDrive / cloud sync:") })
     }
 
+    @Test
+    fun recursivelyFindsRecoveryArchivesInSelectedLocation() {
+        File(testDirectory, "Phone backups/Android/recovery-one.zip").apply {
+            parentFile!!.mkdirs()
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+        File(testDirectory, "Phone backups/iPhone/Nested/recovery-two.ZIP").apply {
+            parentFile!!.mkdirs()
+            writeBytes(byteArrayOf(4, 5, 6, 7))
+        }
+        File(testDirectory, "Phone backups/readme.txt").writeText("not an archive")
+        val treeUri = Uri.fromFile(testDirectory)
+
+        val result = manager.findRecoveryArchivesRoot(
+            treeUri,
+            DocumentFile.fromFile(testDirectory),
+        )
+
+        assertEquals(2, result.candidates.size)
+        assertEquals(
+            listOf(
+                "Phone backups/Android/recovery-one.zip",
+                "Phone backups/iPhone/Nested/recovery-two.ZIP",
+            ),
+            result.candidates.map { it.relativePath },
+        )
+        assertTrue(result.error.isNullOrBlank())
+    }
+
     private companion object {
         const val INDEX_DATABASE = "external-folder-source-test.sqlite"
         const val TEST_STATE_FILE = "reader-folder-source-test.json"

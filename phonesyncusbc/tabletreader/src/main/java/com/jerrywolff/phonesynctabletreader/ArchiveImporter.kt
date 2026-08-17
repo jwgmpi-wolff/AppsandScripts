@@ -2,6 +2,7 @@ package com.jerrywolff.phonesynctabletreader
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
 import com.jerrywolff.phonesyncusbc.data.RecoveryIssue
 import com.jerrywolff.phonesyncusbc.data.RecoveryIssueReason
@@ -29,6 +30,7 @@ data class ArchiveImportResult(
     val issues: List<RecoveryIssue>,
     val error: String? = null,
     val archiveUri: Uri? = null,
+    val verifiedItemCount: Int = entries.size,
 )
 
 class ArchiveImporter(
@@ -71,7 +73,11 @@ class ArchiveImporter(
         archiveUri: Uri,
         onProgress: (ArchiveImportProgress) -> Unit = {},
     ): ArchiveImportResult {
-        val manifest = readManifest(archiveUri)
+        val manifestDocument = readManifest(archiveUri)
+        if (manifestDocument.path == RECOVER_BY_BACKUP_MANIFEST_PATH) {
+            return importRecoverByBackup(archiveUri, manifestDocument.content, onProgress)
+        }
+        val manifest = manifestDocument.content
         val sourceId = manifest.optString("externalPeerId").trim()
         require(isExternalSourcePeer(sourceId)) {
             "The archive does not identify a valid external source device."
@@ -189,6 +195,188 @@ class ArchiveImporter(
         }
     }
 
+    private fun importRecoverByBackup(
+        archiveUri: Uri,
+        manifest: JSONObject,
+        onProgress: (ArchiveImportProgress) -> Unit,
+    ): ArchiveImportResult {
+        require(manifest.optString("format") == RECOVER_BY_BACKUP_FORMAT) {
+            "The RecoverByBackup manifest has an unsupported format."
+        }
+        require(manifest.optInt("schemaVersion", 0) == RECOVER_BY_BACKUP_SCHEMA_VERSION) {
+            "The RecoverByBackup manifest schema is not supported."
+        }
+        val sourceId = manifest.optString("externalPeerId").trim()
+        require(isExternalSourcePeer(sourceId)) {
+            "The RecoverByBackup archive does not identify an external backup source."
+        }
+        val sourceName = manifest.optString("sourceName").trim().ifBlank {
+            "RecoverByBackup ${sourceId.takeLast(12)}"
+        }
+        val manifestEntries = manifest.optJSONArray("entries") ?: JSONArray()
+        val declaredItemCount = manifest.optInt("itemCount", -1)
+        require(declaredItemCount in 1..MAX_RECOVER_BY_BACKUP_ITEMS) {
+            "The RecoverByBackup archive declares an unsupported file count."
+        }
+        require(manifestEntries.length() == declaredItemCount) {
+            "The RecoverByBackup archive item count does not match its manifest."
+        }
+        val coverage = manifest.optJSONObject("coverage")
+            ?: error("The RecoverByBackup archive has no coverage declaration.")
+        require(coverage.optString("basis") == "OWNER_SUPPLIED_FILES_ONLY") {
+            "The RecoverByBackup coverage basis is not supported."
+        }
+        require(!coverage.optBoolean("completeDeviceImage", true)) {
+            "RecoverByBackup archives cannot claim to be complete physical device images."
+        }
+        require(!coverage.optBoolean("protectedDataBypassAttempted", true)) {
+            "RecoverByBackup archives must not claim protected-data bypass."
+        }
+        val sourceRoots = manifest.optJSONArray("sourceRoots")
+            ?: error("The RecoverByBackup archive has no source-root declaration.")
+        val sourceRootNames = buildSet {
+            for (index in 0 until sourceRoots.length()) {
+                val name = sourceRoots.optJSONObject(index)?.optString("name").orEmpty()
+                require(name.isNotBlank() && '/' !in name && '\\' !in name && name != "..") {
+                    "The RecoverByBackup source-root declaration is invalid."
+                }
+                require(add(name)) { "The RecoverByBackup source-root declaration contains duplicates." }
+            }
+        }
+        require(sourceRootNames.isNotEmpty()) { "The RecoverByBackup archive declares no source roots." }
+        val issues = mutableListOf<RecoveryIssue>()
+        val declared = parseManifestEntries(manifestEntries, sourceId, issues)
+        require(declared.isNotEmpty()) { "The RecoverByBackup archive manifest contains no files." }
+        require(issues.isEmpty()) {
+            "The RecoverByBackup manifest contains ${issues.size} invalid item(s); recreate the backup."
+        }
+        require(declared.size == declaredItemCount) {
+            "The RecoverByBackup archive contains invalid or duplicate manifest paths."
+        }
+        require(declared.keys.all { path -> sourceRootNames.any { root -> path.startsWith("payload/$root/") } }) {
+            "A RecoverByBackup file is not associated with a declared source root."
+        }
+
+        val verifiedPaths = linkedSetOf<String>()
+        var verifiedBytes = 0L
+        context.contentResolver.openInputStream(archiveUri).use { input ->
+            checkNotNull(input) { "Android could not open the RecoverByBackup archive." }
+            ZipInputStream(input.buffered()).use { archive ->
+                while (true) {
+                    val zipEntry = archive.nextEntry ?: break
+                    val archivePath = normalizedArchivePath(zipEntry.name)
+                    if (zipEntry.isDirectory || archivePath == RECOVER_BY_BACKUP_MANIFEST_PATH) {
+                        archive.closeEntry()
+                        continue
+                    }
+                    val item = declared[archivePath]
+                        ?: error("The RecoverByBackup manifest does not account for $archivePath.")
+                    check(verifiedPaths.add(archivePath)) {
+                        "The RecoverByBackup archive contains a duplicate path: $archivePath."
+                    }
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var itemBytes = 0L
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val count = archive.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        itemBytes += count
+                        verifiedBytes += count
+                        check(itemBytes <= MAX_RECOVER_BY_BACKUP_ITEM_BYTES) {
+                            "$archivePath exceeds the supported per-file verification limit."
+                        }
+                        check(verifiedBytes <= MAX_RECOVER_BY_BACKUP_TOTAL_BYTES) {
+                            "The RecoverByBackup archive exceeds the supported verification limit."
+                        }
+                        check(item.expectedBytes < 0 || itemBytes <= item.expectedBytes) {
+                            "$archivePath exceeds its manifest size."
+                        }
+                        digest.update(buffer, 0, count)
+                        onProgress(
+                            ArchiveImportProgress(
+                                completedItems = verifiedPaths.size - 1,
+                                totalItems = declared.size,
+                                currentItem = item.sourceItem,
+                                bytesRead = verifiedBytes,
+                            ),
+                        )
+                    }
+                    val contentSha256 = digest.digest().toHex()
+                    check(item.expectedBytes < 0 || itemBytes == item.expectedBytes) {
+                        "$archivePath does not match its manifest size."
+                    }
+                    check(contentSha256.equals(item.sha256, ignoreCase = true)) {
+                        "$archivePath does not match its manifest SHA-256."
+                    }
+                    onProgress(
+                        ArchiveImportProgress(
+                            completedItems = verifiedPaths.size,
+                            totalItems = declared.size,
+                            currentItem = item.sourceItem,
+                            bytesRead = verifiedBytes,
+                        ),
+                    )
+                    archive.closeEntry()
+                }
+            }
+        }
+        val missingPaths = declared.keys - verifiedPaths
+        require(missingPaths.isEmpty()) {
+            "The RecoverByBackup archive is missing ${missingPaths.size} declared file(s)."
+        }
+        val declaredBytes = manifest.optLong("sourceBytes", -1L)
+        require(declaredBytes < 0 || declaredBytes == verifiedBytes) {
+            "The RecoverByBackup archive total does not match its manifest."
+        }
+
+        val archiveName = archiveDisplayName(archiveUri)
+        val archiveSize = archiveSize(archiveUri).takeIf { it >= 0 } ?: verifiedBytes
+        val createdAt = manifest.optLong("createdAtEpochMillis", System.currentTimeMillis())
+        val manifestFingerprint = sha256(
+            listOf(
+                manifest.optString("format"),
+                manifest.optInt("schemaVersion").toString(),
+                sourceId,
+                sourceName,
+                manifest.optString("deviceType"),
+                manifest.optLong("createdAtEpochMillis").toString(),
+                coverage.toString(),
+            ).joinToString("|") + "\n" + declared.values
+                .sortedBy(ManifestArtifact::archivePath)
+                .joinToString("\n") { item ->
+                    "${item.archivePath}|${item.expectedBytes}|${item.sha256.lowercase()}|${item.sourceFingerprint}"
+                },
+        )
+        val sourceFingerprint = sha256("$sourceId|$manifestFingerprint")
+        val entry = AuditEntry(
+            id = stableArchiveTransferId("recoverbybackup|$sourceFingerprint"),
+            transferredAtEpochMillis = createdAt,
+            category = ConsentCategory.DOCUMENTS,
+            sourceItem = "/RecoverByBackup/$sourceName/$archiveName",
+            destination = archiveUri.toString(),
+            bytesTransferred = archiveSize,
+            status = TransferStatus.COMPLETED,
+            error = null,
+            sourceSize = archiveSize,
+            sourceModifiedAtEpochMillis = createdAt,
+            contentSha256 = null,
+            peerId = sourceId,
+            sourceFingerprint = sourceFingerprint,
+        )
+        val result = ArchiveImportResult(
+            sourceId = sourceId,
+            sourceName = sourceName,
+            entries = listOf(entry),
+            issues = emptyList(),
+            archiveUri = archiveUri,
+            verifiedItemCount = declared.size,
+        )
+        rememberArchiveUri(archiveUri)
+        save(result)
+        return result
+    }
+
     fun load(): ArchiveImportResult? {
         val stateFile = stateFile()
         if (!stateFile.isFile) return null
@@ -212,13 +400,12 @@ class ArchiveImporter(
                     error = null,
                     sourceSize = item.getLong("sourceSize"),
                     sourceModifiedAtEpochMillis = item.getLong("sourceModifiedAtEpochMillis"),
-                    contentSha256 = item.getString("contentSha256"),
+                    contentSha256 = item.optString("contentSha256")
+                        .takeIf { value -> value.isNotBlank() && value != "null" },
                     peerId = sourceId,
                     sourceFingerprint = item.getString("sourceFingerprint"),
                 )
-            }.filter { entry ->
-                entry.destination?.let(Uri::parse)?.path?.let(::File)?.isFile == true
-            }
+            }.filter(::destinationAvailable)
             if (entries.isEmpty()) return null
             val issues = root.optJSONArray("issues")?.toObjects { item ->
                 RecoveryIssue(
@@ -234,25 +421,71 @@ class ArchiveImporter(
                 entries = entries,
                 issues = issues,
                 archiveUri = archiveUri,
+                verifiedItemCount = root.optInt("verifiedItemCount", entries.size),
             )
         }.getOrNull()
     }
 
-    private fun readManifest(archiveUri: Uri): JSONObject {
+    private fun readManifest(archiveUri: Uri): ArchiveManifestDocument {
+        var found: ArchiveManifestDocument? = null
         context.contentResolver.openInputStream(archiveUri).use { input ->
             checkNotNull(input) { "Android could not open the selected archive." }
             ZipInputStream(input.buffered()).use { archive ->
                 while (true) {
                     val entry = archive.nextEntry ?: break
-                    if (!entry.isDirectory && normalizedArchivePath(entry.name) == MANIFEST_PATH) {
+                    val path = normalizedArchivePath(entry.name)
+                    if (!entry.isDirectory && path in SUPPORTED_MANIFEST_PATHS) {
+                        require(found == null) {
+                            "The archive contains multiple supported backup manifests."
+                        }
                         val bytes = readLimited(archive, MAX_MANIFEST_BYTES)
-                        return JSONObject(String(bytes, Charsets.UTF_8))
+                        found = ArchiveManifestDocument(path, JSONObject(String(bytes, Charsets.UTF_8)))
                     }
                     archive.closeEntry()
                 }
             }
         }
-        error("backup-manifest.json was not found. Select a Phone Sync backup ZIP.")
+        return found ?: error(
+            "No supported backup manifest was found. Select a RecoverByBackup or Phone Sync recovery ZIP.",
+        )
+    }
+
+    private fun destinationAvailable(entry: AuditEntry): Boolean {
+        val uri = entry.destination?.let(Uri::parse) ?: return false
+        if (uri.scheme == "file") return uri.path?.let(::File)?.isFile == true
+        return runCatching {
+            context.contentResolver.openAssetFileDescriptor(uri, "r").use { descriptor -> descriptor != null }
+        }.getOrDefault(false)
+    }
+
+    private fun archiveDisplayName(uri: Uri): String {
+        if (uri.scheme == "file") return uri.path?.let(::File)?.name ?: "RecoverByBackup.zip"
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull().orEmpty().ifBlank { "RecoverByBackup.zip" }
+    }
+
+    private fun archiveSize(uri: Uri): Long {
+        if (uri.scheme == "file") return uri.path?.let(::File)?.length() ?: -1L
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.SIZE),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else -1L
+            } ?: -1L
+        }.getOrDefault(-1L)
     }
 
     private fun parseManifestEntries(
@@ -339,6 +572,7 @@ class ArchiveImporter(
             .put("archiveUri", result.archiveUri?.toString().orEmpty())
             .put("sourceId", result.sourceId)
             .put("sourceName", result.sourceName)
+            .put("verifiedItemCount", result.verifiedItemCount)
             .put("entries", JSONArray().apply {
                 result.entries.forEach { entry ->
                     put(
@@ -351,7 +585,7 @@ class ArchiveImporter(
                             .put("bytesTransferred", entry.bytesTransferred)
                             .put("sourceSize", entry.sourceSize)
                             .put("sourceModifiedAtEpochMillis", entry.sourceModifiedAtEpochMillis)
-                            .put("contentSha256", entry.contentSha256)
+                            .put("contentSha256", entry.contentSha256 ?: JSONObject.NULL)
                             .put("sourceFingerprint", entry.sourceFingerprint),
                     )
                 }
@@ -453,6 +687,10 @@ class ArchiveImporter(
 
     private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
 
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .toHex()
+
     private fun <T> JSONArray.toObjects(transform: (JSONObject) -> T): List<T> {
         return buildList {
             for (index in 0 until length()) optJSONObject(index)?.let { add(transform(it)) }
@@ -461,12 +699,24 @@ class ArchiveImporter(
 
     private companion object {
         const val MANIFEST_PATH = "backup-manifest.json"
-        const val MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+        const val RECOVER_BY_BACKUP_MANIFEST_PATH = "recoverbybackup-manifest.json"
+        const val RECOVER_BY_BACKUP_FORMAT = "RecoverByBackup"
+        const val RECOVER_BY_BACKUP_SCHEMA_VERSION = 1
+        const val MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+        const val MAX_RECOVER_BY_BACKUP_ITEMS = 100_000
+        const val MAX_RECOVER_BY_BACKUP_ITEM_BYTES = 128L * 1024 * 1024 * 1024
+        const val MAX_RECOVER_BY_BACKUP_TOTAL_BYTES = 4L * 1024 * 1024 * 1024 * 1024
         const val ACTIVE_DIRECTORY = "reader-import"
         const val STATE_FILE = "reader-import.json"
         const val PREFERENCES_NAME = "reader_archive_source"
         const val SELECTED_ARCHIVE_URI_KEY = "selected_archive_uri"
+        val SUPPORTED_MANIFEST_PATHS = setOf(MANIFEST_PATH, RECOVER_BY_BACKUP_MANIFEST_PATH)
     }
+
+    private data class ArchiveManifestDocument(
+        val path: String,
+        val content: JSONObject,
+    )
 }
 
 private fun stableArchiveTransferId(material: String): Long {

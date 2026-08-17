@@ -152,6 +152,210 @@ class ArchiveImporterInstrumentedTest {
         }
     }
 
+    @Test
+    fun readsRecoverByBackupArchiveInPlaceAcrossSupportedDataCategories() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val archive = File(context.cacheDir, "RecoverByBackup-reader-test.zip")
+        val importer = ArchiveImporter(
+            context = context,
+            stateFileName = RECOVER_STATE_FILE,
+            activeDirectoryName = RECOVER_ACTIVE_DIRECTORY,
+            preferencesName = RECOVER_PREFERENCES,
+        )
+        val items = listOf(
+            RecoverBackupTestItem(
+                "payload/Test phone/SMS/sms.json",
+                "SMS_EXPORTS",
+                """[{"sender":"Alex","message":"Recovered SMS"}]""".toByteArray(),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Chats/WhatsApp/messages.json",
+                "CHAT_EXPORTS",
+                """[{"sender":"Sam","message":"Recovered chat"}]""".toByteArray(),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Email/inbox/message.eml",
+                "EMAIL_EXPORTS",
+                "From: owner@example.com\r\nSubject: Recovered mail\r\n\r\nBody".toByteArray(),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Images/photo.jpg",
+                "PHOTOS_AND_VIDEOS",
+                byteArrayOf(1, 2, 3, 4),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Voicemail/voicemail.m4a",
+                "VOICEMAIL_EXPORTS",
+                byteArrayOf(5, 6, 7, 8),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Apps/installed-apps.json",
+                "APPLICATION_DATA",
+                """[{"package":"com.example.app","version":"1.0"}]""".toByteArray(),
+            ),
+            RecoverBackupTestItem(
+                "payload/Test phone/Passwords/vault.kdbx",
+                "PASSWORD_EXPORTS",
+                byteArrayOf(9, 10, 11),
+            ),
+        )
+
+        try {
+            writeRecoverByBackupArchive(archive, items)
+            val archiveUri = Uri.fromFile(archive)
+            val result = importer.import(archiveUri)
+
+            assertEquals(1, result.entries.size)
+            assertEquals(items.size, result.verifiedItemCount)
+            assertEquals(archiveUri.toString(), result.entries.single().destination)
+            assertEquals(archive.length(), result.entries.single().bytesTransferred)
+            assertEquals("RecoverByBackup test phone", result.sourceName)
+            assertEquals(archiveUri, importer.load()?.archiveUri)
+            assertEquals(items.size, importer.load()?.verifiedItemCount)
+            assertTrue(archive.isFile)
+            assertTrue(!File(context.filesDir, RECOVER_ACTIVE_DIRECTORY).exists())
+
+            val databaseName = "recoverbybackup-reader-test.sqlite"
+            context.deleteDatabase(databaseName)
+            val database = ArtifactIndexDatabase(context, databaseName)
+            try {
+                val indexed = ArtifactIndexer(context, database).rebuild(
+                    result.entries,
+                    RECOVER_SOURCE_ID,
+                    result.sourceName,
+                )
+                assertEquals(1, indexed.indexedArtifacts)
+                assertEquals(6, indexed.recordsIndexed)
+                assertTrue(
+                    database.queryRecords(
+                        sourceId = RECOVER_SOURCE_ID,
+                        focus = ArtifactFocus.SMS,
+                        search = "Recovered SMS",
+                    ).isNotEmpty(),
+                )
+                assertEquals(
+                    1,
+                    database.queryRecords(
+                        sourceId = RECOVER_SOURCE_ID,
+                        focus = ArtifactFocus.VOICEMAILS,
+                    ).count { it.jsonSource.endsWith("voicemail.m4a") },
+                )
+                assertEquals(
+                    1,
+                    database.queryRecords(
+                        sourceId = RECOVER_SOURCE_ID,
+                        focus = ArtifactFocus.IMAGES,
+                    ).count { it.jsonSource.endsWith("photo.jpg") },
+                )
+            } finally {
+                database.close()
+                context.deleteDatabase(databaseName)
+            }
+        } finally {
+            archive.delete()
+            File(context.filesDir, RECOVER_STATE_FILE).delete()
+            File(context.filesDir, RECOVER_ACTIVE_DIRECTORY).deleteRecursively()
+            context.getSharedPreferences(RECOVER_PREFERENCES, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
+    @Test
+    fun rejectsArchiveWithConflictingBackupManifests() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val archive = File(context.cacheDir, "recoverbybackup-conflicting-manifests.zip")
+        try {
+            ZipOutputStream(archive.outputStream()).use { output ->
+                output.putNextEntry(ZipEntry("backup-manifest.json"))
+                output.write("{}".toByteArray())
+                output.closeEntry()
+                output.putNextEntry(ZipEntry("recoverbybackup-manifest.json"))
+                output.write("{}".toByteArray())
+                output.closeEntry()
+            }
+
+            val failure = runCatching {
+                ArchiveImporter(
+                    context = context,
+                    stateFileName = CONFLICT_STATE_FILE,
+                    activeDirectoryName = CONFLICT_ACTIVE_DIRECTORY,
+                    preferencesName = CONFLICT_PREFERENCES,
+                ).import(Uri.fromFile(archive))
+            }.exceptionOrNull()
+
+            assertTrue(failure?.message.orEmpty().contains("multiple supported backup manifests"))
+        } finally {
+            archive.delete()
+            File(context.filesDir, CONFLICT_STATE_FILE).delete()
+            File(context.filesDir, CONFLICT_ACTIVE_DIRECTORY).deleteRecursively()
+            context.getSharedPreferences(CONFLICT_PREFERENCES, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
+    private fun writeRecoverByBackupArchive(archive: File, items: List<RecoverBackupTestItem>) {
+        val manifestEntries = JSONArray()
+        var sourceBytes = 0L
+        items.forEachIndexed { index, item ->
+            val contentSha256 = sha256(item.bytes)
+            sourceBytes += item.bytes.size
+            manifestEntries.put(
+                JSONObject()
+                    .put("category", item.category)
+                    .put("peerId", RECOVER_SOURCE_ID)
+                    .put("sourceFingerprint", "recover-item-${index + 1}-$contentSha256")
+                    .put("sourceItem", "/RecoverByBackup/Test phone/${item.archivePath.removePrefix("payload/Test phone/")}")
+                    .put("sourceSize", item.bytes.size)
+                    .put("sourceModifiedAtEpochMillis", 1)
+                    .put("recoveredAtEpochMillis", 1)
+                    .put("archivePath", item.archivePath)
+                    .put("bytes", item.bytes.size)
+                    .put("sha256", contentSha256)
+                    .put("sensitive", item.category == "PASSWORD_EXPORTS")
+                    .put(
+                        "handling",
+                        if (item.category == "PASSWORD_EXPORTS") {
+                            "COPIED_OPAQUE_NO_DECRYPTION"
+                        } else {
+                            "PRESERVED_WITH_SHA256"
+                        },
+                    ),
+            )
+        }
+        val manifest = JSONObject()
+            .put("format", "RecoverByBackup")
+            .put("schemaVersion", 1)
+            .put("externalPeerId", RECOVER_SOURCE_ID)
+            .put("sourceName", "RecoverByBackup test phone")
+            .put("deviceType", "Android")
+            .put("createdAtEpochMillis", 1)
+            .put("itemCount", items.size)
+            .put("sourceBytes", sourceBytes)
+            .put("sourceRoots", JSONArray().put(JSONObject().put("name", "Test phone")))
+            .put(
+                "coverage",
+                JSONObject()
+                    .put("basis", "OWNER_SUPPLIED_FILES_ONLY")
+                    .put("completeDeviceImage", false)
+                    .put("protectedDataBypassAttempted", false),
+            )
+            .put("entries", manifestEntries)
+        ZipOutputStream(archive.outputStream()).use { output ->
+            items.forEach { item ->
+                output.putNextEntry(ZipEntry(item.archivePath))
+                output.write(item.bytes)
+                output.closeEntry()
+            }
+            output.putNextEntry(ZipEntry("recoverbybackup-manifest.json"))
+            output.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            output.closeEntry()
+        }
+    }
+
     private fun writeArchive(archive: File, items: List<ArchiveTestItem>) {
         val manifest = JSONObject()
             .put("externalPeerId", SOURCE_ID)
@@ -200,6 +404,12 @@ class ArchiveImporterInstrumentedTest {
         val bytes: ByteArray,
     )
 
+    private data class RecoverBackupTestItem(
+        val archivePath: String,
+        val category: String,
+        val bytes: ByteArray,
+    )
+
     private companion object {
         const val SOURCE_ID = "external-test-peer"
         const val TEST_STATE_FILE = "reader-import-test.json"
@@ -208,5 +418,12 @@ class ArchiveImporterInstrumentedTest {
         const val REFRESH_STATE_FILE = "reader-archive-refresh-test.json"
         const val REFRESH_ACTIVE_DIRECTORY = "reader-archive-refresh-test"
         const val REFRESH_PREFERENCES = "reader_archive_refresh_source_test"
+        const val RECOVER_SOURCE_ID = "recoverbybackup-test-source"
+        const val RECOVER_STATE_FILE = "recoverbybackup-reader-test.json"
+        const val RECOVER_ACTIVE_DIRECTORY = "recoverbybackup-reader-test"
+        const val RECOVER_PREFERENCES = "recoverbybackup_reader_source_test"
+        const val CONFLICT_STATE_FILE = "recoverbybackup-conflict-test.json"
+        const val CONFLICT_ACTIVE_DIRECTORY = "recoverbybackup-conflict-test"
+        const val CONFLICT_PREFERENCES = "recoverbybackup_conflict_test"
     }
 }

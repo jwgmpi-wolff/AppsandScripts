@@ -37,6 +37,22 @@ data class FolderScanResult(
     val error: String? = null,
 )
 
+data class ArchiveLocationCandidate(
+    val uri: Uri,
+    val relativePath: String,
+    val displayName: String,
+    val sizeBytes: Long,
+    val modifiedAtEpochMillis: Long,
+)
+
+data class ArchiveLocationScanResult(
+    val treeUri: Uri,
+    val locationName: String,
+    val candidates: List<ArchiveLocationCandidate>,
+    val issues: List<RecoveryIssue>,
+    val error: String? = null,
+)
+
 class ExternalFolderSourceManager(
     private val context: Context,
     private val stateFileName: String = STATE_FILE,
@@ -80,6 +96,91 @@ class ExternalFolderSourceManager(
         }
             ?: return failure(treeUri, "Android could not open the selected OneDrive or storage folder.")
         return scanRoot(treeUri, root, onProgress)
+    }
+
+    fun findRecoveryArchives(
+        treeUri: Uri,
+        onProgress: (FolderScanProgress) -> Unit = {},
+    ): ArchiveLocationScanResult {
+        rememberTreeUri(treeUri)
+        val root = if (treeUri.scheme == "file") {
+            treeUri.path?.let(::File)?.let(DocumentFile::fromFile)
+        } else {
+            DocumentFile.fromTreeUri(context, treeUri)
+        } ?: return ArchiveLocationScanResult(
+            treeUri = treeUri,
+            locationName = "Archive location",
+            candidates = emptyList(),
+            issues = listOf(issue(treeUri.toString(), "Android could not open the selected archive location.")),
+            error = "Android could not open the selected archive location.",
+        )
+        return findRecoveryArchivesRoot(treeUri, root, onProgress)
+    }
+
+    internal fun findRecoveryArchivesRoot(
+        treeUri: Uri,
+        root: DocumentFile,
+        onProgress: (FolderScanProgress) -> Unit = {},
+    ): ArchiveLocationScanResult {
+        val locationName = root.name?.takeIf(String::isNotBlank) ?: "Archive location"
+        val candidates = mutableListOf<ArchiveLocationCandidate>()
+        val issues = mutableListOf<RecoveryIssue>()
+        val pendingDirectories = ArrayDeque<FolderDocument>()
+        val visitedDirectories = linkedSetOf<String>()
+        var incompleteFolders = 0
+        pendingDirectories.add(FolderDocument(root, ""))
+
+        while (pendingDirectories.isNotEmpty()) {
+            val current = pendingDirectories.removeFirst()
+            if (!visitedDirectories.add(current.document.uri.toString())) continue
+            val currentPath = current.relativePath.ifBlank { locationName }
+            val listing = listChildren(treeUri, current.document, currentPath, candidates.size, onProgress)
+            listing.incompleteReason?.let { detail ->
+                incompleteFolders += 1
+                issues += issue(
+                    currentPath,
+                    detail.replace("Resync folder", "Refresh archive location", ignoreCase = true),
+                )
+            }
+            listing.documents
+                .sortedWith(compareBy({ it.name.lowercase() }, { it.uri.toString() }))
+                .forEachIndexed { index, child ->
+                    val childName = child.name.takeIf(String::isNotBlank) ?: "unnamed-${index + 1}"
+                    val childPath = listOf(current.relativePath, childName)
+                        .filter(String::isNotBlank)
+                        .joinToString("/")
+                    when {
+                        child.isDirectory -> pendingDirectories.add(FolderDocument(child.document, childPath))
+                        child.isFile && child.isZipArchive() -> candidates += ArchiveLocationCandidate(
+                            uri = child.uri,
+                            relativePath = childPath,
+                            displayName = childName,
+                            sizeBytes = runCatching { child.document.length() }.getOrDefault(0L).coerceAtLeast(0L),
+                            modifiedAtEpochMillis = runCatching { child.document.lastModified() }
+                                .getOrDefault(0L)
+                                .coerceAtLeast(0L),
+                        )
+                    }
+                }
+            onProgress(
+                FolderScanProgress(
+                    discoveredFiles = candidates.size,
+                    processedFiles = visitedDirectories.size,
+                    totalFiles = 0,
+                    currentItem = currentPath,
+                    bytesRead = 0,
+                ),
+            )
+        }
+
+        val sortedCandidates = candidates.sortedBy { it.relativePath.lowercase() }
+        val error = when {
+            incompleteFolders > 0 -> "OneDrive is still loading $incompleteFolders folder(s). " +
+                "The archives shown are available now; tap Refresh archive location to check again."
+            sortedCandidates.isEmpty() -> "No recovery ZIP files were found in $locationName or its subfolders."
+            else -> null
+        }
+        return ArchiveLocationScanResult(treeUri, locationName, sortedCandidates, issues, error)
     }
 
     internal fun scanRoot(
@@ -255,6 +356,7 @@ class ExternalFolderSourceManager(
                         ListedDocument(
                             document = child,
                             name = child.name.orEmpty(),
+                            mimeType = child.type.orEmpty(),
                             isDirectory = child.isDirectory,
                             isFile = child.isFile,
                         )
@@ -333,6 +435,7 @@ class ExternalFolderSourceManager(
                 documents += ListedDocument(
                     document = document,
                     name = it.getString(nameColumn).orEmpty(),
+                    mimeType = mimeType,
                     isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR,
                     isFile = mimeType.isNotBlank() && mimeType != DocumentsContract.Document.MIME_TYPE_DIR,
                 )
@@ -513,10 +616,15 @@ class ExternalFolderSourceManager(
     private data class ListedDocument(
         val document: DocumentFile,
         val name: String,
+        val mimeType: String,
         val isDirectory: Boolean,
         val isFile: Boolean,
     ) {
         val uri: Uri get() = document.uri
+
+        fun isZipArchive(): Boolean {
+            return name.endsWith(".zip", ignoreCase = true) || mimeType.lowercase() in ZIP_MIME_TYPES
+        }
     }
 
     private data class ChildListing(
@@ -540,5 +648,10 @@ class ExternalFolderSourceManager(
         const val STATE_FILE = "reader-folder-source.json"
         const val PREFERENCES_NAME = "reader_content_source"
         const val SELECTED_TREE_URI_KEY = "selected_tree_uri"
+        val ZIP_MIME_TYPES = setOf(
+            "application/zip",
+            "application/x-zip",
+            "application/x-zip-compressed",
+        )
     }
 }

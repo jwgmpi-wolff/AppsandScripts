@@ -61,10 +61,10 @@ object TransferClassifier {
         val fileName = normalizedPath.substringAfterLast('/')
 
         return when {
+            isPasswordExport(normalizedPath, fileName) -> ConsentCategory.PASSWORD_EXPORTS
             isSmsExport(normalizedPath, fileName) -> ConsentCategory.SMS_EXPORTS
             isCallLogExport(normalizedPath, fileName) -> ConsentCategory.CALL_LOGS
             isCalendarExport(normalizedPath, fileName) -> ConsentCategory.CALENDAR
-            isPasswordExport(normalizedPath, fileName) -> ConsentCategory.PASSWORD_EXPORTS
             isVoicemailExport(normalizedPath, fileName) -> ConsentCategory.VOICEMAIL_EXPORTS
             isChatExport(normalizedPath, fileName) -> ConsentCategory.CHAT_EXPORTS
             isEmailExport(normalizedPath, fileName) -> ConsentCategory.EMAIL_EXPORTS

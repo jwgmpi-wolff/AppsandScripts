@@ -188,6 +188,11 @@ class ArtifactIndexer(
             while (true) {
                 val zipEntry = archive.nextEntry ?: break
                 if (!zipEntry.isDirectory) {
+                    val normalizedEntryPath = zipEntry.name.replace('\\', '/').trimStart('/').lowercase()
+                    if (normalizedEntryPath in ARCHIVE_METADATA_PATHS) {
+                        archive.closeEntry()
+                        continue
+                    }
                     val virtualPath = "$displaySourceItem/${zipEntry.name}"
                     val detectedNestedCategory = TransferClassifier.classify(virtualPath)
                     val standaloneCategory = TransferClassifier.classify(zipEntry.name)
@@ -380,3 +385,8 @@ class ArtifactIndexer(
         val JSON_EXTENSIONS = setOf("json", "jsonl", "ndjson", "zip")
     }
 }
+
+private val ARCHIVE_METADATA_PATHS = setOf(
+    "backup-manifest.json",
+    "recoverbybackup-manifest.json",
+)
