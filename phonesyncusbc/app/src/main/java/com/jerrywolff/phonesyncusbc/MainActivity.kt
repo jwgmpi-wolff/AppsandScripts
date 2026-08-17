@@ -16,6 +16,7 @@ import android.provider.DocumentsContract
 import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -141,6 +142,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             PhoneSyncApp(
                 onRequestUsbPermission = { source -> requestUsbPermission(source) },
@@ -186,9 +188,15 @@ class MainActivity : ComponentActivity() {
 private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val application = context.applicationContext as PhoneSyncApplication
+    val productName = remember {
+        context.applicationInfo.loadLabel(context.packageManager).toString()
+    }
+    val defaultMobileTargetName = remember(productName) {
+        "This phone / Downloads / $productName Packages"
+    }
     val scope = rememberCoroutineScope()
     var sources by remember { mutableStateOf(application.usbSourceResolver.attachedSources()) }
-    var selectedSource by remember { mutableStateOf<AttachedSource?>(sources.firstOrNull()) }
+    var selectedSource by remember { mutableStateOf<AttachedSource?>(sources.singleOrNull()) }
     var recoveryDeviceType by remember {
         mutableStateOf(RecoveryDeviceType.defaultFor(selectedSource?.detected))
     }
@@ -239,10 +247,10 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
     var showTargetWizard by remember { mutableStateOf(false) }
     var targetType by remember { mutableStateOf(BackupTargetType.PHONE_DOWNLOADS) }
     var targetUri by remember { mutableStateOf<Uri?>(null) }
-    var targetName by remember { mutableStateOf(DEFAULT_MOBILE_TARGET_NAME) }
+    var targetName by remember { mutableStateOf(defaultMobileTargetName) }
     var pendingTargetName by remember { mutableStateOf<String?>(null) }
     var backupStatus by remember {
-        mutableStateOf("${selectedBackupIds.size} items ready for $DEFAULT_MOBILE_TARGET_NAME.")
+        mutableStateOf("${selectedBackupIds.size} items ready for $defaultMobileTargetName.")
     }
     var usbBackupStatus by remember { mutableStateOf("No USB source data has been recovered yet.") }
     val targetSelectionStore = remember { TargetSelectionStore(context) }
@@ -253,9 +261,18 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
     LaunchedEffect(savedTarget, targetRestored) {
         if (!targetRestored) {
-            targetType = savedTarget?.type ?: BackupTargetType.PHONE_DOWNLOADS
-            targetUri = savedTarget?.uri
-            targetName = savedTarget?.name ?: DEFAULT_MOBILE_TARGET_NAME
+            val restoredTarget = savedTarget?.takeIf { candidate ->
+                candidate.type != BackupTargetType.DOCUMENT_TREE ||
+                    candidate.uri?.let { uri -> hasPersistedWriteAccess(context, uri) } == true
+            }
+            if (savedTarget?.type == BackupTargetType.DOCUMENT_TREE && restoredTarget == null) {
+                targetSelectionStore.clear()
+                message = "The saved destination permission expired. Choose the folder again before backup."
+                messageSection = AppSection.BACKUP_ACTIVITY
+            }
+            targetType = restoredTarget?.type ?: BackupTargetType.PHONE_DOWNLOADS
+            targetUri = restoredTarget?.uri
+            targetName = restoredTarget?.name ?: defaultMobileTargetName
             backupStatus = "${selectedBackupIds.size} items ready for $targetName."
             targetRestored = true
         }
@@ -270,8 +287,19 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
 
     fun refreshSource() {
         sources = application.usbSourceResolver.attachedSources()
-        selectedSource = sources.firstOrNull()
+        selectedSource = sources.singleOrNull()
         recoveryDeviceType = RecoveryDeviceType.defaultFor(selectedSource?.detected)
+        identity = null
+        trust = null
+        capabilities = null
+        mtpScanSummary = null
+        identityReadProgress = null
+        identityReadError = null
+    }
+
+    fun selectSource(selected: AttachedSource) {
+        selectedSource = selected
+        recoveryDeviceType = RecoveryDeviceType.defaultFor(selected.detected)
         identity = null
         trust = null
         capabilities = null
@@ -343,12 +371,14 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     loaded.trust.record,
                     TrustContext(resolved.peerId, loaded.trust.record.localDeviceId, application.keyManager.currentProof()),
                 )
-                trust = if (decision is TrustDecision.Approved) loaded.trust else null
+                trust = if (decision is TrustDecision.Approved && resolved.serialAvailable) loaded.trust else null
                 if (trust != null) {
+                    selectedCategories = trust!!.record.authorizedCategories
+                        .intersect(resolvedCapabilities.supportedCategories)
+                } else if (!resolved.serialAvailable) {
                     selectedCategories = resolvedCapabilities.supportedCategories
-                    if (trust!!.record.authorizedCategories != selectedCategories) {
-                        trust = application.trustStore.updateCategories(trust!!, selectedCategories)
-                    }
+                    message = "This source has no stable USB/MTP serial. Confirm and authorize it for this session."
+                    messageSection = AppSection.USB_SOURCE
                 }
             }
             else -> {
@@ -594,7 +624,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         targetSelectionStore.clear()
         targetType = BackupTargetType.PHONE_DOWNLOADS
         targetUri = null
-        targetName = DEFAULT_MOBILE_TARGET_NAME
+        targetName = defaultMobileTargetName
         showTargetWizard = false
         updateBackupWorkflowStatus(
             backupWorkflowSection,
@@ -627,7 +657,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             type = mimeTypes.singleOrNull() ?: "*/*"
             packageName?.let(::setPackage)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            clipData = ClipData.newRawUri("Phone Sync recovery", uris.first()).apply {
+            clipData = ClipData.newRawUri("$productName recovery", uris.first()).apply {
                 uris.drop(1).forEach { addItem(ClipData.Item(it)) }
             }
             if (uris.size == 1) {
@@ -636,7 +666,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
             }
             if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
-            putExtra(Intent.EXTRA_SUBJECT, "Phone Sync recovery")
+            putExtra(Intent.EXTRA_SUBJECT, "$productName recovery")
         }
     }
 
@@ -700,33 +730,15 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         val selection = planExternalRecoveryEntries(entries, expectedPeerId)
         recoveryIssues = selection.issues
         val eligibleEntries = selection.eligibleEntries
+        val latestSourceSession = application.auditLog.latestSession(expectedPeerId)
+        val completeSourceSession = permitsCloudHandoff(latestSourceSession?.status)
         if (eligibleEntries.isEmpty()) {
             updateBackupWorkflowStatus(ownerSection, "No eligible external-source items. Review recovery actions below.")
             return
         }
-        val directUris = eligibleEntries.mapNotNull { it.destination?.let(Uri::parse) }
-        if (directUris.size != eligibleEntries.size) {
-            updateBackupWorkflowStatus(ownerSection, "One or more selected recovery items are no longer available.")
-            return
-        }
-        val directIntent = providerUploadIntent(directUris, packageName)
-        if (directIntent.resolveActivity(context.packageManager) != null) {
-            backupActivity = BackupActivityUi(
-                title = "$label upload handoff",
-                status = "Opening $label with ${eligibleEntries.size} verified recovery item(s)...",
-                running = true,
-            )
-            if (launchProviderUpload(directUris, packageName, label, eligibleEntries.size, ownerSection)) return
-        }
-        if (eligibleEntries.size == 1) {
-            updateBackupWorkflowStatus(ownerSection, "$label cannot accept the selected recovery item.")
-            return
-        }
-
         backingUp = true
         val stagingStatus =
-            "$label cannot accept multiple files directly. Building a compatibility ZIP in " +
-                "Downloads / Phone Sync Uploads. " +
+            "Building one verified $productName package in Downloads / $productName Packages. " +
                 "$label upload has not started yet."
         updateBackupWorkflowStatus(ownerSection, stagingStatus)
         backupActivity = BackupActivityUi(
@@ -737,25 +749,31 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         )
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                DataExportManager(context).createUploadArchive(entries, expectedPeerId) { progress ->
-                    scope.launch(Dispatchers.Main.immediate) {
-                        val progressStatus =
-                            "Local ZIP: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}. " +
-                                "$label upload starts after all items finish and you confirm Upload."
-                        updateBackupWorkflowStatus(ownerSection, progressStatus)
-                        backupActivity = BackupActivityUi(
-                            title = "Local staging before $label",
-                            status = progressStatus,
-                            completedItems = progress.completedItems,
-                            totalItems = progress.totalItems,
-                            currentItem = progress.currentItem,
-                            bytesProcessed = progress.sourceBytesArchived,
-                            currentItemBytes = progress.currentItemBytes,
-                            currentItemTotal = progress.currentItemTotal,
-                            running = true,
-                        )
-                    }
-                }
+                DataExportManager(context).createUploadArchive(
+                    entries = entries,
+                    expectedPeerId = expectedPeerId,
+                    archiveNamePrefix = productName,
+                    destinationFolder = "$productName Packages",
+                    onProgress = { progress ->
+                        scope.launch(Dispatchers.Main.immediate) {
+                            val progressStatus =
+                                "Packaging: ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}. " +
+                                    "$label upload starts after package verification and owner confirmation."
+                            updateBackupWorkflowStatus(ownerSection, progressStatus)
+                            backupActivity = BackupActivityUi(
+                                title = "Package before $label",
+                                status = progressStatus,
+                                completedItems = progress.completedItems,
+                                totalItems = progress.totalItems,
+                                currentItem = progress.currentItem,
+                                bytesProcessed = progress.sourceBytesArchived,
+                                currentItemBytes = progress.currentItemBytes,
+                                currentItemTotal = progress.currentItemTotal,
+                                running = true,
+                            )
+                        }
+                    },
+                )
             }
             backingUp = false
             recoveryIssues = result.recoveryIssues
@@ -770,8 +788,28 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                     failed = true,
                 )
             } else {
+                if (!completeSourceSession) {
+                    val partialStatus =
+                        "Partial verified package kept locally as ${result.displayName}. " +
+                            "Cloud handoff is blocked until USB recovery completes without failures. " +
+                            "Retry recovery, or deliberately choose a local/folder destination for partial preservation."
+                    updateBackupWorkflowStatus(ownerSection, partialStatus)
+                    message = partialStatus
+                    messageSection = ownerSection
+                    backupActivity = BackupActivityUi(
+                        title = "Partial package preserved locally",
+                        status = partialStatus,
+                        completedItems = result.archivedItems,
+                        totalItems = result.archivedItems,
+                        bytesProcessed = result.archiveBytes,
+                        failed = true,
+                    )
+                    return@launch
+                }
                 val readyStatus =
-                    "Local ZIP ready: ${result.archivedItems} items, ${formatBytes(result.archiveBytes)}." +
+                    "${if (completeSourceSession) "Verified" else "Partial verified"} package ready: " +
+                        "${result.archivedItems} items, ${formatBytes(result.archiveBytes)}, " +
+                        "SHA-256 ${result.archiveSha256?.take(16) ?: "unavailable"}…." +
                         if (result.excludedItems > 0) {
                             " ${result.excludedItems} item(s) need remediation. Opening $label."
                         } else {
@@ -796,100 +834,168 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
-    fun backupEntriesToSelectedTarget(
+    fun packageBackupForSelectedTarget(
         entries: List<AuditEntry>,
         expectedPeerId: String,
         ownerSection: AppSection,
     ) {
         val destination = targetUri
-        val destinationName = targetName ?: DEFAULT_MOBILE_TARGET_NAME
+        val destinationName = targetName
         if (entries.isEmpty()) {
-            updateBackupWorkflowStatus(
-                ownerSection,
-                "Select at least one available item before starting backup.",
-            )
+            updateBackupWorkflowStatus(ownerSection, "Select at least one available item before packaging.")
             return
         }
-        val selection = planExternalRecoveryEntries(entries, expectedPeerId)
-        recoveryIssues = selection.issues
-        if (selection.eligibleEntries.isEmpty()) {
-            updateBackupWorkflowStatus(ownerSection, "No eligible external-source items. Review recovery actions below.")
+        if (destination != null && !hasPersistedWriteAccess(context, destination)) {
+            targetSelectionStore.clear()
+            targetType = BackupTargetType.PHONE_DOWNLOADS
+            targetUri = null
+            targetName = defaultMobileTargetName
+            val failure = "The selected destination is no longer writable. Choose it again before packaging."
+            updateBackupWorkflowStatus(ownerSection, failure)
+            message = failure
+            messageSection = ownerSection
             return
         }
         if (backingUp) return
-
+        val existingRecoveryIssues = recoveryIssues
+        val latestSourceSession = application.auditLog.latestSession(expectedPeerId)
+        val completeSourceSession = permitsCloudHandoff(latestSourceSession?.status)
+        backingUp = true
         backupWorkflowSection = ownerSection
         activeSection = ownerSection
-        backingUp = true
-        val startingStatus = "Copying ${entries.size} items to $destinationName..."
+        val startingStatus = "Packaging ${entries.size} verified item(s) for $destinationName..."
         updateBackupWorkflowStatus(ownerSection, startingStatus)
-        message = "BACKUP: preserving recovered source data at $destinationName..."
+        message = "BACKUP: $startingStatus"
         messageSection = ownerSection
         backupActivity = BackupActivityUi(
-            title = "Backup to $destinationName",
+            title = "Package for $destinationName",
             status = startingStatus,
             totalItems = entries.size,
             running = true,
         )
         scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val publishProgress: (com.jerrywolff.phonesyncusbc.data.ExportProgress) -> Unit = { progress ->
+            val packageResult = withContext(Dispatchers.IO) {
+                DataExportManager(context).createUploadArchive(
+                    entries = entries,
+                    expectedPeerId = expectedPeerId,
+                    archiveNamePrefix = productName,
+                    destinationFolder = "$productName Packages",
+                    onProgress = { progress ->
                         scope.launch(Dispatchers.Main.immediate) {
                             val progressStatus =
-                                "Copying ${progress.completedItems} of ${progress.totalItems}"
+                                "Packaging ${progress.completedItems}/${progress.totalItems} · ${progress.currentItem}"
                             updateBackupWorkflowStatus(ownerSection, progressStatus)
                             backupActivity = BackupActivityUi(
-                                title = "Backup to $destinationName",
+                                title = "Package for $destinationName",
                                 status = progressStatus,
                                 completedItems = progress.completedItems,
                                 totalItems = progress.totalItems,
                                 currentItem = progress.currentItem,
-                                bytesProcessed = progress.bytesExported,
+                                bytesProcessed = progress.sourceBytesArchived,
                                 currentItemBytes = progress.currentItemBytes,
                                 currentItemTotal = progress.currentItemTotal,
                                 running = true,
                             )
                         }
-                    }
-                    if (destination == null) {
-                        DataExportManager(context).backupToDownloads(entries, expectedPeerId, publishProgress)
-                    } else {
-                        DataExportManager(context).export(entries, destination, expectedPeerId, publishProgress)
-                    }
-                }
-            }.onSuccess { result ->
-                recoveryIssues = result.recoveryIssues
-                val completedStatus = buildString {
-                    append("Backup finished: ${result.exportedItems} copied")
-                    if (result.failedItems > 0) append(", ${result.failedItems} failed")
-                    if (result.excludedItems > 0) append(", ${result.excludedItems} need remediation")
-                    append(" (${formatBytes(result.bytesExported)}).")
-                    result.error?.let { append(" First error: $it") }
-                }
-                updateBackupWorkflowStatus(ownerSection, completedStatus)
-                message = completedStatus
-                messageSection = ownerSection
-                backupActivity = BackupActivityUi(
-                    title = "Backup to $destinationName",
-                    status = completedStatus,
-                    completedItems = result.exportedItems + result.failedItems + result.excludedItems,
-                    totalItems = entries.size,
-                    bytesProcessed = result.bytesExported,
-                    failed = result.failedItems > 0 || result.excludedItems > 0,
-                )
-            }.onFailure { throwable ->
-                val failureStatus =
-                    "Backup failed: ${throwable.message ?: throwable.javaClass.simpleName}"
-                updateBackupWorkflowStatus(ownerSection, failureStatus)
-                message = failureStatus
-                messageSection = ownerSection
-                backupActivity = backupActivity.copy(
-                    status = failureStatus,
-                    running = false,
-                    failed = true,
+                    },
                 )
             }
+            recoveryIssues = (existingRecoveryIssues + packageResult.recoveryIssues)
+                .distinctBy { issue -> "${issue.reason}:${issue.sourceItem}" }
+            val packageUri = packageResult.uri
+            val packageSha256 = packageResult.archiveSha256
+            if (packageUri == null || packageSha256.isNullOrBlank()) {
+                val failure = "Backup package failed: ${packageResult.error ?: "verification did not complete"}"
+                updateBackupWorkflowStatus(ownerSection, failure)
+                message = failure
+                messageSection = ownerSection
+                backupActivity = backupActivity.copy(status = failure, running = false, failed = true)
+                backingUp = false
+                return@launch
+            }
+
+            if (destination == null) {
+                val complete =
+                    "${if (completeSourceSession) "Verified" else "PARTIAL verified"} package saved to " +
+                        "Downloads / $productName Packages: " +
+                        "${packageResult.displayName}, ${formatBytes(packageResult.archiveBytes)}, " +
+                        "SHA-256 $packageSha256."
+                updateBackupWorkflowStatus(ownerSection, complete)
+                message = complete
+                messageSection = ownerSection
+                backupActivity = BackupActivityUi(
+                    title = if (completeSourceSession) "Backup complete" else "Partial backup preserved",
+                    status = complete,
+                    completedItems = packageResult.archivedItems,
+                    totalItems = packageResult.archivedItems,
+                    bytesProcessed = packageResult.archiveBytes,
+                    failed = packageResult.excludedItems > 0 || !completeSourceSession,
+                )
+                backingUp = false
+                return@launch
+            }
+
+            val packageName = packageResult.displayName ?: "$productName.zip"
+            val packageEntry = AuditEntry(
+                id = DeviceIdentity.sha256("$expectedPeerId|$packageSha256").take(15).toLong(16),
+                transferredAtEpochMillis = System.currentTimeMillis(),
+                category = ConsentCategory.DOCUMENTS,
+                sourceItem = "/RecoverByBackup package/$packageName",
+                destination = packageUri.toString(),
+                bytesTransferred = packageResult.archiveBytes,
+                status = com.jerrywolff.phonesyncusbc.data.TransferStatus.COMPLETED,
+                error = null,
+                sourceSize = packageResult.archiveBytes,
+                contentSha256 = packageSha256,
+                peerId = expectedPeerId,
+                sourceFingerprint = "recoverbybackup-package:$expectedPeerId:$packageSha256",
+            )
+            val copyResult = withContext(Dispatchers.IO) {
+                DataExportManager(context).export(
+                    entries = listOf(packageEntry),
+                    destinationTree = destination,
+                    expectedPeerId = expectedPeerId,
+                    folderNamePrefix = "$productName Backup",
+                ) { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        backupActivity = BackupActivityUi(
+                            title = "Copy package to $destinationName",
+                            status = "Copying and verifying package at destination...",
+                            completedItems = progress.completedItems,
+                            totalItems = progress.totalItems,
+                            currentItem = progress.currentItem,
+                            bytesProcessed = progress.bytesExported,
+                            currentItemBytes = progress.currentItemBytes,
+                            currentItemTotal = progress.currentItemTotal,
+                            running = true,
+                        )
+                    }
+                }
+            }
+            val complete = if (copyResult.failedItems == 0) {
+                "${if (completeSourceSession) "Verified" else "PARTIAL verified"} package copied to " +
+                    "$destinationName: $packageName, " +
+                    "${formatBytes(packageResult.archiveBytes)}, SHA-256 $packageSha256."
+            } else {
+                "Package copy failed: ${copyResult.error ?: "choose another writable destination and retry"}."
+            }
+            recoveryIssues = (existingRecoveryIssues + packageResult.recoveryIssues + copyResult.recoveryIssues)
+                .distinctBy { issue -> "${issue.reason}:${issue.sourceItem}" }
+            updateBackupWorkflowStatus(ownerSection, complete)
+            message = complete
+            messageSection = ownerSection
+            backupActivity = BackupActivityUi(
+                title = when {
+                    copyResult.failedItems > 0 -> "Backup incomplete"
+                    completeSourceSession -> "Backup complete"
+                    else -> "Partial backup preserved"
+                },
+                status = complete,
+                completedItems = copyResult.exportedItems,
+                totalItems = 1,
+                bytesProcessed = copyResult.bytesExported,
+                failed = copyResult.failedItems > 0 || !completeSourceSession,
+            )
             backingUp = false
         }
     }
@@ -908,7 +1014,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
         val providerTarget = targetType.providerTarget()
         if (providerTarget == null) {
-            backupEntriesToSelectedTarget(entries, expectedPeerId, ownerSection)
+            packageBackupForSelectedTarget(entries, expectedPeerId, ownerSection)
         } else {
             uploadBackupEntries(
                 entries,
@@ -920,10 +1026,90 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
+    fun runUsbRecovery(packageAfterRecovery: Boolean) {
+        val currentSource = selectedSource ?: run {
+            message = "Connect and select an external USB source first."
+            messageSection = AppSection.USB_SOURCE
+            return
+        }
+        val currentIdentity = identity ?: run {
+            message = "Complete USB identity and trust approval before recovery."
+            messageSection = AppSection.USB_SOURCE
+            return
+        }
+        if (syncing || backingUp) return
+        syncing = true
+        liveProgress = SyncProgress(
+            currentItem = null,
+            transferredItems = 0,
+            skippedItems = 0,
+            failedItems = 0,
+            bytesTransferred = 0,
+            phase = SyncPhase.DISCOVERING,
+        )
+        mtpScanSummary = null
+        message = "DETECTING: preparing an owner-authorized USB inventory."
+        messageSection = AppSection.USB_SOURCE
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val publishProgress: (SyncProgress) -> Unit = { progress ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        liveProgress = progress
+                        message = buildLiveStatus(progress)
+                        messageSection = AppSection.USB_SOURCE
+                    }
+                }
+                application.mtpSyncEngine.sync(
+                    source = currentSource,
+                    identity = currentIdentity,
+                    recoveryDeviceType = recoveryDeviceType,
+                    authorizedCategories = selectedCategories,
+                    onProgress = publishProgress,
+                )
+            }
+            syncing = false
+            val scan = result.mtpScan
+            liveProgress = SyncProgress(
+                currentItem = null,
+                transferredItems = result.transferredItems,
+                skippedItems = result.skippedItems,
+                failedItems = result.failedItems,
+                bytesTransferred = result.bytesTransferred,
+                phase = SyncPhase.COMPLETE,
+                discoveredItems = scan?.scannedItems ?: 0,
+                processedItems = scan?.processedItems ?: 0,
+                totalItems = scan?.scannedItems ?: 0,
+                advertisedBytes = scan?.advertisedBytes ?: 0,
+            )
+            mtpScanSummary = scan
+            val completedEntries = application.auditLog.completedExternalTransfers(currentIdentity.peerId)
+            val recoveredCategories = recoveredCoverageCategories(completedEntries)
+            message = buildSyncCompletionStatus(result, recoveredCategories)
+            messageSection = AppSection.USB_SOURCE
+            backupPeerId = currentIdentity.peerId
+            backupEntries = completedEntries
+            selectedBackupIds = completedEntries.mapTo(linkedSetOf()) { it.id }
+            refreshToken += 1
+            if (packageAfterRecovery) {
+                if (result.status != com.jerrywolff.phonesyncusbc.data.SyncStatus.COMPLETED || result.failedItems > 0) {
+                    message = "Recovery is incomplete and was not packaged automatically. " +
+                        "Review failed items, reconnect or unlock the source, and retry. " +
+                        "Verified items remain preserved locally."
+                    messageSection = AppSection.USB_SOURCE
+                } else if (completedEntries.isEmpty()) {
+                    message = "No verified USB-visible items are available to package. Review source access and retry."
+                    messageSection = AppSection.USB_SOURCE
+                } else {
+                    executeBackupForSelectedTarget(completedEntries, AppSection.USB_SOURCE)
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Phone Sync USB-C") },
+                title = { Text(productName) },
                 navigationIcon = {
                     Icon(
                         painter = painterResource(R.drawable.ic_connection_logo),
@@ -963,7 +1149,9 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
             }
             if (activeSection == AppSection.USB_SOURCE) item {
                 SourceConnectionPanel(
+                    sources = sources,
                     source = source,
+                    onSourceSelected = ::selectSource,
                     recoveryDeviceType = recoveryDeviceType,
                     onRecoveryDeviceTypeSelected = { recoveryDeviceType = it },
                     onRefresh = ::refreshSource,
@@ -1277,6 +1465,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 trust = trust!!,
                                 categories = selectedCategories,
                                 syncing = syncing,
+                                backingUp = backingUp,
                                 liveProgress = liveProgress,
                                 mtpScanSummary = mtpScanSummary,
                                 recoveryIssues = recoveryIssues,
@@ -1289,6 +1478,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 auditRevision = auditRevision,
                                 recoveryDeviceType = recoveryDeviceType,
                                 sourcePlatform = source.detected.platform,
+                                identitySerialAvailable = identity!!.serialAvailable,
+                                targetName = targetName,
                                 auditLog = application.auditLog,
                                 onViewLibrary = {
                                     libraryEntries = application.auditLog.completedExternalTransfers(
@@ -1297,65 +1488,12 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     showParsedData = false
                                     showLibrary = true
                                 },
-                                onSync = sync@{
-                                    val currentSource = source ?: return@sync
-                                    val currentIdentity = identity ?: return@sync
-                                    syncing = true
-                                    liveProgress = SyncProgress(
-                                        currentItem = null,
-                                        transferredItems = 0,
-                                        skippedItems = 0,
-                                        failedItems = 0,
-                                        bytesTransferred = 0,
-                                        phase = SyncPhase.DISCOVERING,
-                                    )
-                                    mtpScanSummary = null
-                                    message = "LIVE: 0 recovered, 0 already verified, 0 failed."
-                                    messageSection = AppSection.USB_SOURCE
-                                    scope.launch {
-                                        val result = withContext(Dispatchers.IO) {
-                                            val publishProgress: (SyncProgress) -> Unit = { progress ->
-                                                scope.launch(Dispatchers.Main.immediate) {
-                                                    liveProgress = progress
-                                                    message = buildLiveStatus(progress)
-                                                    messageSection = AppSection.USB_SOURCE
-                                                }
-                                            }
-                                            application.mtpSyncEngine.sync(
-                                                source = currentSource,
-                                                identity = currentIdentity,
-                                                recoveryDeviceType = recoveryDeviceType,
-                                                authorizedCategories = selectedCategories,
-                                                onProgress = publishProgress,
-                                            )
-                                        }
-                                        syncing = false
-                                        val scan = result.mtpScan
-                                        liveProgress = SyncProgress(
-                                            currentItem = null,
-                                            transferredItems = result.transferredItems,
-                                            skippedItems = result.skippedItems,
-                                            failedItems = result.failedItems,
-                                            bytesTransferred = result.bytesTransferred,
-                                            phase = SyncPhase.COMPLETE,
-                                            discoveredItems = scan?.scannedItems ?: 0,
-                                            processedItems = scan?.processedItems ?: 0,
-                                            totalItems = scan?.scannedItems ?: 0,
-                                            advertisedBytes = scan?.advertisedBytes ?: 0,
-                                        )
-                                        mtpScanSummary = result.mtpScan
-                                        val recoveredCategories = recoveredCoverageCategories(
-                                            application.auditLog.completedExternalTransfers(currentIdentity.peerId),
-                                        )
-                                        message = buildSyncCompletionStatus(result, recoveredCategories)
-                                        messageSection = AppSection.USB_SOURCE
-                                        backupPeerId = currentIdentity.peerId
-                                        backupEntries = application.auditLog.completedExternalTransfers(
-                                            currentIdentity.peerId,
-                                        )
-                                        selectedBackupIds = backupEntries.mapTo(linkedSetOf()) { it.id }
-                                        refreshToken += 1
-                                    }
+                                onSync = { runUsbRecovery(packageAfterRecovery = false) },
+                                onCompleteBackup = { runUsbRecovery(packageAfterRecovery = true) },
+                                onChooseTarget = {
+                                    backupWorkflowSection = AppSection.USB_SOURCE
+                                    showBackupSelection = false
+                                    showTargetWizard = true
                                 },
                                 onImportIosBackup = {
                                     iosBackupLauncher.launch(
@@ -1375,6 +1513,24 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                     messageSection = AppSection.USB_SOURCE
                                 },
                         )
+                    }
+                    if (backupWorkflowSection == AppSection.USB_SOURCE && showTargetWizard) {
+                        item {
+                            TargetMediaWizard(
+                                onBack = { showTargetWizard = false },
+                                onUsePhoneStorage = ::useDefaultMobileTarget,
+                                onChooseFolder = { selectedTargetName -> launchTargetPicker(selectedTargetName) },
+                                onUseOneDrive = {
+                                    selectProviderTarget(BackupTargetType.ONEDRIVE, "OneDrive")
+                                },
+                                onUseGoogleDrive = {
+                                    selectProviderTarget(BackupTargetType.GOOGLE_DRIVE, "Google Drive")
+                                },
+                                onUseOtherApp = {
+                                    selectProviderTarget(BackupTargetType.OTHER_APP, "Another app")
+                                },
+                            )
+                        }
                     }
                     if (usbCollectedEntries.isNotEmpty()) {
                         if (
@@ -1442,29 +1598,6 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 )
                             }
                         }
-                        if (
-                            backupWorkflowSection == AppSection.USB_SOURCE &&
-                            showTargetWizard
-                        ) {
-                            item {
-                                TargetMediaWizard(
-                                    onBack = { showTargetWizard = false },
-                                    onUsePhoneStorage = ::useDefaultMobileTarget,
-                                    onChooseFolder = { selectedTargetName ->
-                                        launchTargetPicker(selectedTargetName)
-                                    },
-                                    onUseOneDrive = {
-                                        selectProviderTarget(BackupTargetType.ONEDRIVE, "OneDrive")
-                                    },
-                                    onUseGoogleDrive = {
-                                        selectProviderTarget(BackupTargetType.GOOGLE_DRIVE, "Google Drive")
-                                    },
-                                    onUseOtherApp = {
-                                        selectProviderTarget(BackupTargetType.OTHER_APP, "Another app")
-                                    },
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -1512,6 +1645,7 @@ private fun TrustedDashboard(
     trust: StoredTrust,
     categories: Set<ConsentCategory>,
     syncing: Boolean,
+    backingUp: Boolean,
     liveProgress: SyncProgress?,
     mtpScanSummary: MtpScanSummary?,
     recoveryIssues: List<RecoveryIssue>,
@@ -1524,9 +1658,13 @@ private fun TrustedDashboard(
     auditRevision: Int,
     recoveryDeviceType: RecoveryDeviceType,
     sourcePlatform: SourcePlatform,
+    identitySerialAvailable: Boolean,
+    targetName: String,
     auditLog: com.jerrywolff.phonesyncusbc.data.AuditLog,
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
+    onCompleteBackup: () -> Unit,
+    onChooseTarget: () -> Unit,
     onImportIosBackup: () -> Unit,
     onImportOwnerArchive: () -> Unit,
     onRevoke: () -> Unit,
@@ -1550,6 +1688,15 @@ private fun TrustedDashboard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Read-only logical recovery", style = MaterialTheme.typography.titleMedium)
             Text("All available categories authorized: ${categories.joinToString { it.label() }}")
+            Text(
+                if (identitySerialAvailable) {
+                    "Trusted identity: source-reported serial available."
+                } else {
+                    "Trusted identity: descriptor-only. Confirm the selected device carefully after reconnecting identical models."
+                },
+                color = if (identitySerialAvailable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
             Text("Last acquisition: ${latest?.completedAtEpochMillis?.let(::formatTime) ?: "Never"}")
             liveProgress?.let { progress ->
                 Text(
@@ -1568,6 +1715,13 @@ private fun TrustedDashboard(
                         else -> "Reading"
                     }
                     Text("$action: ${currentItem.substringAfterLast('/')}")
+                }
+                if (progress.readMethod != null && progress.readAttemptsForMethod > 0) {
+                    Text(
+                        "USB method: ${progress.readMethod.label()} · attempt " +
+                            "${progress.readAttempt}/${progress.readAttemptsForMethod}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 if (syncing && progress.phase == SyncPhase.DISCOVERING) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1645,11 +1799,32 @@ private fun TrustedDashboard(
                 )
             }
             Button(
-                onClick = onSync,
-                enabled = !syncing,
+                onClick = onCompleteBackup,
+                enabled = !syncing && !backingUp,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (syncing) "Recovering and verifying..." else "Recover all USB-visible data")
+                Text(
+                    when {
+                        syncing -> "Recovering and verifying..."
+                        backingUp -> "Packaging and sending..."
+                        else -> "Recover, verify & package to selected destination"
+                    },
+                )
+            }
+            Text("Backup destination: $targetName", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(
+                onClick = onChooseTarget,
+                enabled = !syncing && !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Choose local, SD, USB, OneDrive, Google Drive, or other destination")
+            }
+            OutlinedButton(
+                onClick = onSync,
+                enabled = !syncing && !backingUp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Scan and recover only")
             }
             OwnerApprovedArchivePanel(
                 deviceType = recoveryDeviceType,
@@ -1680,7 +1855,7 @@ private fun TrustedDashboard(
                             "Use supported source-app export files for those records."
                     SourcePlatform.WINDOWS_PHONE ->
                         "Windows Phone MTP exposes shared media files, not its private SMS, call, or email stores. " +
-                            "Phone Sync requests every object that the source publishes, but USB cannot force those stores public."
+                            "This app requests every object that the source publishes, but USB cannot force private stores public."
                     else ->
                         "USB can recover files exposed by the source. Private app databases require supported exports."
                 },
@@ -1707,18 +1882,46 @@ private fun SourceExportReadiness(
     onImportIosBackup: () -> Unit,
     onRescan: () -> Unit,
 ) {
-    val coveredCategories = scan.visibleCategories + recoveredCategories
-    val found = SourceExportRequirements.categories.filter { it in coveredCategories }
-    val missing = SourceExportRequirements.missingFrom(coveredCategories)
-    val ownerExportWorkflow = OwnerExportCoordinator.trigger(sourcePlatform, coveredCategories)
-    var showOwnerActions by remember(coveredCategories) { mutableStateOf(false) }
+    val advertisedCategories = scan.visibleCategories
+    val found = SourceExportRequirements.categories.filter { it in recoveredCategories }
+    val missing = SourceExportRequirements.missingFrom(recoveredCategories)
+    val ownerExportWorkflow = OwnerExportCoordinator.trigger(sourcePlatform, recoveredCategories)
+    var showOwnerActions by remember(recoveredCategories) { mutableStateOf(false) }
 
     HorizontalDivider()
     Text("USB export readiness", style = MaterialTheme.typography.titleMedium)
     Text("${scan.scannedItems} USB-visible files scanned.")
     Text(
         "Downloads visible: ${if (scan.downloadDirectoryVisible) "Yes" else "No"} · " +
-            "Phone Sync exports visible: ${if (scan.phoneSyncDirectoryVisible) "Yes" else "No"}",
+            "Recovery export folders visible: ${if (scan.phoneSyncDirectoryVisible) "Yes" else "No"}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "Existing backup/export candidates: ${scan.backupCandidatesVisible} · " +
+            formatBytes(scan.backupCandidateBytes),
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (scan.enumerationFailures > 0) {
+        Text(
+            "Enumeration incomplete: ${scan.enumerationFailures} folder/storage error(s). " +
+                "This run is partial; keep the source unlocked and retry.",
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        scan.enumerationErrors.take(5).forEach { detail ->
+            Text(detail, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+    if (advertisedCategories.isNotEmpty()) {
+        Text(
+            "Advertised category candidates: ${advertisedCategories.joinToString { sourceExportLabel(it) }}. " +
+                "A category counts as recovered only after copy and integrity verification.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    Text(
+        "Backup trigger: standard MTP/PTP can discover and read existing backups but cannot start private OS/app backups. " +
+            "Use the owner-guided request below, then rescan; a future companion protocol may trigger only after visible source-device consent.",
         style = MaterialTheme.typography.bodySmall,
     )
     Text(
@@ -1746,7 +1949,7 @@ private fun SourceExportReadiness(
         )
         if (scan.mediaItemsFailed > 0) {
             Text(
-                "Keep the iPhone unlocked and connected, then retry. Phone Sync now tries both iOS PTP chunked modes " +
+                "Keep the iPhone unlocked and connected, then retry. The app tries both iOS PTP chunked modes " +
                     "before a full-file request.",
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
@@ -1759,7 +1962,7 @@ private fun SourceExportReadiness(
             style = MaterialTheme.typography.bodySmall,
         )
         IosBackupRequirementPanel(
-            smsRecovered = ConsentCategory.SMS_EXPORTS in coveredCategories,
+            smsRecovered = ConsentCategory.SMS_EXPORTS in recoveredCategories,
             importing = iosBackupImporting,
             progress = iosBackupImportProgress,
             result = iosBackupImportResult,
@@ -1783,7 +1986,7 @@ private fun SourceExportReadiness(
                     "iPhone PTP exposes downloaded photos and videos, not its private app databases. Import a complete Apple local backup " +
                         "for Messages/SMS and use owner-approved app/provider exports or complete archives for the remaining categories."
                 SourcePlatform.WINDOWS_PHONE ->
-                    "Phone Sync already requested every MTP-visible Lumia object. Windows Phone provides no USB consent " +
+                    "The app already requested every MTP-visible Lumia object. Windows Phone provides no USB consent " +
                         "request for private SMS, call history, or email. Restore SMS through the phone's Microsoft account " +
                         "backup when available, and export email from its mail provider; call history has no standard USB export."
                 else ->
@@ -1795,7 +1998,7 @@ private fun SourceExportReadiness(
             onClick = { showOwnerActions = true },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Start owner export actions")
+            Text("Request backup / export on source")
         }
         if (showOwnerActions) {
             ownerExportWorkflow.actions.forEach { action ->
@@ -2123,8 +2326,21 @@ private fun buildLiveStatus(progress: SyncProgress): String {
     } else {
         ""
     }
+    val method = progress.readMethod?.let {
+        " ${it.label()} attempt ${progress.readAttempt}/${progress.readAttemptsForMethod}."
+    }.orEmpty()
     return "LIVE:${processed} ${progress.transferredItems} transferred, " +
-        "${progress.skippedItems} skipped, ${progress.failedItems} failed.$current"
+        "${progress.skippedItems} skipped, ${progress.failedItems} failed.$current$method"
+}
+
+private fun com.jerrywolff.phonesyncusbc.sync.MtpReadMode.label(): String = when (this) {
+    com.jerrywolff.phonesyncusbc.sync.MtpReadMode.PARTIAL_64 -> "64-bit chunked"
+    com.jerrywolff.phonesyncusbc.sync.MtpReadMode.PARTIAL_STANDARD -> "standard chunked"
+    com.jerrywolff.phonesyncusbc.sync.MtpReadMode.FULL_OBJECT -> "full object"
+}
+
+internal fun permitsCloudHandoff(status: com.jerrywolff.phonesyncusbc.data.SyncStatus?): Boolean {
+    return status == null || status == com.jerrywolff.phonesyncusbc.data.SyncStatus.COMPLETED
 }
 
 private fun buildSyncCompletionStatus(
@@ -2285,7 +2501,9 @@ private fun FilterButton(label: String, selected: Boolean, onClick: () -> Unit) 
 
 @androidx.compose.runtime.Composable
 private fun SourceConnectionPanel(
+    sources: List<AttachedSource>,
     source: AttachedSource?,
+    onSourceSelected: (AttachedSource) -> Unit,
     recoveryDeviceType: RecoveryDeviceType,
     onRecoveryDeviceTypeSelected: (RecoveryDeviceType) -> Unit,
     onRefresh: () -> Unit,
@@ -2295,12 +2513,43 @@ private fun SourceConnectionPanel(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Connect an owned recovery source", style = MaterialTheme.typography.titleMedium)
-            if (source == null) {
+            if (sources.isEmpty()) {
                 Text("Connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable.")
                 Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
                     Text("Find USB source")
                 }
             } else {
+                if (sources.size > 1 || source == null) {
+                    Text("Select the external device to back up", style = MaterialTheme.typography.labelLarge)
+                    sources.forEach { candidate ->
+                        val selected = source?.device?.deviceId == candidate.device.deviceId
+                        if (selected) {
+                            Button(
+                                onClick = { onSourceSelected(candidate) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("${candidate.detected.displayName} · selected")
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onSourceSelected(candidate) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    "${candidate.detected.displayName} · ${candidate.detected.platform} · " +
+                                        "USB ${candidate.device.deviceId}",
+                                )
+                            }
+                        }
+                    }
+                }
+                if (source == null) {
+                    Text("Choose one connected source before requesting USB access.")
+                    OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text("Refresh connected sources")
+                    }
+                    return@Column
+                }
                 Text(source.detected.displayName, style = MaterialTheme.typography.titleMedium)
                 Text("${source.detected.platform} · ${source.detected.family} · ${source.detected.physicalConnection}")
                 Text("Recovery device type", style = MaterialTheme.typography.labelLarge)
@@ -2438,7 +2687,7 @@ private fun BackupPanel(
             if (passwordVaultItemCount > 0) {
                 Text(
                     "$passwordVaultItemCount sensitive password artifact(s) selected. Protect the destination account. " +
-                        "Phone Sync copies them intact and does not preview, parse, or decrypt credentials.",
+                        "The app copies them intact and does not preview, parse, or decrypt credentials.",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -2450,7 +2699,7 @@ private fun BackupPanel(
             ) { Text("Change selected data") }
             HorizontalDivider()
             Text("2. Destination", style = MaterialTheme.typography.titleSmall)
-            Text(targetName ?: DEFAULT_MOBILE_TARGET_NAME)
+            Text(targetName ?: "This phone / Downloads")
             Text(
                 when (targetType) {
                     BackupTargetType.PHONE_DOWNLOADS ->
@@ -2458,14 +2707,11 @@ private fun BackupPanel(
                     BackupTargetType.DOCUMENT_TREE ->
                         "The backup will be written directly to the selected folder."
                     BackupTargetType.ONEDRIVE ->
-                        "Phone Sync hands verified files directly to OneDrive. Choose the OneDrive folder and tap Upload; " +
-                            "OneDrive then controls transfer progress. A local ZIP is used only if OneDrive rejects multi-file sharing."
+                        "The app builds one verified package, opens OneDrive, and waits for you to choose its folder and confirm Upload."
                     BackupTargetType.GOOGLE_DRIVE ->
-                        "Phone Sync hands verified files directly to Google Drive. Choose the folder and confirm Upload; " +
-                            "a local ZIP is used only if Drive rejects multi-file sharing."
+                        "The app builds one verified package, opens Google Drive, and waits for you to choose its folder and confirm Upload."
                     BackupTargetType.OTHER_APP ->
-                        "Phone Sync first tries a direct multi-file handoff. It builds a local compatibility ZIP only when " +
-                            "the selected app cannot accept multiple files."
+                        "The app builds one verified package and hands it to the selected destination app."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -2527,9 +2773,25 @@ private fun TargetMediaWizard(
 }
 
 private const val SOURCE_SYNC_SECTION_INDEX = 3
-private const val DEFAULT_MOBILE_TARGET_NAME = "This phone / Downloads / Phone Sync Backups"
 private const val LOCAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 private const val PRIMARY_STORAGE_ROOT_ID = "primary"
+
+private fun hasPersistedWriteAccess(context: Context, uri: Uri): Boolean {
+    if (uri.scheme == "file") return uri.path?.let { path -> java.io.File(path) }?.canWrite() == true
+    val permission = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+        ?: return false
+    if (!permission.isReadPermission || !permission.isWritePermission) return false
+    val writable = DocumentFile.fromTreeUri(context, uri)?.canWrite() == true
+    if (!writable) {
+        runCatching {
+            context.contentResolver.releasePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+    }
+    return writable
+}
 
 @androidx.compose.runtime.Composable
 private fun BackupSelectionView(

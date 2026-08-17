@@ -1,20 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="true" />
     <queries>
-        <package android:name="com.jerrywolff.phonesyncusbc" />
+        <package android:name="com.microsoft.skydrive" />
+        <package android:name="com.google.android.apps.docs" />
     </queries>
     <application
+        android:name=".PhoneSyncApplication"
         android:allowBackup="false"
-        android:icon="@drawable/ic_reader_adaptive"
+        android:icon="@drawable/ic_connection_adaptive"
         android:label="RecoverByBackup"
-        android:roundIcon="@drawable/ic_reader_adaptive"
+        android:roundIcon="@drawable/ic_connection_adaptive"
         android:supportsRtl="true"
-        android:theme="@style/Theme.PhoneSyncDataReader">
+        android:theme="@style/Theme.PhoneSyncUsbC">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="RecoverByBackup"
-            android:screenOrientation="userLandscape">
+            android:configChanges="keyboardHidden|orientation|screenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

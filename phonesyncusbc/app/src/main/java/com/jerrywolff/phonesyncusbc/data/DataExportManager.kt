@@ -7,6 +7,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.FilterOutputStream
 import java.io.OutputStream
 import java.security.MessageDigest
@@ -50,9 +51,15 @@ data class ArchiveResult(
     val archivedItems: Int = 0,
     val sourceBytes: Long = 0,
     val archiveBytes: Long = 0,
+    val archiveSha256: String? = null,
     val error: String? = null,
     val excludedItems: Int = 0,
     val recoveryIssues: List<RecoveryIssue> = emptyList(),
+)
+
+private data class PackageIntegrity(
+    val bytes: Long,
+    val sha256: String,
 )
 
 class DataExportManager(private val context: Context) {
@@ -66,22 +73,36 @@ class DataExportManager(private val context: Context) {
 
     private fun cleanupUploadArchives(pendingOnly: Boolean): Int {
         val collection = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
-        val selection = buildString {
-            append("${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ")
-            append("${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?")
-            if (pendingOnly) {
-                append(" AND ${android.provider.MediaStore.MediaColumns.IS_PENDING} = 1")
-            }
+        val relativePath = android.provider.MediaStore.MediaColumns.RELATIVE_PATH
+        val displayName = android.provider.MediaStore.MediaColumns.DISPLAY_NAME
+        val selection: String
+        val arguments: Array<String>
+        if (pendingOnly) {
+            selection = "(($relativePath LIKE ? AND $displayName LIKE ?) OR " +
+                "($relativePath LIKE ? AND $displayName LIKE ?) OR " +
+                "($relativePath LIKE ? AND $displayName LIKE ?)) AND " +
+                "${android.provider.MediaStore.MediaColumns.IS_PENDING} = 1"
+            arguments = arrayOf(
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads%",
+                "PhoneSyncBackup-%",
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/RecoverByBackup Packages%",
+                "RecoverByBackup-%",
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync USB-C Packages%",
+                "Phone Sync USB-C-%",
+            )
+        } else {
+            selection = "$relativePath LIKE ? AND $displayName LIKE ?"
+            arguments = arrayOf(
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads%",
+                "PhoneSyncBackup-%",
+            )
         }
         val ids = buildList {
             context.contentResolver.query(
                 collection,
                 arrayOf(android.provider.MediaStore.MediaColumns._ID),
                 selection,
-                arrayOf(
-                    "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads%",
-                    "PhoneSyncBackup-%",
-                ),
+                arguments,
                 null,
             )?.use { cursor ->
                 while (cursor.moveToNext()) add(cursor.getLong(0))
@@ -210,6 +231,7 @@ class DataExportManager(private val context: Context) {
         entries: List<AuditEntry>,
         destinationTree: Uri,
         expectedPeerId: String?,
+        folderNamePrefix: String = "Phone Sync Export",
         onProgress: (ExportProgress) -> Unit = {},
     ): ExportResult {
         val selection = planExternalRecoveryEntries(entries, expectedPeerId)
@@ -224,13 +246,17 @@ class DataExportManager(private val context: Context) {
                 selection.issues,
             )
         }
-        val root = DocumentFile.fromTreeUri(context, destinationTree)
+        val root = if (destinationTree.scheme == "file") {
+            destinationTree.path?.let(::File)?.let(DocumentFile::fromFile)
+        } else {
+            DocumentFile.fromTreeUri(context, destinationTree)
+        }
             ?: return ExportResult(0, 0, 0, "The selected destination is unavailable.", selection.excludedItems, selection.issues)
         if (!root.canWrite()) {
             return ExportResult(0, 0, 0, "The selected destination is not writable.", selection.excludedItems, selection.issues)
         }
 
-        val folderName = "Phone Sync Export " +
+        val folderName = "$folderNamePrefix " +
             SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val exportFolder = root.createDirectory(folderName)
             ?: return ExportResult(0, 0, 0, "Could not create the export folder.", selection.excludedItems, selection.issues)
@@ -259,9 +285,10 @@ class DataExportManager(private val context: Context) {
                 exportFolder,
                 sanitizeName(sourceName),
             )
+            val targetMimeType = context.contentResolver.getType(source) ?: mimeType(entry)
             val target = exportFolder.createFile(
-                context.contentResolver.getType(source) ?: mimeType(entry),
-                displayName,
+                targetMimeType,
+                displayName.withoutMimeExtension(targetMimeType),
             )
             if (target == null) {
                 failed += 1
@@ -275,7 +302,7 @@ class DataExportManager(private val context: Context) {
             val itemTotal = sourceSize(source)
             var itemBytes = 0L
             runCatching {
-                copy(source, target.uri) { copied ->
+                val copied = copy(source, target.uri) { copied ->
                     itemBytes = copied
                     onProgress(
                         ExportProgress(
@@ -288,6 +315,22 @@ class DataExportManager(private val context: Context) {
                         ),
                     )
                 }
+                val sourceIntegrity = if (entry.contentSha256.isNullOrBlank()) {
+                    calculateUriIntegrity(source)
+                } else {
+                    PackageIntegrity(
+                        bytes = entry.bytesTransferred.takeIf { it > 0 } ?: copied,
+                        sha256 = entry.contentSha256,
+                    )
+                }
+                val destinationIntegrity = calculateUriIntegrity(target.uri)
+                check(destinationIntegrity.bytes == copied && destinationIntegrity.bytes == sourceIntegrity.bytes) {
+                    "Destination size verification failed for $displayName."
+                }
+                check(destinationIntegrity.sha256.equals(sourceIntegrity.sha256, ignoreCase = true)) {
+                    "Destination SHA-256 verification failed for $displayName."
+                }
+                destinationIntegrity.bytes
             }.onSuccess { copied ->
                 exported += 1
                 bytes += copied
@@ -308,6 +351,8 @@ class DataExportManager(private val context: Context) {
     fun createUploadArchive(
         entries: List<AuditEntry>,
         expectedPeerId: String?,
+        archiveNamePrefix: String = "PhoneSyncBackup",
+        destinationFolder: String = "Phone Sync Uploads",
         onProgress: (ArchiveProgress) -> Unit = {},
     ): ArchiveResult {
         if (entries.isEmpty()) return ArchiveResult(error = "No recovered artifacts are selected for preservation.")
@@ -321,13 +366,14 @@ class DataExportManager(private val context: Context) {
             )
         }
 
-        val displayName = "PhoneSyncBackup-${timestamp()}.zip"
+        val safeArchivePrefix = sanitizeName(archiveNamePrefix).ifBlank { "RecoveryBackup" }
+        val displayName = "$safeArchivePrefix-${timestamp()}.zip"
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/zip")
             put(
                 android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
-                "${android.os.Environment.DIRECTORY_DOWNLOADS}/Phone Sync Uploads",
+                "${android.os.Environment.DIRECTORY_DOWNLOADS}/$destinationFolder",
             )
             put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
         }
@@ -446,6 +492,14 @@ class DataExportManager(private val context: Context) {
                 archive.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
                 archive.closeEntry()
             }
+            context.contentResolver.openFileDescriptor(destination, "rw").use { descriptor ->
+                checkNotNull(descriptor) { "Android could not flush the packaged backup." }
+                descriptor.fileDescriptor.sync()
+            }
+            val packageIntegrity = calculateUriIntegrity(destination)
+            check(packageIntegrity.bytes == countingOutput.bytesWritten) {
+                "Packaged backup size changed before publication."
+            }
             context.contentResolver.update(
                 destination,
                 android.content.ContentValues().apply {
@@ -459,7 +513,8 @@ class DataExportManager(private val context: Context) {
                 displayName = displayName,
                 archivedItems = eligibleEntries.size,
                 sourceBytes = sourceBytes,
-                archiveBytes = countingOutput.bytesWritten,
+                archiveBytes = packageIntegrity.bytes,
+                archiveSha256 = packageIntegrity.sha256,
                 excludedItems = selection.excludedItems,
                 recoveryIssues = selection.issues,
             )
@@ -488,6 +543,26 @@ class DataExportManager(private val context: Context) {
         return queriedName
             ?.takeIf { it.isNotBlank() }
             ?: entry.sourceItem.substringAfterLast('/').ifBlank { "recovered-artifact" }
+    }
+
+    private fun calculateUriIntegrity(uri: Uri): PackageIntegrity {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var bytes = 0L
+        context.contentResolver.openInputStream(uri).use { input ->
+            checkNotNull(input) { "Android could not reopen the packaged backup for verification." }
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count == 0) continue
+                digest.update(buffer, 0, count)
+                bytes += count
+            }
+        }
+        return PackageIntegrity(
+            bytes = bytes,
+            sha256 = digest.digest().joinToString("") { "%02x".format(it) },
+        )
     }
 
     fun mimeType(entry: AuditEntry): String {
@@ -553,6 +628,14 @@ class DataExportManager(private val context: Context) {
             index += 1
         }
         return candidate
+    }
+
+    private fun String.withoutMimeExtension(mimeType: String): String {
+        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+            ?.takeIf(String::isNotBlank)
+            ?: return this
+        val suffix = ".$extension"
+        return if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this
     }
 
     private fun uniqueArchivePath(usedPaths: MutableSet<String>, basePath: String): String {

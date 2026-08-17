@@ -46,7 +46,7 @@ class SourcePlatformDetectorTest {
     }
 
     @Test
-    fun `uses MTP as a generic Android fallback`() {
+    fun `detects a known Android vendor using MTP`() {
         val source = SourcePlatformDetector.detect(
             UsbDescriptor(
                 vendorId = 0x04E8,
@@ -58,5 +58,20 @@ class SourcePlatformDetectorTest {
 
         assertEquals(SourcePlatform.ANDROID, source.platform)
         assertEquals(SourceFamily.ANDROID_PHONE, source.family)
+    }
+
+    @Test
+    fun `does not mislabel a generic MTP camera as Android`() {
+        val source = SourcePlatformDetector.detect(
+            UsbDescriptor(
+                vendorId = 0x1234,
+                productId = 0x5678,
+                productName = "Digital Camera",
+                transports = setOf(UsbTransport.MTP),
+            ),
+        )
+
+        assertEquals(SourcePlatform.UNKNOWN, source.platform)
+        assertEquals(SourceFamily.UNKNOWN, source.family)
     }
 }

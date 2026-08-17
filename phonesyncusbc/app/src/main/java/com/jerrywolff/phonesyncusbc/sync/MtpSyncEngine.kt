@@ -32,6 +32,9 @@ data class SyncProgress(
     val processedItems: Int = 0,
     val totalItems: Int = 0,
     val advertisedBytes: Long = 0,
+    val readMethod: MtpReadMode? = null,
+    val readAttempt: Int = 0,
+    val readAttemptsForMethod: Int = 0,
 )
 
 enum class SyncPhase {
@@ -56,6 +59,10 @@ data class MtpScanSummary(
     val mediaItemsAlreadyCollected: Int = 0,
     val mediaItemsNotAuthorized: Int = 0,
     val mediaItemsFailed: Int = 0,
+    val backupCandidatesVisible: Int = 0,
+    val backupCandidateBytes: Long = 0,
+    val enumerationFailures: Int = 0,
+    val enumerationErrors: List<String> = emptyList(),
 )
 
 data class SyncResult(
@@ -111,6 +118,8 @@ class MtpSyncEngine(
         var mediaItemsAlreadyCollected = 0
         var mediaItemsNotAuthorized = 0
         var mediaItemsFailed = 0
+        var backupCandidatesVisible = 0
+        var backupCandidateBytes = 0L
         var advertisedBytes = 0L
         var processedItems = 0
         val candidates = mutableListOf<MtpCandidate>()
@@ -160,7 +169,7 @@ class MtpSyncEngine(
                         MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64,
                     )
                 }
-                walkObjects(session.device) { candidate ->
+                val enumerationErrors = walkObjects(session.device) { candidate ->
                     candidates += candidate
                     scannedItems += 1
                     advertisedBytes += candidate.size
@@ -178,6 +187,14 @@ class MtpSyncEngine(
                         onProgress = onProgress,
                     )
                 }
+                enumerationErrors.forEachIndexed { index, detail ->
+                    recoveryItems += RecoveryInventoryItem(
+                        sourcePath = "/MTP enumeration failure/${index + 1}",
+                        status = RecoveryItemStatus.FAILED,
+                        error = detail,
+                    )
+                }
+                failed += enumerationErrors.size
                 publishProgress(
                     currentItem = null,
                     transferred = transferred,
@@ -198,6 +215,10 @@ class MtpSyncEngine(
                     phoneSyncDirectoryVisible = phoneSyncDirectoryVisible ||
                         "/phone sync/" in normalizedPath || "/phonesync/" in normalizedPath
                     val category = TransferClassifier.classify(candidate.path)
+                    if (isBackupArtifactPath(candidate.path)) {
+                        backupCandidatesVisible += 1
+                        backupCandidateBytes += candidate.size
+                    }
                     if (category == ConsentCategory.PHOTOS_AND_VIDEOS) mediaItemsVisible += 1
                     visibleCategories += category
                     if (category !in authorizedCategories) {
@@ -296,6 +317,7 @@ class MtpSyncEngine(
                         return@forEach
                     }
 
+                    var activeReadAttempt: MtpReadAttempt? = null
                     val transfer = runCatching {
                         targetMediaStore.importMtpObject(
                             mtpDevice = session.device,
@@ -319,6 +341,9 @@ class MtpSyncEngine(
                                     processedItems = processedItems,
                                     totalItems = candidates.size,
                                     advertisedBytes = advertisedBytes,
+                                    readMethod = activeReadAttempt?.mode,
+                                    readAttempt = activeReadAttempt?.attempt ?: 0,
+                                    readAttemptsForMethod = activeReadAttempt?.attemptsForMode ?: 0,
                                     onProgress = onProgress,
                                 )
                             },
@@ -336,6 +361,25 @@ class MtpSyncEngine(
                                     processedItems = processedItems,
                                     totalItems = candidates.size,
                                     advertisedBytes = advertisedBytes,
+                                    onProgress = onProgress,
+                                )
+                            },
+                            onReadAttempt = { attempt ->
+                                activeReadAttempt = attempt
+                                publishProgress(
+                                    currentItem = candidate.path,
+                                    transferred = transferred,
+                                    skipped = skipped,
+                                    failed = failed,
+                                    transferredBytes = transferredBytes,
+                                    phase = SyncPhase.TRANSFERRING,
+                                    discoveredItems = scannedItems,
+                                    processedItems = processedItems,
+                                    totalItems = candidates.size,
+                                    advertisedBytes = advertisedBytes,
+                                    readMethod = attempt.mode,
+                                    readAttempt = attempt.attempt,
+                                    readAttemptsForMethod = attempt.attemptsForMode,
                                     onProgress = onProgress,
                                 )
                             },
@@ -491,6 +535,14 @@ class MtpSyncEngine(
                     mediaItemsAlreadyCollected = mediaItemsAlreadyCollected,
                     mediaItemsNotAuthorized = mediaItemsNotAuthorized,
                     mediaItemsFailed = mediaItemsFailed,
+                    backupCandidatesVisible = backupCandidatesVisible,
+                    backupCandidateBytes = backupCandidateBytes,
+                    enumerationFailures = recoveryItems.count {
+                        it.sourcePath.startsWith("/MTP enumeration failure/")
+                    },
+                    enumerationErrors = recoveryItems
+                        .filter { it.sourcePath.startsWith("/MTP enumeration failure/") }
+                        .mapNotNull(RecoveryInventoryItem::error),
                 ),
                 recoveryInventory = recoveryInventory,
             )
@@ -548,17 +600,36 @@ class MtpSyncEngine(
                     mediaItemsAlreadyCollected = mediaItemsAlreadyCollected,
                     mediaItemsNotAuthorized = mediaItemsNotAuthorized,
                     mediaItemsFailed = mediaItemsFailed,
+                    backupCandidatesVisible = backupCandidatesVisible,
+                    backupCandidateBytes = backupCandidateBytes,
+                    enumerationFailures = recoveryItems.count {
+                        it.sourcePath.startsWith("/MTP enumeration failure/")
+                    },
+                    enumerationErrors = recoveryItems
+                        .filter { it.sourcePath.startsWith("/MTP enumeration failure/") }
+                        .mapNotNull(RecoveryInventoryItem::error),
                 ),
                 recoveryInventory = recoveryInventory,
             )
         }
     }
 
-    private fun walkObjects(mtpDevice: MtpDevice, visit: (MtpCandidate) -> Unit) {
+    private fun walkObjects(mtpDevice: MtpDevice, visit: (MtpCandidate) -> Unit): List<String> {
         val visited = mutableSetOf<Int>()
-        (mtpDevice.storageIds ?: intArrayOf()).forEach { storageId ->
-            walkChildren(mtpDevice, storageId, ROOT_OBJECT_HANDLE, "", visited, visit)
+        val errors = mutableListOf<String>()
+        val storageIds = mtpDevice.storageIds
+        if (storageIds == null) {
+            return listOf("The external device did not return its storage list. Keep it unlocked and retry.")
         }
+        if (storageIds.isEmpty()) {
+            return listOf(
+                "The external device reported no MTP/PTP storage. Unlock it, enable file/data access, and retry.",
+            )
+        }
+        storageIds.forEach { storageId ->
+            walkChildren(mtpDevice, storageId, ROOT_OBJECT_HANDLE, "", visited, errors, visit)
+        }
+        return errors
     }
 
     private fun walkChildren(
@@ -567,15 +638,26 @@ class MtpSyncEngine(
         parentHandle: Int,
         parentPath: String,
         visited: MutableSet<Int>,
+        errors: MutableList<String>,
         visit: (MtpCandidate) -> Unit,
     ) {
-        (mtpDevice.getObjectHandles(storageId, 0, parentHandle) ?: intArrayOf()).forEach { handle ->
+        val handles = mtpDevice.getObjectHandles(storageId, 0, parentHandle)
+        if (handles == null) {
+            errors += "The external device stopped enumerating ${parentPath.ifBlank { "storage $storageId" }}."
+            return
+        }
+        handles.forEach { handle ->
             if (!visited.add(handle)) return@forEach
-            val objectInfo = mtpDevice.getObjectInfo(handle) ?: return@forEach
+            val objectInfo = mtpDevice.getObjectInfo(handle)
+            if (objectInfo == null) {
+                errors += "The external device did not return metadata for object $handle in " +
+                    parentPath.ifBlank { "storage $storageId" } + "."
+                return@forEach
+            }
             val name = objectInfo.name?.takeIf(String::isNotBlank) ?: "object-$handle"
             val path = "$parentPath/${sanitizeSourcePathSegment(name)}"
             if (objectInfo.format == MtpConstants.FORMAT_ASSOCIATION) {
-                walkChildren(mtpDevice, storageId, handle, path, visited, visit)
+                walkChildren(mtpDevice, storageId, handle, path, visited, errors, visit)
             } else {
                 visit(objectInfo.toCandidate(handle, path))
             }
@@ -632,6 +714,9 @@ class MtpSyncEngine(
         processedItems: Int = 0,
         totalItems: Int = 0,
         advertisedBytes: Long = 0,
+        readMethod: MtpReadMode? = null,
+        readAttempt: Int = 0,
+        readAttemptsForMethod: Int = 0,
         onProgress: (SyncProgress) -> Unit,
     ) {
         onProgress(
@@ -648,6 +733,9 @@ class MtpSyncEngine(
                 processedItems = processedItems,
                 totalItems = totalItems,
                 advertisedBytes = advertisedBytes,
+                readMethod = readMethod,
+                readAttempt = readAttempt,
+                readAttemptsForMethod = readAttemptsForMethod,
             ),
         )
     }
@@ -659,4 +747,19 @@ class MtpSyncEngine(
     private companion object {
         const val ROOT_OBJECT_HANDLE = 0
     }
+}
+
+internal fun isBackupArtifactPath(path: String): Boolean {
+    val normalized = "/" + path.replace('\\', '/').trim('/').lowercase()
+    val fileName = normalized.substringAfterLast('/')
+    val extension = fileName.substringAfterLast('.', "")
+    return fileName in setOf(
+        "backup-manifest.json",
+        "recoverbybackup-manifest.json",
+        "manifest.db",
+    ) ||
+        extension in setOf("ab", "bak", "backup") ||
+        (extension == "zip" && listOf("backup", "export", "recover", "phone sync").any(normalized::contains)) ||
+        listOf("/backup/", "/backups/", "/exports/", "/phone sync/", "/phonesync/")
+            .any(normalized::contains)
 }

@@ -35,6 +35,12 @@ enum class MtpReadMode {
     FULL_OBJECT,
 }
 
+data class MtpReadAttempt(
+    val mode: MtpReadMode,
+    val attempt: Int,
+    val attemptsForMode: Int,
+)
+
 fun mtpReadPlan(
     supportsPartial64: Boolean,
     supportsPartialStandard: Boolean,
@@ -42,6 +48,17 @@ fun mtpReadPlan(
     if (supportsPartial64) add(MtpReadMode.PARTIAL_64)
     if (supportsPartialStandard) add(MtpReadMode.PARTIAL_STANDARD)
     add(MtpReadMode.FULL_OBJECT)
+}
+
+fun mtpReadAttempts(
+    supportsPartial64: Boolean,
+    supportsPartialStandard: Boolean,
+    attemptsPerMode: Int = DEFAULT_ATTEMPTS_PER_MODE,
+): List<MtpReadAttempt> {
+    require(attemptsPerMode > 0) { "At least one read attempt is required." }
+    return mtpReadPlan(supportsPartial64, supportsPartialStandard).flatMap { mode ->
+        (1..attemptsPerMode).map { attempt -> MtpReadAttempt(mode, attempt, attemptsPerMode) }
+    }
 }
 
 class TargetMediaStore(private val context: Context) {
@@ -79,6 +96,7 @@ class TargetMediaStore(private val context: Context) {
         expectedBytes: Long,
         onBytesTransferred: (Long) -> Unit = {},
         onIntegrityBytesRead: (Long) -> Unit = {},
+        onReadAttempt: (MtpReadAttempt) -> Unit = {},
     ): TargetWriteResult {
         return writePendingItem(
             displayName = displayName,
@@ -90,45 +108,45 @@ class TargetMediaStore(private val context: Context) {
             onIntegrityBytesRead = onIntegrityBytesRead,
         ) { destination ->
             val deviceInfo = runCatching { mtpDevice.deviceInfo }.getOrNull()
-            val readPlan = mtpReadPlan(
+            val readAttempts = mtpReadAttempts(
                 supportsPartial64 =
                     deviceInfo?.isOperationSupported(MtpConstants.OPERATION_GET_PARTIAL_OBJECT_64) == true,
                 supportsPartialStandard =
                     deviceInfo?.isOperationSupported(MtpConstants.OPERATION_GET_PARTIAL_OBJECT) == true,
             )
-            val partialFailures = mutableListOf<Throwable>()
-            val partialSucceeded = expectedBytes > 0 && readPlan
-                .takeWhile { it != MtpReadMode.FULL_OBJECT }
-                .any { mode ->
-                runCatching {
-                    importPartialObject(
-                        mtpDevice = mtpDevice,
-                        objectHandle = objectHandle,
-                        destination = destination,
-                        expectedBytes = expectedBytes,
-                        mode = mode,
-                        onBytesTransferred = onBytesTransferred,
-                    )
-                }.fold(
-                    onSuccess = { true },
-                    onFailure = { throwable ->
-                        partialFailures += throwable
-                        false
-                    },
-                )
+            val failures = mutableListOf<Pair<MtpReadAttempt, Throwable>>()
+            readAttempts.forEach { readAttempt ->
+                if (readAttempt.mode != MtpReadMode.FULL_OBJECT && expectedBytes <= 0) return@forEach
+                onReadAttempt(readAttempt)
+                val result = runCatching {
+                    if (readAttempt.mode == MtpReadMode.FULL_OBJECT) {
+                        importWholeObject(
+                            mtpDevice = mtpDevice,
+                            objectHandle = objectHandle,
+                            destination = destination,
+                            expectedBytes = expectedBytes,
+                            onBytesTransferred = onBytesTransferred,
+                        )
+                    } else {
+                        importPartialObject(
+                            mtpDevice = mtpDevice,
+                            objectHandle = objectHandle,
+                            destination = destination,
+                            expectedBytes = expectedBytes,
+                            mode = readAttempt.mode,
+                            onBytesTransferred = onBytesTransferred,
+                        )
+                        expectedBytes
+                    }
+                }
+                if (result.isSuccess) return@writePendingItem result.getOrThrow()
+                result.exceptionOrNull()?.let { failures += readAttempt to it }
             }
-            if (partialSucceeded) {
-                expectedBytes
-            } else {
-                importWholeObject(
-                    mtpDevice = mtpDevice,
-                    objectHandle = objectHandle,
-                    destination = destination,
-                    expectedBytes = expectedBytes,
-                    partialFailure = partialFailures.lastOrNull(),
-                    onBytesTransferred = onBytesTransferred,
-                )
+            val details = failures.joinToString("; ") { (attempt, throwable) ->
+                "${attempt.mode.name} ${attempt.attempt}/${attempt.attemptsForMode}: " +
+                    (throwable.message ?: throwable.javaClass.simpleName)
             }
+            error("All USB read methods failed. $details")
         }
     }
 
@@ -167,7 +185,6 @@ class TargetMediaStore(private val context: Context) {
         objectHandle: Int,
         destination: Uri,
         expectedBytes: Long,
-        partialFailure: Throwable?,
         onBytesTransferred: (Long) -> Unit,
     ): Long {
         val fullObjectFailure = runCatching {
@@ -180,8 +197,7 @@ class TargetMediaStore(private val context: Context) {
             }
         }.exceptionOrNull()
         if (fullObjectFailure != null) {
-            val partialDetail = partialFailure?.message?.let { " Partial read failed: $it" }.orEmpty()
-            error("Full-object transfer failed: ${fullObjectFailure.message.orEmpty()}$partialDetail")
+            error("Full-object transfer failed: ${fullObjectFailure.message.orEmpty()}")
         }
         val copiedBytes = destinationSize(destination).takeIf { it > 0 }
             ?: expectedBytes.coerceAtLeast(0)
@@ -355,3 +371,5 @@ class TargetMediaStore(private val context: Context) {
     }
 
 }
+
+private const val DEFAULT_ATTEMPTS_PER_MODE = 2

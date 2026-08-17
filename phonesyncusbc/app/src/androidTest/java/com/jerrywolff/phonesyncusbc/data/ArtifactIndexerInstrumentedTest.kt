@@ -209,10 +209,42 @@ class ArtifactIndexerInstrumentedTest {
 
         val validResult = manager.createUploadArchive(listOf(valid), SOURCE_ID)
         assertNotNull(validResult.uri)
+        assertEquals(sha256(validResult.uri!!), validResult.archiveSha256)
         val manifest = readZipText(validResult.uri!!, "backup-manifest.json")
         assertTrue(manifest.contains("\"externalPeerId\": \"$SOURCE_ID\""))
         assertTrue(manifest.contains("\"peerId\": \"$SOURCE_ID\""))
         context.contentResolver.delete(validResult.uri!!, null, null)
+    }
+
+    @Test
+    fun documentTreeExportReopensAndVerifiesDestinationBytes() {
+        val source = File(testDirectory, "verified-package.zip").apply {
+            writeBytes(ByteArray(8_193) { index -> (index % 251).toByte() })
+        }
+        val destination = File(testDirectory, "destination").apply { mkdirs() }
+        val sourceHash = sha256(source)
+        val entry = auditEntry(source).copy(
+            id = 41,
+            category = ConsentCategory.DOCUMENTS,
+            sourceItem = "/RecoverByBackup package/verified-package.zip",
+            sourceSize = source.length(),
+            bytesTransferred = source.length(),
+            contentSha256 = sourceHash,
+            sourceFingerprint = "verified-package:$sourceHash",
+        )
+
+        val result = DataExportManager(context).export(
+            entries = listOf(entry),
+            destinationTree = Uri.fromFile(destination),
+            expectedPeerId = SOURCE_ID,
+            folderNamePrefix = "RecoverByBackup Test",
+        )
+
+        assertEquals(1, result.exportedItems)
+        assertEquals(0, result.failedItems)
+        val copied = destination.walkTopDown().single { it.isFile }
+        assertEquals(source.length(), copied.length())
+        assertEquals(sourceHash, sha256(copied))
     }
 
     private fun auditEntry(zip: File): AuditEntry = AuditEntry(
@@ -260,6 +292,12 @@ class ArtifactIndexerInstrumentedTest {
 
     private fun sha256(file: File): String = file.inputStream().use { input ->
         MessageDigest.getInstance("SHA-256").digest(input.readBytes()).joinToString("") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+    }
+
+    private fun sha256(uri: Uri): String = context.contentResolver.openInputStream(uri).use { input ->
+        MessageDigest.getInstance("SHA-256").digest(checkNotNull(input).readBytes()).joinToString("") { byte ->
             (byte.toInt() and 0xff).toString(16).padStart(2, '0')
         }
     }

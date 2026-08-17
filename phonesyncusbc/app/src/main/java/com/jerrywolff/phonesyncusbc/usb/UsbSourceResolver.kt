@@ -85,7 +85,15 @@ class UsbSourceResolver(context: Context) {
         onProgress(IdentityReadProgress(IdentityReadStage.READING_USB_SERIAL, 1))
         val usbSerial = runCatching { source.device.serialNumber }.getOrNull()
         onProgress(IdentityReadProgress(IdentityReadStage.READING_USB_DESCRIPTOR, 2))
+        val mtpSerial = if (usbSerial.isNullOrBlank()) {
+            runCatching {
+                openMtp(source.device)?.use { session -> session.device.deviceInfo?.serialNumber }
+            }.getOrNull()
+        } else {
+            null
+        }
         val stableSerial = usbSerial?.takeIf(String::isNotBlank)
+            ?: mtpSerial?.takeIf(String::isNotBlank)
         val platform = source.detected.platform.name
         val serialMaterial = stableSerial ?: stableUsbIdentityMaterial(
             platform = platform,

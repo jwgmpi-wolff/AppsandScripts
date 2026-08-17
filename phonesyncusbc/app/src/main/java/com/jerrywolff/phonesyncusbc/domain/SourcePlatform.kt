@@ -78,7 +78,7 @@ object SourcePlatformDetector {
                 physicalConnection = descriptor.physicalConnection,
             )
 
-            "android" in identity || UsbTransport.MTP in descriptor.transports -> DetectedSource(
+            "android" in identity || descriptor.vendorId in ANDROID_VENDOR_IDS -> DetectedSource(
                 platform = SourcePlatform.ANDROID,
                 family = SourceFamily.ANDROID_PHONE,
                 displayName = descriptor.productName ?: "Android phone",
@@ -100,4 +100,14 @@ object SourcePlatformDetector {
             (vendorId == MICROSOFT_VENDOR_ID && "phone" in identity) ||
             (vendorId == NOKIA_VENDOR_ID && "lumia" in identity)
     }
+
+    private val ANDROID_VENDOR_IDS = setOf(
+        GOOGLE_VENDOR_ID,
+        0x04E8, // Samsung
+        0x0BB4, // HTC
+        0x12D1, // Huawei
+        0x22B8, // Motorola
+        0x2717, // Xiaomi
+        0x2A70, // OnePlus
+    )
 }

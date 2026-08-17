@@ -4,33 +4,16 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val syncSharedReaderSources by tasks.registering(Sync::class) {
-    from("../app/src/main/java")
-    into(layout.buildDirectory.dir("generated/sharedReader"))
-    include(
-        "com/jerrywolff/phonesyncusbc/ArtifactDataReaderView.kt",
-        "com/jerrywolff/phonesyncusbc/data/ArtifactIndexDatabase.kt",
-        "com/jerrywolff/phonesyncusbc/data/ArtifactIndexer.kt",
-        "com/jerrywolff/phonesyncusbc/data/AuditLog.kt",
-        "com/jerrywolff/phonesyncusbc/data/DataExportManager.kt",
-        "com/jerrywolff/phonesyncusbc/data/FolderMetadata.kt",
-        "com/jerrywolff/phonesyncusbc/data/JsonArtifactFlattener.kt",
-        "com/jerrywolff/phonesyncusbc/data/RecoverySelectionPlan.kt",
-        "com/jerrywolff/phonesyncusbc/domain/TransferClassifier.kt",
-        "com/jerrywolff/phonesyncusbc/domain/TrustPolicy.kt",
-    )
-}
-
 android {
-    namespace = "com.jerrywolff.phonesynctabletreader"
+    namespace = "com.jerrywolff.phonesyncusbc"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.jerrywolff.phonesynctabletreader"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.2.0"
+        versionCode = 7
+        versionName = "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -53,13 +36,16 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.srcDirs("src/main/java", layout.buildDirectory.dir("generated/sharedReader"))
+            java.setSrcDirs(listOf("../app/src/main/java"))
+            res.setSrcDirs(listOf("../app/src/main/res"))
+        }
+        getByName("test") {
+            java.setSrcDirs(listOf("../app/src/test/java"))
+        }
+        getByName("androidTest") {
+            java.setSrcDirs(listOf("../app/src/androidTest/java"))
         }
     }
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(syncSharedReaderSources)
 }
 
 dependencies {
@@ -67,6 +53,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.documentfile)
     implementation(libs.gson)
