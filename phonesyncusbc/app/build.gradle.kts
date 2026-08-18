@@ -12,8 +12,8 @@ android {
         applicationId = "com.jerrywolff.phonesyncusbc"
         minSdk = 29
         targetSdk = 35
-        versionCode = 32
-        versionName = "2.8.3"
+        versionCode = 33
+        versionName = "2.8.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -1106,7 +1106,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         }
     }
 
-    fun authorizeAllVisibleDataAndRescan() {
+    fun copyAllUsbVisibleFilesAndRescan() {
         val currentTrust = trust ?: return
         val currentCapabilities = capabilities ?: return
         val authorizedCategories = currentCapabilities.supportedCategories
@@ -1118,7 +1118,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
         trust = updatedTrust
         selectedCategories = authorizedCategories
         recoveryIssues = emptyList()
-        message = "All USB-visible owner data categories are authorized. Starting a fresh collection."
+        message = "All USB-visible external files are authorized. Starting a fresh collection."
         messageSection = AppSection.USB_SOURCE
         runUsbRecovery(packageAfterRecovery = false)
     }
@@ -1507,7 +1507,7 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                                 },
                                 onSync = { runUsbRecovery(packageAfterRecovery = false) },
                                 onCollectSourceSms = { runUsbRecovery(packageAfterRecovery = false) },
-                                onAuthorizeAllAndRescan = ::authorizeAllVisibleDataAndRescan,
+                                onCopyAllUsbVisibleFiles = ::copyAllUsbVisibleFilesAndRescan,
                                 onCompleteBackup = { runUsbRecovery(packageAfterRecovery = true) },
                                 onChooseTarget = {
                                     backupWorkflowSection = AppSection.USB_SOURCE
@@ -1683,7 +1683,7 @@ private fun TrustedDashboard(
     onViewLibrary: () -> Unit,
     onSync: () -> Unit,
     onCollectSourceSms: () -> Unit,
-    onAuthorizeAllAndRescan: () -> Unit,
+    onCopyAllUsbVisibleFiles: () -> Unit,
     onCompleteBackup: () -> Unit,
     onChooseTarget: () -> Unit,
     onImportIosBackup: () -> Unit,
@@ -1708,7 +1708,7 @@ private fun TrustedDashboard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Read-only logical recovery", style = MaterialTheme.typography.titleMedium)
-            Text("All available categories authorized: ${categories.joinToString { it.label() }}")
+            Text("All USB-visible file categories authorized: ${categories.joinToString { it.label() }}")
             Text(
                 if (identitySerialAvailable) {
                     "Trusted identity: source-reported serial available."
@@ -1860,11 +1860,11 @@ private fun TrustedDashboard(
                 style = MaterialTheme.typography.bodySmall,
             )
             OutlinedButton(
-                onClick = onAuthorizeAllAndRescan,
+                onClick = onCopyAllUsbVisibleFiles,
                 enabled = !syncing && !backingUp,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Authorize all USB-visible owner data & rescan")
+                Text("Copy all USB-visible files from external device")
             }
             OwnerApprovedArchivePanel(
                 deviceType = recoveryDeviceType,
