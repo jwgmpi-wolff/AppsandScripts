@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "applicationId": "com.jerrywolff.phonesyncusbc",
-  "versionCode": 30,
-  "versionName": "2.8.1",
-  "sha256": "ff31659ff2e0af7129a9b6afd17903b6144fbe5b37ce098ba2afed6f110a8d89",
+  "versionCode": 32,
+  "versionName": "2.8.3",
+  "sha256": "868d3fe4119c2bace1790e9af6af1ceb48018442937438d6a1bf286b1ffa8bdb",
   "signerCertificateSha256": "a14e72efffc6bccc9ef4d11c88dd53719078fd9713ed315c7eb237b425e35c8b"
 }

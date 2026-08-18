@@ -2132,6 +2132,7 @@ private fun IosBackupRequirementPanel(
     result: IosBackupImportResult?,
     onImport: () -> Unit,
 ) {
+    var showBackupSteps by remember { mutableStateOf(false) }
     HorizontalDivider()
     Text("Required iPhone Messages / SMS", style = MaterialTheme.typography.titleMedium)
     Text(
@@ -2142,6 +2143,22 @@ private fun IosBackupRequirementPanel(
         },
         color = if (smsRecovered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
     )
+    OutlinedButton(
+        onClick = { showBackupSteps = !showBackupSteps },
+        enabled = !importing,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (showBackupSteps) "Hide iPhone backup steps" else "Start iPhone backup workflow")
+    }
+    if (showBackupSteps) {
+        Text(
+                "On a trusted Windows computer, open Apple Devices, connect and unlock the iPhone, approve Trust This Computer, " +
+                "and choose Back Up Now. On macOS, use Finder and Back Up Now. Provide an unencrypted backup, or decrypt a copy " +
+                "on the trusted computer before importing. Copy the complete backup directory, ZIP it without changing its hashed files, " +
+                "then return here and import that ZIP. Android cannot initiate or decrypt this private iPhone backup over PTP.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
     Button(
         onClick = onImport,
         enabled = !importing,
