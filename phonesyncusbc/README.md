@@ -145,6 +145,15 @@ On Windows, after Apple Devices finishes an owner-approved local backup, package
 
 Use `-List` to show detected backups or `-BackupPath` to select one explicitly. The script reads the source backup without modifying it, creates a ZIP under **Downloads / Phone Sync / Owner Exports**, and prints its SHA-256. Import that ZIP from the selected iPhone's **Required iPhone Messages / SMS** panel.
 
+You can also use a trusted desktop extractor such as [iMazing](https://imazing.com/guides/how-to-easily-export-all-iphone-data-to-mac-or-pc), [OpenExtract](https://www.openextract.app/), Wondershare Dr.Fone, or iPhone Backup/iBackup Extractor. Export the needed iPhone data to one folder, then package that folder without modifying it:
+
+```powershell
+.\scripts\package_iphone_backup.ps1 `
+	-ExtractorOutputPath 'D:\iPhone Extractor Output'
+```
+
+The script does not run or authenticate to those products. It preserves their owner-authorized output, reports a SHA-256, and creates an archive that Phone Sync can import and inventory. Encrypted backups must be unencrypted or decrypted by the owner on a trusted computer before an extractor can read them.
+
 Windows Phone exposes shared media through MTP but does not publish its private SMS, call-history, or email stores as MTP objects. Phone Sync requests every object the phone advertises, including a legacy full-file compatibility request, but no acquisition-host app can force Windows Phone to expose stores its OS withholds. Use Microsoft-account SMS backup when available and export email from its server/provider; Windows Phone has no standard USB call-history export.
 
 ## Destinations

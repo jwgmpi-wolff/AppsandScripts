@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BackupPath,
+    [string]$ExtractorOutputPath,
     [string]$OutputPath,
     [switch]$List
 )
@@ -34,7 +35,21 @@ if ($List) {
     exit 0
 }
 
-if ($BackupPath) {
+if ($BackupPath -and $ExtractorOutputPath) {
+    throw 'Choose either BackupPath or ExtractorOutputPath, not both.'
+}
+
+$sourceKind = 'Apple local backup'
+if ($ExtractorOutputPath) {
+    $selected = Get-Item -LiteralPath $ExtractorOutputPath -ErrorAction Stop
+    if (-not $selected.PSIsContainer) {
+        throw "ExtractorOutputPath must be a directory: $ExtractorOutputPath"
+    }
+    if (-not (Get-ChildItem -LiteralPath $selected.FullName -Force -Recurse -File | Select-Object -First 1)) {
+        throw "ExtractorOutputPath is empty: $($selected.FullName)"
+    }
+    $sourceKind = 'third-party extractor output'
+} elseif ($BackupPath) {
     $selected = Get-Item -LiteralPath $BackupPath -ErrorAction Stop
     if (-not $selected.PSIsContainer) {
         throw "BackupPath must be a directory: $BackupPath"
@@ -59,7 +74,7 @@ if (-not $OutputPath) {
     $outputDirectory = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\Phone Sync\Owner Exports'
     $safeBackupName = $selected.Name -replace '[^A-Za-z0-9._-]', '_'
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $OutputPath = Join-Path $outputDirectory "OwnerApproved-iPhoneBackup-$safeBackupName-$timestamp.zip"
+    $OutputPath = Join-Path $outputDirectory "OwnerApproved-iPhone-$sourceKind-$safeBackupName-$timestamp.zip"
 }
 
 $resolvedBackup = $selected.FullName.TrimEnd('\')
@@ -68,7 +83,7 @@ if (-not $outputFullPath.EndsWith('.zip', [System.StringComparison]::OrdinalIgno
     throw 'OutputPath must end in .zip.'
 }
 if ($outputFullPath.StartsWith("$resolvedBackup\", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw 'OutputPath cannot be inside the Apple backup directory.'
+    throw 'OutputPath cannot be inside the selected source directory.'
 }
 
 $outputParent = Split-Path -Parent $outputFullPath
@@ -100,7 +115,7 @@ try {
 
 $archive = Get-Item -LiteralPath $outputFullPath
 $sha256 = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-Write-Host "Owner-approved iPhone backup ZIP: $($archive.FullName)"
+Write-Host "Owner-approved iPhone source ZIP: $($archive.FullName)"
 Write-Host "Bytes: $($archive.Length)"
 Write-Host "SHA-256: $sha256"
-Write-Host 'Open Phone Sync, select the matching iPhone, then choose Import owner-approved Apple backup ZIP.'
+Write-Host 'Open Phone Sync, select the matching iPhone, then choose Import owner-approved backup / archive / export.'

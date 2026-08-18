@@ -2122,6 +2122,12 @@ private fun OwnerApprovedArchivePanel(
         "Credential/password artifacts are copied intact and inventoried as opaque; they are not decrypted or omitted.",
         style = MaterialTheme.typography.bodySmall,
     )
+    Text(
+        "For iPhone data, you may first use a trusted desktop extractor such as iMazing, OpenExtract, Dr.Fone, or iBackup Extractor. " +
+            "Export its owner-authorized results to one folder, then import the folder as a ZIP. Encrypted backups must be unencrypted " +
+            "or owner-decrypted on the trusted computer before extraction.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @androidx.compose.runtime.Composable
