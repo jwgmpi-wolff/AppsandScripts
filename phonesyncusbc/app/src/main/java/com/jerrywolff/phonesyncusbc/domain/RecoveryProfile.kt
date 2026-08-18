@@ -4,6 +4,7 @@ enum class RecoveryDeviceType(val label: String) {
     WINDOWS_PC("Windows PC"),
     ANDROID("Android"),
     IPHONE_IPAD("iPhone/iPad"),
+    NETWORK_IPHONE("iPhone on Wi‑Fi"),
     CAMERA_IOT("Camera/IoT"),
     ;
 
@@ -68,6 +69,16 @@ object RecoveryProfiles {
                 "Complete owner-approved iPhone app/provider archives and individual exports",
             ),
             passwordTarget = "Encrypted password-manager vaults, keychain backups, and provider-supported passkey backups",
+        )
+        RecoveryDeviceType.NETWORK_IPHONE -> RecoveryProfile(
+            deviceType,
+            recoverableTargets = listOf(
+                "Messages, contacts, notes, and call history exposed by the companion app over local Wi‑Fi",
+                "JSON payloads served by a running iPhone companion app on the same network",
+                "Owner-authorized exports from the companion app after device-to-device discovery and validation",
+                "Recovered data staged for review before any export or backup destination selection",
+            ),
+            passwordTarget = "Companion-app credential exports, protected archives, and locally stored passkeys the source app exposes over Wi‑Fi",
         )
         RecoveryDeviceType.CAMERA_IOT -> RecoveryProfile(
             deviceType,

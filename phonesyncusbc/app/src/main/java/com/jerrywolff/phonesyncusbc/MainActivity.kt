@@ -109,6 +109,7 @@ import com.jerrywolff.phonesyncusbc.sync.SyncProgress
 import com.jerrywolff.phonesyncusbc.sync.SyncPhase
 import com.jerrywolff.phonesyncusbc.sync.SyncResult
 import com.jerrywolff.phonesyncusbc.sync.MtpScanSummary
+import com.jerrywolff.phonesyncusbc.ui.recovery.NetworkRecoveryScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
@@ -1165,23 +1166,32 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                 Spacer(Modifier.height(12.dp))
             }
             if (activeSection == AppSection.USB_SOURCE) item {
-                SourceConnectionPanel(
-                    sources = sources,
-                    source = source,
-                    onSourceSelected = ::selectSource,
-                    recoveryDeviceType = recoveryDeviceType,
-                    onRecoveryDeviceTypeSelected = { recoveryDeviceType = it },
-                    onRefresh = ::refreshSource,
-                    onRequestUsbPermission = onRequestUsbPermission,
-                    onContinue = {
-                        identityReadError = null
-                        identityReadRequest += 1
-                        scope.launch {
-                            val lastItem = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                            listState.animateScrollToItem(minOf(SOURCE_SYNC_SECTION_INDEX, lastItem))
-                        }
-                    },
-                )
+                if (recoveryDeviceType == RecoveryDeviceType.NETWORK_IPHONE) {
+                    NetworkRecoveryScreen(
+                        onDataRecovered = { messages, contacts, notes ->
+                            message = "Recovered $messages messages, $contacts contacts, and $notes notes from the iPhone companion app."
+                            messageSection = AppSection.USB_SOURCE
+                        },
+                    )
+                } else {
+                    SourceConnectionPanel(
+                        sources = sources,
+                        source = source,
+                        onSourceSelected = ::selectSource,
+                        recoveryDeviceType = recoveryDeviceType,
+                        onRecoveryDeviceTypeSelected = { recoveryDeviceType = it },
+                        onRefresh = ::refreshSource,
+                        onRequestUsbPermission = onRequestUsbPermission,
+                        onContinue = {
+                            identityReadError = null
+                            identityReadRequest += 1
+                            scope.launch {
+                                val lastItem = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                                listState.animateScrollToItem(minOf(SOURCE_SYNC_SECTION_INDEX, lastItem))
+                            }
+                        },
+                    )
+                }
             }
             if (activeSection == AppSection.BACKUP_ACTIVITY) item {
                 BackupActivityPanel(backupActivity)

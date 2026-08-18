@@ -34,6 +34,16 @@ class RecoveryProfileTest {
     }
 
     @Test
+    fun `network iphone recovery path is available for direct wifi transfer`() {
+        val profile = RecoveryProfiles.forDevice(RecoveryDeviceType.NETWORK_IPHONE)
+
+        assertEquals(RecoveryDeviceType.NETWORK_IPHONE, profile.deviceType)
+        assertTrue(profile.recoverableTargets.isNotEmpty())
+        assertTrue(profile.passwordTarget.contains("password", ignoreCase = true) ||
+            profile.passwordTarget.contains("credential", ignoreCase = true))
+    }
+
+    @Test
     fun `logical acquisition limit excludes physical and access bypass claims`() {
         assertTrue(LOGICAL_ACQUISITION_LIMIT.contains("read-only", ignoreCase = true))
         assertTrue(LOGICAL_ACQUISITION_LIMIT.contains("raw-disk image", ignoreCase = true))
