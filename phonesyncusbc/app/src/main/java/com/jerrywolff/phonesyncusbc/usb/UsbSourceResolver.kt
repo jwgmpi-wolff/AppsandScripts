@@ -137,16 +137,29 @@ class UsbSourceResolver(context: Context) {
     }
 
     private fun isPhoneCandidate(device: UsbDevice): Boolean {
+        val identity = listOfNotNull(
+            runCatching { device.manufacturerName }.getOrNull(),
+            runCatching { device.productName }.getOrNull(),
+        ).joinToString(" ").lowercase()
+
         val knownVendor = device.vendorId in KNOWN_PHONE_VENDOR_IDS
+        val hasAndroidIdentity = identity.contains("android") || identity.contains("pixel") ||
+            identity.contains("galaxy") || identity.contains("tablet") || identity.contains("phone")
         val hasMediaInterface = (0 until device.interfaceCount).any { index ->
-            device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE
+            val usbInterface = device.getInterface(index)
+            usbInterface.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE ||
+                usbInterface.interfaceClass == 0xFF ||
+                usbInterface.interfaceClass == 0xEF
         }
-        return knownVendor || hasMediaInterface
+        return knownVendor || hasAndroidIdentity || hasMediaInterface
     }
 
     private fun transportsFor(device: UsbDevice): Set<UsbTransport> {
         val hasMediaInterface = (0 until device.interfaceCount).any { index ->
-            device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE
+            val usbInterface = device.getInterface(index)
+            usbInterface.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE ||
+                usbInterface.interfaceClass == 0xFF ||
+                usbInterface.interfaceClass == 0xEF
         }
         if (!hasMediaInterface) return emptySet()
         return if (device.vendorId == APPLE_VENDOR_ID) {

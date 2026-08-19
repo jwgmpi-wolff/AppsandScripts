@@ -61,6 +61,21 @@ class SourcePlatformDetectorTest {
     }
 
     @Test
+    fun `detects a generic Android tablet as Android`() {
+        val source = SourcePlatformDetector.detect(
+            UsbDescriptor(
+                vendorId = 0x18D1,
+                productId = 0x4EE7,
+                productName = "Android Tablet",
+                transports = setOf(UsbTransport.MTP),
+            ),
+        )
+
+        assertEquals(SourcePlatform.ANDROID, source.platform)
+        assertEquals(SourceFamily.GOOGLE_PHONE, source.family)
+    }
+
+    @Test
     fun `does not mislabel a generic MTP camera as Android`() {
         val source = SourcePlatformDetector.detect(
             UsbDescriptor(
