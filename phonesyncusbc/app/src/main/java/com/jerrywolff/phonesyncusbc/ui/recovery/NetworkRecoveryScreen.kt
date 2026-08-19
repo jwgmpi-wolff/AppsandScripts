@@ -15,6 +15,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jerrywolff.phonesyncusbc.domain.CompanionInstallPolicy
+import com.jerrywolff.phonesyncusbc.domain.SourcePlatform
 import com.jerrywolff.phonesyncusbc.recovery.IosNetworkRecoveryEngine
 import com.jerrywolff.phonesyncusbc.recovery.IosDataFetcher
 import kotlinx.coroutines.launch
@@ -166,6 +168,7 @@ fun NetworkRecoveryScreen(
                                     val contacts = fetcher.fetchContacts()
                                     val notes = fetcher.fetchNotes()
                                     val calls = fetcher.fetchCallHistory()
+                                    val sharedFiles = fetcher.fetchSharedFiles()
                                     
                                     recoveredData = RecoveredData(
                                         messagesCount = messages.size,
@@ -175,7 +178,8 @@ fun NetworkRecoveryScreen(
                                         messages = messages,
                                         contacts = contacts,
                                         notes = notes,
-                                        calls = calls
+                                        calls = calls,
+                                        sharedFilesCount = sharedFiles.size,
                                     )
                                     
                                     connectionStatus = "Recovery complete!"
@@ -278,6 +282,7 @@ private fun RecoverySummary(data: RecoveredData) {
         SummaryItem("Contacts", data.contactsCount)
         SummaryItem("Notes", data.notesCount)
         SummaryItem("Calls", data.callsCount)
+        SummaryItem("Shared files available for backup", data.sharedFilesCount)
     }
 }
 
@@ -325,4 +330,5 @@ data class RecoveredData(
     val contacts: List<Any> = emptyList(),
     val notes: List<Any> = emptyList(),
     val calls: List<Any> = emptyList(),
+    val sharedFilesCount: Int = 0,
 )

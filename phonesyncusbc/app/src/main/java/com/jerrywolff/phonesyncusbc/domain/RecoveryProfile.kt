@@ -5,6 +5,7 @@ enum class RecoveryDeviceType(val label: String) {
     ANDROID("Android"),
     IPHONE_IPAD("iPhone/iPad"),
     NETWORK_IPHONE("iPhone on Wi‑Fi"),
+    NETWORK_DEVICE("Device on Wi‑Fi/Bluetooth"),
     CAMERA_IOT("Camera/IoT"),
     ;
 
@@ -79,6 +80,16 @@ object RecoveryProfiles {
                 "Recovered data staged for review before any export or backup destination selection",
             ),
             passwordTarget = "Companion-app credential exports, protected archives, and locally stored passkeys the source app exposes over Wi‑Fi",
+        )
+        RecoveryDeviceType.NETWORK_DEVICE -> RecoveryProfile(
+            deviceType,
+            recoverableTargets = listOf(
+                "Files and owner-approved exports exposed by a compatible device over Wi‑Fi",
+                "Files shared through a device companion app or standard local transfer protocol",
+                "Bluetooth file transfers when the source device supports an accessible file profile",
+                "Recovered data staged for review before export or backup destination selection",
+            ),
+            passwordTarget = "Credential exports and protected archives explicitly exposed by the source device",
         )
         RecoveryDeviceType.CAMERA_IOT -> RecoveryProfile(
             deviceType,

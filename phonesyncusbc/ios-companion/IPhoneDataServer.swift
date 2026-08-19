@@ -94,6 +94,8 @@ class IPhoneDataServer: NSObject {
             return notesResponse()
         } else if request.contains("GET /api/callhistory") {
             return callHistoryResponse()
+        } else if request.contains("GET /api/files") {
+            return sharedFilesResponse()
         }
         return "{\"error\": \"unknown endpoint\"}"
     }
@@ -104,7 +106,7 @@ class IPhoneDataServer: NSObject {
             "status": "online",
             "version": "\(serverVersion)",
             "device": "\(UIDevice.current.name)",
-            "available": ["messages", "contacts", "notes", "callhistory"]
+            "available": ["messages", "contacts", "notes", "callhistory", "files"]
         }
         """
     }
@@ -182,6 +184,31 @@ class IPhoneDataServer: NSObject {
         return json
     }
 }
+
+    private func sharedFilesResponse() -> String {
+        let fileManager = FileManager.default
+        let root = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        var files: [[String: Any]] = []
+        let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles],
+        )
+
+        while let url = enumerator?.nextObject() as? URL {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true else { continue }
+            let relativePath = url.path.replacingOccurrences(of: root.path + "/", with: "")
+            files.append([
+                "path": relativePath,
+                "size": values.fileSize ?? 0,
+                "modified": Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000),
+            ])
+        }
+
+        return "{\"type\":\"files\",\"count\":\(files.count),\"data\":\(encodeJSON(files))}"
+    }
 
 // MARK: - App Delegate
 import UIKit

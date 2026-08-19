@@ -13,6 +13,7 @@ import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.provider.Settings
 import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
@@ -42,6 +43,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -66,6 +68,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import com.jerrywolff.phonesyncusbc.data.BackupTargetType
 import com.jerrywolff.phonesyncusbc.data.DeviceIdentity
 import com.jerrywolff.phonesyncusbc.data.AuditEntry
@@ -89,6 +92,7 @@ import com.jerrywolff.phonesyncusbc.data.recoveredCoverageCategories
 import com.jerrywolff.phonesyncusbc.data.primaryActionLabel
 import com.jerrywolff.phonesyncusbc.data.providerTarget
 import com.jerrywolff.phonesyncusbc.data.TrustLoadResult
+import com.jerrywolff.phonesyncusbc.domain.CompanionInstallPolicy
 import com.jerrywolff.phonesyncusbc.domain.ConsentCategory
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilityPolicy
 import com.jerrywolff.phonesyncusbc.domain.SourceCapabilities
@@ -110,6 +114,9 @@ import com.jerrywolff.phonesyncusbc.sync.SyncPhase
 import com.jerrywolff.phonesyncusbc.sync.SyncResult
 import com.jerrywolff.phonesyncusbc.sync.MtpScanSummary
 import com.jerrywolff.phonesyncusbc.ui.recovery.NetworkRecoveryScreen
+import com.jerrywolff.phonesyncusbc.ui.recovery.DiscoveredDevice
+import com.jerrywolff.phonesyncusbc.recovery.IosDataFetcher
+import com.jerrywolff.phonesyncusbc.recovery.IosNetworkRecoveryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
@@ -1173,6 +1180,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                             messageSection = AppSection.USB_SOURCE
                         },
                     )
+                } else if (recoveryDeviceType == RecoveryDeviceType.NETWORK_DEVICE) {
+                    GenericNetworkRecoveryScreen()
                 } else {
                     SourceConnectionPanel(
                         sources = sources,
@@ -1181,6 +1190,8 @@ private fun PhoneSyncApp(onRequestUsbPermission: (AttachedSource) -> Unit) {
                         recoveryDeviceType = recoveryDeviceType,
                         onRecoveryDeviceTypeSelected = { recoveryDeviceType = it },
                         onRefresh = ::refreshSource,
+                        onNetworkIphone = { recoveryDeviceType = RecoveryDeviceType.NETWORK_IPHONE },
+                        onNetworkDevice = { recoveryDeviceType = RecoveryDeviceType.NETWORK_DEVICE },
                         onRequestUsbPermission = onRequestUsbPermission,
                         onContinue = {
                             identityReadError = null
@@ -2580,6 +2591,8 @@ private fun SourceConnectionPanel(
     recoveryDeviceType: RecoveryDeviceType,
     onRecoveryDeviceTypeSelected: (RecoveryDeviceType) -> Unit,
     onRefresh: () -> Unit,
+    onNetworkIphone: () -> Unit,
+    onNetworkDevice: () -> Unit,
     onRequestUsbPermission: (AttachedSource) -> Unit,
     onContinue: () -> Unit,
 ) {
@@ -2590,6 +2603,12 @@ private fun SourceConnectionPanel(
                 Text("Connect an Android phone, iPhone, or MTP/PTP device with a data-capable USB cable.")
                 Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
                     Text("Find USB source")
+                }
+                OutlinedButton(onClick = onNetworkIphone, modifier = Modifier.fillMaxWidth()) {
+                    Text("Recover from iPhone over Wi-Fi")
+                }
+                OutlinedButton(onClick = onNetworkDevice, modifier = Modifier.fillMaxWidth()) {
+                    Text("Recover files from another device over Wi-Fi/Bluetooth")
                 }
             } else {
                 if (sources.size > 1 || source == null) {
@@ -3041,6 +3060,191 @@ private fun isVideoLike(entry: AuditEntry): Boolean {
     if (entry.category == ConsentCategory.PASSWORD_EXPORTS) return false
     val extension = entry.sourceItem.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return extension in setOf("3g2", "3gp", "avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "webm", "wmv")
+}
+
+@androidx.compose.runtime.Composable
+private fun GenericNetworkRecoveryScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var devices by remember { mutableStateOf<List<DiscoveredDevice>>(emptyList()) }
+    var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
+    var status by remember { mutableStateOf("No source discovered yet.") }
+    var scanning by remember { mutableStateOf(false) }
+    var manualIp by remember { mutableStateOf("") }
+    var manualPort by remember { mutableStateOf("8765") }
+    val installPlan = remember {
+        CompanionInstallPolicy.plan(
+            sourcePlatform = SourcePlatform.IOS,
+            appPackage = null,
+            isHotspotConnected = true,
+        )
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Recover files from another device", style = MaterialTheme.typography.titleMedium)
+            Text("Wi‑Fi discovery uses the PhoneSync companion protocol. Android hotspot networks can block mDNS/Bonjour discovery, so a direct IP fallback is included when the iPhone joins the hotspot.")
+            if (installPlan.requiresInstall) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Compatible companion required", style = MaterialTheme.typography.titleSmall)
+                        if (installPlan.requiresActualDevice) {
+                            Text("Actual iPhone required: the companion must be built for the real device and installed there.")
+                        }
+                        if (installPlan.requiresSignedCompanion) {
+                            Text("Signed companion required: use Xcode on macOS or a signed IPA from a trusted build pipeline.")
+                            Text("Local Network permission required: enable the companion app's Local Network access in Settings > Privacy & Security > Local Network.")
+                        }
+                        Text(installPlan.instructions)
+                        Text("Status: ${installPlan.status}")
+                    }
+                }
+            }
+            Button(
+                onClick = {
+                    scanning = true
+                    devices = emptyList()
+                    selectedDevice = null
+                    status = "Scanning the local network..."
+                    IosNetworkRecoveryEngine(context) { name, ip, port ->
+                        scope.launch {
+                            val device = DiscoveredDevice(name, ip, port)
+                            if (device !in devices) devices = devices + device
+                            status = "Found ${device.name}"
+                            scanning = false
+                        }
+                    }.startDiscovery()
+                    scope.launch {
+                        kotlinx.coroutines.delay(5000)
+                        if (devices.isEmpty() && scanning) {
+                            scanning = false
+                            status = "No device found over Wi‑Fi. Android hotspots often block local mDNS discovery; use the direct IP fallback below."
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (scanning) "Scanning..." else "Find devices over Wi‑Fi")
+            }
+            OutlinedTextField(
+                value = manualIp,
+                onValueChange = { manualIp = it },
+                label = { Text("iPhone IP address") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = manualPort,
+                onValueChange = { manualPort = it },
+                label = { Text("Port") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = {
+                    val directIp = manualIp.trim()
+                    val directPort = manualPort.toIntOrNull() ?: 8765
+                    if (directIp.isEmpty()) {
+                        status = "Enter the iPhone IP address shown by the companion app before trying direct connection."
+                        return@Button
+                    }
+                    if (directPort <= 0 || directPort > 65535) {
+                        status = "Port must be between 1 and 65535."
+                        return@Button
+                    }
+                    scope.launch {
+                        status = "Connecting directly to $directIp:$directPort..."
+                        val fetcher = IosDataFetcher(directIp, directPort)
+                        val sourceStatus = fetcher.checkStatus()
+                        if (sourceStatus == null) {
+                            status = "Direct connection failed. Confirm the companion app is running, Local Network is allowed, and the iPhone is on the same hotspot or Wi‑Fi network."
+                            return@launch
+                        }
+                        val files = fetcher.fetchSharedFiles()
+                        val rootDir = File(context.getExternalFilesDir(null), "network-transfer")
+                        rootDir.mkdirs()
+                        var copiedCount = 0
+                        files.forEach { file ->
+                            val data = fetcher.fetchFileData(file.path) ?: return@forEach
+                            val target = File(rootDir, file.path.replace("/", File.separator))
+                            target.parentFile?.mkdirs()
+                            target.writeBytes(data)
+                            copiedCount += 1
+                        }
+                        status = if (copiedCount > 0) {
+                            "Direct connection complete: ${files.size} shared files copied to ${rootDir.absolutePath}."
+                        } else {
+                            "Direct connection complete: ${files.size} shared files visible, but none were transferable from the source."
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Connect by direct IP")
+            }
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                    status = "Bluetooth settings opened. Pair a source device, then use Wi‑Fi or a compatible transfer profile."
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Find devices over Bluetooth")
+            }
+            devices.forEach { device ->
+                OutlinedButton(
+                    onClick = { selectedDevice = device },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("${device.name} · ${device.ipAddress}:${device.port}")
+                }
+            }
+            selectedDevice?.let { device ->
+                Button(
+                    onClick = {
+                        scope.launch {
+                            status = "Connecting and requesting shared-file inventory..."
+                            val fetcher = IosDataFetcher(device.ipAddress, device.port)
+                            val sourceStatus = fetcher.checkStatus()
+                            if (sourceStatus == null) {
+                                status = "Connection failed. Confirm the companion is running and both devices share the network."
+                                return@launch
+                            }
+                            val files = fetcher.fetchSharedFiles()
+                            val rootDir = File(context.getExternalFilesDir(null), "network-transfer")
+                            rootDir.mkdirs()
+                            var copiedCount = 0
+                            files.forEach { file ->
+                                val data = fetcher.fetchFileData(file.path) ?: return@forEach
+                                val target = File(rootDir, file.path.replace("/", File.separator))
+                                target.parentFile?.mkdirs()
+                                target.writeBytes(data)
+                                copiedCount += 1
+                            }
+                            status = if (copiedCount > 0) {
+                                "Trusted connection complete: ${files.size} shared files copied to ${rootDir.absolutePath}."
+                            } else {
+                                "Trusted connection complete: ${files.size} shared files visible, but none were transferable from the source."
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Trust connection and transfer files")
+                }
+            }
+            Text(status, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Inventory is real network activity. Backup is limited to files the source protocol serves; it cannot bypass passwords, encryption, permissions, or private device databases.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
 }
 
 private const val PREVIEW_MAX_BYTES = 128 * 1024
